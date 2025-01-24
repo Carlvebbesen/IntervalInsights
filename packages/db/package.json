@@ -1,0 +1,20 @@
+{
+  "name": "@intervalinsights/db",
+  "private": true,
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "exports": {
+    ".": {
+      "default": "./schema.ts"
+    }
+  }
+}
