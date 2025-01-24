@@ -1,6 +1,11 @@
 import { initTRPC } from "@trpc/server";
 import { z } from "zod";
 
+// Bruke postgres.js
+
+// Sette opp migrasjoner
+// Sette opp drizzler orm mot neon
+
 type Env = {
   DB: any;
 };
