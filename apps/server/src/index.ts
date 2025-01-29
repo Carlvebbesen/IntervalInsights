@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { trpcServer } from "@hono/trpc-server";
-import { appRouter } from "../../../packages/api";
+import { appRouter } from "@intervalinsights/api";
 
 const app = new Hono();
 

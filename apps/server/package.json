@@ -5,7 +5,8 @@
   },
   "dependencies": {
     "@hono/trpc-server": "^0.3.4",
-    "hono": "^4.6.18"
+    "hono": "^4.6.18",
+    "@intervalinsights/api": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "latest"
