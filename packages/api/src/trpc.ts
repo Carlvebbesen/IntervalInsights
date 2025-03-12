@@ -12,7 +12,8 @@ export const createTRPCContext = async (opts: {
   };
 };
 
-const t = initTRPC.context<typeof createTRPCContext>().create();
+export type Context = Awaited<ReturnType<typeof createTRPCContext>>;
+const t = initTRPC.context<Context>().create();
 
 export const createTRPCRouter = t.router;
 

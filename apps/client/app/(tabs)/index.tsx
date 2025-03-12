@@ -25,8 +25,10 @@ const App = () => {
       email,
     });
 
+  console.log(error?.message);
   return (
     <View style={styles.container}>
+      <Text>Hei dette er en tekst</Text>
       <TextInput
         style={styles.input}
         placeholder="Enter a FirstName"
@@ -51,8 +53,10 @@ const App = () => {
       {mutateError && (
         <Text style={styles.error}>MutateError: {mutateError.message}</Text>
       )}
-      {data && <Text style={styles.response}>ResponseLenght: {data}</Text>}
-      {data && <Text style={styles.response}>Response: {data}</Text>}
+      {data && (
+        <Text style={styles.response}>ResponseLenght: {data.length}</Text>
+      )}
+      {data && <Text style={styles.response}>Response: {data.join(" ")}</Text>}
     </View>
   );
 };

@@ -13,12 +13,5 @@
   "peerDependencies": {
     "typescript": "^5.0.0"
   },
-  "dependencies": {
-    "@tanstack/react-query": "^5.63.0",
-    "@trpc/client": "11.0.0-rc.724",
-    "@trpc/react-query": "11.0.0-rc.724",
-    "@trpc/server": "11.0.0-rc.724",
-    "hono": "^4.6.16",
-    "zod": "^3.24.1"
-  }
+  "dependencies": {}
 }

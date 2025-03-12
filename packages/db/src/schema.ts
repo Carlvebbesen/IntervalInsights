@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { pgEnum, pgTable } from "drizzle-orm/pg-core";
 import * as t from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";

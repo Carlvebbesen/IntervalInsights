@@ -10,14 +10,15 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@hono/trpc-server": "^0.3.4",
     "@intervalinsights/db": "workspace:*",
-    "@trpc/server": "11.0.0-rc.724",
+    "@trpc/server": "^10.45.2",
     "zod": "^3.24.1"
   },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "default": "./src/index.ts"
+      "default": "./index.ts"
     }
   }
 }
