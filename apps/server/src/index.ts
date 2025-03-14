@@ -8,6 +8,7 @@ app.use(
   "/trpc/*",
   trpcServer({
     router: appRouter,
+    createContext: createTRPCContext,
   })
 );
 

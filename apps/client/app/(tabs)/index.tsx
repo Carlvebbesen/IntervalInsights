@@ -7,14 +7,14 @@ const App = () => {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
 
-  const { data, isLoading, error } = api.userRouter.all.useQuery();
+  const { data, isLoading, error } = api.user.all.useQuery();
 
-  const { mutate, error: mutateError } = api.userRouter.create.useMutation({
+  const { mutate, error: mutateError } = api.user.create.useMutation({
     async onSuccess() {
       setFirstName("");
       setLastName("");
       setEmail("");
-      await api.useUtils().userRouter.all.invalidate();
+      await api.useUtils().user.all.invalidate();
     },
   });
 
