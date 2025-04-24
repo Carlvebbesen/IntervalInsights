@@ -24,8 +24,6 @@ const App = () => {
       lastName,
       email,
     });
-
-  console.log(error?.message);
   return (
     <View style={styles.container}>
       <Text>Hei dette er en tekst</Text>

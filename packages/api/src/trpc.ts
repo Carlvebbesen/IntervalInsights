@@ -1,22 +1,19 @@
+import { db } from "@intervalinsights/db";
 import { initTRPC } from "@trpc/server";
-import { db } from "@intervalinsights/db/client";
-import superjson from "superjson";
+import { SuperJSON } from "superjson";
 import { ZodError } from "zod";
+import { FetchCreateContextFnOptions } from "@trpc/server/adapters/fetch";
 
-export const createTRPCContext = async (opts: {
-  headers: Headers;
-  session: String | null;
-}) => {
-  const authToken = opts.headers.get("Authorization") ?? null;
+export const createTRPCContext = async (opts: FetchCreateContextFnOptions) => {
+  // const authToken = opts.headers.get("Authorization") ?? null;
   return {
     db,
-    token: authToken,
+    token: "authToken",
   };
 };
 
-export type Context = Awaited<ReturnType<typeof createTRPCContext>>;
-const t = initTRPC.context<Context>().create({
-  transformer: superjson,
+const t = initTRPC.context<typeof createTRPCContext>().create({
+  transformer: SuperJSON,
   errorFormatter: ({ shape, error }) => ({
     ...shape,
     data: {
@@ -25,7 +22,6 @@ const t = initTRPC.context<Context>().create({
     },
   }),
 });
-
 export const createTRPCRouter = t.router;
 
 const timingMiddleware = t.middleware(async ({ next, path }) => {

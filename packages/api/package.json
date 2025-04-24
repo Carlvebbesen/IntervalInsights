@@ -3,6 +3,10 @@
   "private": true,
   "module": "index.ts",
   "type": "module",
+  "scripts": {
+    "build": "bun run clean && bunx tsc",
+    "clean": "rm -rf dist"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
@@ -12,7 +16,7 @@
   "dependencies": {
     "@hono/trpc-server": "^0.3.4",
     "@intervalinsights/db": "workspace:*",
-    "@trpc/server": "^11.0.0-rc.824",
+    "@trpc/server": "11.1.1",
     "superjson": "^2.2.2",
     "zod": "^3.24.1"
   },

@@ -1,5 +1,4 @@
 import { Stack } from "expo-router";
-import App from "./(tabs)";
 import { TRPCProvider } from "@/utils/trpc";
 import { StatusBar } from "expo-status-bar";
 
