@@ -1,0 +1,18 @@
+{
+  "name": "interval-insights",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts"
+  },
+  "dependencies": {
+    "@clerk/backend": "^2.27.1",
+    "@hono/clerk-auth": "^3.0.3",
+    "biome": "^0.3.3",
+    "drizzle-kit": "^0.31.8",
+    "drizzle-orm": "^0.45.1",
+    "hono": "^4.11.1",
+    "postgres": "^3.4.7"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
