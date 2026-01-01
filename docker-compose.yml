@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: interval_insights_dev
-      POSTGRES_USER: interval_user
+      POSTGRES_USER: interval_userp
       POSTGRES_PASSWORD: interval_password
     ports:
       - "5432:5432"
