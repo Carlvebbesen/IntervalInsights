@@ -1,0 +1,703 @@
+{
+  "id": "fc627aa4-f62c-4424-8128-93062a3f8e3b",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.users": {
+      "name": "users",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "clerk_id": {
+          "name": "clerk_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "strava_id": {
+          "name": "strava_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "users_clerk_id_unique": {
+          "name": "users_clerk_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "clerk_id"
+          ]
+        },
+        "users_strava_id_unique": {
+          "name": "users_strava_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "strava_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.activities": {
+      "name": "activities",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "training_type": {
+          "name": "training_type",
+          "type": "training_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "interval_structure_id": {
+          "name": "interval_structure_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ai_classified_type": {
+          "name": "ai_classified_type",
+          "type": "training_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "classification_confidence": {
+          "name": "classification_confidence",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "classification_reasoning": {
+          "name": "classification_reasoning",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_confirmed_type": {
+          "name": "user_confirmed_type",
+          "type": "training_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "feedback_notes": {
+          "name": "feedback_notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "feedback_at": {
+          "name": "feedback_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "analyzed_at": {
+          "name": "analyzed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "analysis_status": {
+          "name": "analysis_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'pending'"
+        },
+        "analysis_version": {
+          "name": "analysis_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'v1.0'"
+        },
+        "strava_activity_id": {
+          "name": "strava_activity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "external_id": {
+          "name": "external_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sport_type": {
+          "name": "sport_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "distance": {
+          "name": "distance",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "moving_time": {
+          "name": "moving_time",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "elapsed_time": {
+          "name": "elapsed_time",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "total_elevation_gain": {
+          "name": "total_elevation_gain",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "average_speed": {
+          "name": "average_speed",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_speed": {
+          "name": "max_speed",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "average_heart_rate": {
+          "name": "average_heart_rate",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_heart_rate": {
+          "name": "max_heart_rate",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "start_date_local": {
+          "name": "start_date_local",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rpe": {
+          "name": "rpe",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "feeling": {
+          "name": "feeling",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "processed_at": {
+          "name": "processed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "user_idx": {
+          "name": "user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "date_idx": {
+          "name": "date_idx",
+          "columns": [
+            {
+              "expression": "start_date_local",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "type_idx": {
+          "name": "type_idx",
+          "columns": [
+            {
+              "expression": "training_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "interval_structure_idx": {
+          "name": "interval_structure_idx",
+          "columns": [
+            {
+              "expression": "interval_structure_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "activities_user_id_users_id_fk": {
+          "name": "activities_user_id_users_id_fk",
+          "tableFrom": "activities",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "activities_interval_structure_id_interval_structures_id_fk": {
+          "name": "activities_interval_structure_id_interval_structures_id_fk",
+          "tableFrom": "activities",
+          "tableTo": "interval_structures",
+          "columnsFrom": [
+            "interval_structure_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "activities_strava_activity_id_unique": {
+          "name": "activities_strava_activity_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "strava_activity_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interval_segments": {
+      "name": "interval_segments",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "activity_id": {
+          "name": "activity_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "segment_index": {
+          "name": "segment_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "set_group_index": {
+          "name": "set_group_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_value": {
+          "name": "target_value",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actual_distance": {
+          "name": "actual_distance",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actual_duration": {
+          "name": "actual_duration",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actual_pace": {
+          "name": "actual_pace",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "avg_heart_rate": {
+          "name": "avg_heart_rate",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_heart_rate": {
+          "name": "max_heart_rate",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "avg_power": {
+          "name": "avg_power",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "compliance_score": {
+          "name": "compliance_score",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_pace": {
+          "name": "target_pace",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pace_deviation": {
+          "name": "pace_deviation",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "effort_quality": {
+          "name": "effort_quality",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "detection_confidence": {
+          "name": "detection_confidence",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "interval_segments_activity_id_activities_id_fk": {
+          "name": "interval_segments_activity_id_activities_id_fk",
+          "tableFrom": "interval_segments",
+          "tableTo": "activities",
+          "columnsFrom": [
+            "activity_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interval_structures": {
+      "name": "interval_structures",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signature": {
+          "name": "signature",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "training_type": {
+          "name": "training_type",
+          "type": "training_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "detected_pattern": {
+          "name": "detected_pattern",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "suggested_name": {
+          "name": "suggested_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "occurrence_count": {
+          "name": "occurrence_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "default": 1
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "interval_structures_signature_unique": {
+          "name": "interval_structures_signature_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "signature"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.feedback_training_data": {
+      "name": "feedback_training_data",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "activity_id": {
+          "name": "activity_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ai_prediction": {
+          "name": "ai_prediction",
+          "type": "training_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ai_confidence": {
+          "name": "ai_confidence",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_correction": {
+          "name": "user_correction",
+          "type": "training_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_reasoning": {
+          "name": "user_reasoning",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "activity_metrics": {
+          "name": "activity_metrics",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "feedback_training_data_activity_id_activities_id_fk": {
+          "name": "feedback_training_data_activity_id_activities_id_fk",
+          "tableFrom": "feedback_training_data",
+          "tableTo": "activities",
+          "columnsFrom": [
+            "activity_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "feedback_training_data_user_id_users_id_fk": {
+          "name": "feedback_training_data_user_id_users_id_fk",
+          "tableFrom": "feedback_training_data",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.training_type": {
+      "name": "training_type",
+      "schema": "public",
+      "values": [
+        "LONG_RUN",
+        "EASY_RUN",
+        "SHORT_INTERVALS",
+        "HILL_SPRINTS",
+        "LONG_INTERVALS",
+        "SPRINTS",
+        "FARTLEK",
+        "PROGRESSIVE_LONG_RUN",
+        "RACE",
+        "TEMPO",
+        "RECOVERY",
+        "OTHER"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
