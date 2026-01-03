@@ -18,6 +18,10 @@ publicRouter.get("/strava/event", (c) => {
   console.error("Verification failed: Token mismatch or invalid mode");
   return c.json({ error: "Verification failed" }, 403);
 });
+publicRouter.get("/health", (c) => {
+  console.log("Health triggered");
+  return c.json("i'm alive :D ", 200);
+});
 
 publicRouter.post("/strava/event", async (c) => {
   const body = (await c.req.json()) as IStravaWebhookEvent;

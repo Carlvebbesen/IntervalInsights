@@ -8,7 +8,7 @@ import { users } from "../../schema/users";
 
 const stravaAuthRouter = new Hono<TGlobalEnv>();
 
-const REDIRECT_URI = "http://localhost:3000";
+const REDIRECT_URI = "https://intervalinsights.ebbesen.org";
 
 stravaAuthRouter.get("/url", (c) => {
   const params = new URLSearchParams({
