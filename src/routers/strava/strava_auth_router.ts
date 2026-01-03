@@ -36,7 +36,6 @@ stravaAuthRouter.post("/exchange", async (c) => {
 
     if (!code) return c.json({ error: "Authorization code is missing" }, 400);
 
-    // 1. Exchange code for Strava tokens
     const tokenResponse = await fetch("https://www.strava.com/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -54,35 +53,26 @@ stravaAuthRouter.post("/exchange", async (c) => {
       console.error("Strava Error:", tokenData);
       return c.json({ error: "Failed to exchange token with Strava" }, 401);
     }
-
-    // 2. Initialize Clerk Client
     const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
-
-    // 3. Save Strava Keys to Clerk PRIVATE Metadata
-    // privateMetadata is ONLY accessible by the Backend API
     await clerkClient.users.updateUserMetadata(auth.userId, {
       privateMetadata: {
         strava: {
           access_token: tokenData.access_token,
           refresh_token: tokenData.refresh_token,
           expires_at: tokenData.expires_at,
-          athlete_id: tokenData.athlete.id, // Strava returns athlete object on initial exchange
+          athlete_id: tokenData.athlete.id,
         },
       },
-      // Optional: Flag for frontend UI to know it's connected
       publicMetadata: {
         strava_connected: true,
       },
     });
-
-    // 4. Save or update user in database
     const stravaId = String(tokenData.athlete.id);
     const existingUser = await c.env.db.query.users.findFirst({
       where: eq(users.clerkId, auth.userId),
     });
 
     if (existingUser) {
-      // Update existing user with Strava ID if not already set
       if (!existingUser.stravaId) {
         await c.env.db
           .update(users)
@@ -91,7 +81,6 @@ stravaAuthRouter.post("/exchange", async (c) => {
         console.log(`Updated Strava ID for existing user: ${auth.userId}`);
       }
     } else {
-      // Create new user record
       await c.env.db.insert(users).values({
         clerkId: auth.userId,
         stravaId,
