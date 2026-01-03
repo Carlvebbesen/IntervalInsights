@@ -3,15 +3,11 @@ import { env } from "bun";
 import { TStravaEnv } from "../../types/IRouters";
 
 const stravaWebhookRouter = new Hono<TStravaEnv>();
-/**
- * Subscribe to Strava webhooks
- * Usage: GET /strava/webhook/subscribe
- */
+
 stravaWebhookRouter.get("/subscribe", async (c) => {
   console.log("Setting up subscription...");
   const CALLBACK_URL = `${env.APP_BASE_URL}api/strava/event`;
-console.log(CALLBACK_URL);
-  // Create a FormData object to send parameters as HTTP form data
+  console.log(CALLBACK_URL);
   const formData = new FormData();
   formData.append("client_id", env.STRAVA_CLIENT_ID!);
   formData.append("client_secret", env.STRAVA_CLIENT_SECRET!);
@@ -20,7 +16,7 @@ console.log(CALLBACK_URL);
 
   const response = await fetch("https://www.strava.com/api/v3/push_subscriptions", {
     method: "POST",
-    body: formData, // Fetch will automatically set the 'multipart/form-data' header
+    body: formData,
   });
 
   const data = await response.json();

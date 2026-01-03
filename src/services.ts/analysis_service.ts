@@ -1,5 +1,5 @@
 import { eq,and,desc, sql } from "drizzle-orm";
-import { invokeActivityAnalysisAgent, workoutBlock } from "../agent/initial_analysis_agent";
+import { invokeActivityAnalysisAgent, WorkoutAnalysisOutput, workoutBlock } from "../agent/initial_analysis_agent";
 import {
   activities,
   findOrCreateIntervalStructure,
@@ -16,13 +16,19 @@ import { stravaApiService } from "./strava_api_service";
 import { invokeCompleteActivityAnalysisAgent } from "../agent/full_analysis_agent";
 import { calculateSegmentStats, couldSkipCompleteAnalysis, needCompleteAnalysis, parsePaceStringToMetersPerSecond } from "./utils";
 import z from "zod";
+import { sleep } from "bun";
 
 export const triggerInitialAnalysis = async (
   db: IGlobalBindings["db"],
   accessToken: string,
   stravaId: number,
-  stravaActivity?: DetailedActivity
-) => {
+  index: number,
+  stravaActivity?: DetailedActivity,
+  isRetry?: boolean,
+):Promise<WorkoutAnalysisOutput|null> => {
+  if (index > 0) {
+    await sleep(index * 5000); 
+  }
   try {
     let currentStravaActivity = stravaActivity;
     if (!currentStravaActivity) {
@@ -82,17 +88,41 @@ export const triggerInitialAnalysis = async (
       }
       return analysisResult;
     }
+    await db.update(activities).set({ analysisStatus: "pending" }).where(eq(activities.id, activityId));
     return null;
-  } catch (error) {
-    await db
-      .update(activities)
-      .set({ analysisStatus: "error" })
-      .where(eq(activities.stravaActivityId, stravaId));
+  } catch (error:any) {
+    const errorMessage = error?.message || "";
+    const isRateLimit = error?.status === 429 || errorMessage.includes("429");
+
+    if (isRateLimit && !isRetry) {
+      let waitMs = 10000;
+      const retryMatch = errorMessage.match(/retry in ([\d.]+)s/);
+      if (retryMatch && retryMatch[1]) {
+        waitMs = Math.ceil(parseFloat(retryMatch[1]) * 1000) + 2000; 
+      } else if (error?.retryDelay) {
+        waitMs = parseInt(error.retryDelay) * 1000 + 2000;
+      }
+      console.warn(`Quota exceeded for ${stravaId}. Waiting ${waitMs}ms before one-time retry.`);
+      await db.update(activities)
+        .set({ analysisStatus: "pending" })
+        .where(eq(activities.stravaActivityId, stravaId));
+      await sleep(waitMs);
+      return triggerInitialAnalysis(db, accessToken, stravaId, 0,stravaActivity, true);
+    }
+    
     console.error(
       `Error in triggerAnalysis for activity ${stravaId}:`,
       error
     );
-    return null;
+    try {
+    await db
+      .update(activities)
+      .set({ analysisStatus: "error" })
+      .where(eq(activities.stravaActivityId, stravaId));
+  } catch (dbError) {
+    console.error("Could not even set error status in DB:", dbError);
+  }
+  return null;
   }
 };
 

@@ -3,6 +3,8 @@ import { TrainingType } from "../schema";
 import { LLMActivitySummary } from "../types/LLMActivitySummary";
 import { ActivityDataPoint, StreamSet } from "../types/strava/IStream";
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export function isRunningActivity(sportType: string): boolean {
   const runningTypes = ["Run", "TrailRun", "VirtualRun", "Elliptical"];
   return runningTypes.includes(sportType);

@@ -45,7 +45,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
   } else if (body.aspect_type === "update") {
     await context.db.update(activities).set(activity).where(eq(activities.stravaActivityId, stravaActivityId));
     if ((body.updates?.title || body.updates?.description) && isRunningActivity(data.type)) {
-      await triggerInitialAnalysis(context.db,accessToken, stravaActivityId, data);
+      await triggerInitialAnalysis(context.db,accessToken, stravaActivityId,0, data);
     }
   }
 }
