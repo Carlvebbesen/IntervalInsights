@@ -1,4 +1,5 @@
-import { WorkoutAnalysisOutput } from "../agent/initial_analysis_agent";
+import z from "zod";
+import { WorkoutAnalysisOutput, workoutSet, } from "../agent/initial_analysis_agent";
 import { TrainingType } from "../schema";
 import { LLMActivitySummary } from "../types/LLMActivitySummary";
 import { ActivityDataPoint, StreamSet } from "../types/strava/IStream";
@@ -177,3 +178,24 @@ export function calculateSegmentStats(
     timeSeriesEndTime: streamSet.time.data[endIdx],
   };
 }
+export const generateCompleteIntervalSet = (sets: z.infer<typeof workoutSet>[]) => {
+  return sets.flatMap((set) => {
+    const expandedSets = [];
+    for (let i = 0; i < set.set_reps; i++) {
+      const completeSteps = set.steps.flatMap((step) => {
+        return Array.from({ length: step.reps }, () => ({
+        work_type: step.work_type,
+        work_value: step.work_value,
+        recovery_value: step.recovery_value,
+        recovery_type: step.recovery_type,
+        target_pace: null,
+        }));
+      });
+      expandedSets.push({
+        set_recovery: set.set_recovery,
+        steps: completeSteps,
+      });
+    }
+    return expandedSets;
+  });
+};

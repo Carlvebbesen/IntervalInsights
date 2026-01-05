@@ -3,11 +3,11 @@ import { TStravaEnv } from "../types/IRouters";
 import { activities } from "../schema";
 import { eq,inArray,and } from "drizzle-orm";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
-import { getProposedPaceForStructure, triggerCompleteAnalysis } from "../services.ts/analysis_service";
+import { getProposedPaceForStructure, triggerCompleteAnalysis, triggerInitialAnalysis } from "../services.ts/analysis_service";
 import z from "zod";
-import { workoutBlock } from "../agent/initial_analysis_agent";
+import { workoutSet } from "../agent/initial_analysis_agent";
 import { zValidator } from "@hono/zod-validator";
-import { IntervalGroup } from "../types/IintervalGroup";
+import { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 
 
 const agentsRouter = new Hono<TStravaEnv>();
@@ -36,13 +36,20 @@ agentsRouter.get("/pending", async (c)=>{
       inArray(activities.analysisStatus, ["initial", "pending", "error"])
     )
   );
-  return c.json(result, 200);
+  result.filter((activity )=> activity.analysisStatus === "error" ).forEach((errorActivity, index) => triggerInitialAnalysis(
+c.env.db,
+  c.get("stravaAccessToken"),
+  errorActivity.stravaId,
+  index,
+  ));
+  const pending = result.filter((activity )=> activity.analysisStatus !== "error" );
+  return c.json(pending, 200);
 });
 
 agentsRouter.post("/start-complete-analysis", async (c) => {
   try {
-    const body = await c.req.json<{ activityId: number;stravaId: number; notes: string;groups?: IntervalGroup[]; }>();
-    const { activityId, notes, stravaId, groups } = body;
+    const body = await c.req.json<{ activityId: number;stravaId: number; notes: string;sets?: ExpandedIntervalSet[]; }>();
+    const { activityId, notes, stravaId, sets } = body;
     if (!activityId) {
       return c.json({ error: "Activity ID is required" }, 400);
     }
@@ -57,7 +64,7 @@ agentsRouter.post("/start-complete-analysis", async (c) => {
       activityId,
       stravaId,
       notes || "",
-      groups??[],
+      sets??[],
 
     );
     return c.json({ success: true, message: "Analysis Started successfully" }, 200);
@@ -69,7 +76,7 @@ agentsRouter.post("/start-complete-analysis", async (c) => {
 
 
 const paceRequestSchema = z.object({
-  structure: z.array(workoutBlock),
+  structure: z.array(workoutSet),
 });
 
 agentsRouter.post(

@@ -1,24 +1,22 @@
 import { eq,and,desc } from "drizzle-orm";
-import { invokeActivityAnalysisAgent, WorkoutAnalysisOutput, workoutBlock } from "../agent/initial_analysis_agent";
+import { invokeActivityAnalysisAgent, WorkoutAnalysisOutput, workoutSet } from "../agent/initial_analysis_agent";
 import {
   activities,
   findOrCreateIntervalStructure,
   generateIntervalSignature,
   getDbInsertIntervalSegmentsFromStravaMetrics,
-  IntervalComponent,
   intervalSegments,
   intervalStructures,
-  mapBlocksToComponents,
-  normalize,
+  mapSetsToIntervalComponent,
 } from "../schema";
 import { IGlobalBindings } from "../types/IRouters";
 import { DetailedActivity, Lap } from "../types/strava/IDetailedActivity";
 import { stravaApiService } from "./strava_api_service";
 import { invokeCompleteActivityAnalysisAgent } from "../agent/full_analysis_agent";
-import { calculateSegmentStats, couldSkipCompleteAnalysis, needCompleteAnalysis, parsePaceStringToMetersPerSecond } from "./utils";
+import { calculateSegmentStats, couldSkipCompleteAnalysis, generateCompleteIntervalSet, needCompleteAnalysis, parsePaceStringToMetersPerSecond } from "./utils";
 import z from "zod";
 import { sleep } from "bun";
-import { IntervalGroup, ProposedIntervalSegment } from "../types/IintervalGroup";
+import { ExpandedIntervalSet, } from "../types/ExpandedIntervalSet";
 
 export const triggerInitialAnalysis = async (
   db: IGlobalBindings["db"],
@@ -67,6 +65,7 @@ export const triggerInitialAnalysis = async (
         analyzedAt: new Date(),
         analysisStatus: "initial" as const,
         draftAnalysisResult: analysisResult,
+        analysisVersion : "v2.0",
       };
       const couldSkip = couldSkipCompleteAnalysis(analysisResult);
       const finalUpdateObject = couldSkip
@@ -134,7 +133,7 @@ export const triggerCompleteAnalysis = async (
   activityId: number,
   stravaId: number,
   notes: string,
-  groups: IntervalGroup[]
+  sets: ExpandedIntervalSet[]
 ) => {
   try {
     const result = await db.query.activities.findFirst({where:
@@ -186,7 +185,7 @@ const streams = await stravaApiService.getActivityStreams(
       result.trainingType,
       laps,
       result.draftAnalysisResult,
-      groups,
+      sets,
     );
     if (analysisResult) {
       let segmentIndexCounter = 0;
@@ -299,10 +298,11 @@ const setStravaMetricsAsIntervalSegments = async (
 export const getProposedPaceForStructure = async (
   db: IGlobalBindings["db"],
   userId: string, 
-  blocks: z.infer<typeof workoutBlock>[],
-) => {
-  const components = mapBlocksToComponents(blocks);
+  sets: z.infer<typeof workoutSet>[],
+):Promise<ExpandedIntervalSet[]> => {
+  const components = mapSetsToIntervalComponent(sets);
   const signature = generateIntervalSignature(components);
+  const completeIntervalSet = generateCompleteIntervalSet(sets)
   const historyByStructure = await db
     .select({
       targetValue: intervalSegments.targetValue,
@@ -323,13 +323,9 @@ export const getProposedPaceForStructure = async (
     .orderBy(desc(activities.startDateLocal))
     .limit(10);
   if (historyByStructure.length > 0) {
-    return calculateAverages(historyByStructure, components);
+    return calculateAverages(historyByStructure, completeIntervalSet);
   }
-  return components.map(comp => ({
-    targetValue: comp.value,
-    unit: comp.unit,
-    proposedPace: null,
-  }));
+  return completeIntervalSet;
 };
 function calculateAverages(
   rows: { 
@@ -340,45 +336,80 @@ function calculateAverages(
     segmentIndex: number;
     date: Date 
   }[],
-  components: IntervalComponent[]
-): ProposedIntervalSegment[] {
-  const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
+  sets: ExpandedIntervalSet[]
+): ExpandedIntervalSet[] {
+  const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
   const now = new Date().getTime();
   const getEffectivePace = (row: typeof rows[0]) => row.targetPace ?? row.actualPace;
+  const sortedRows = [...rows].sort((a, b) => a.segmentIndex - b.segmentIndex);
+  const averagePace = sortedRows.length > 0
+    ? sortedRows.reduce((sum, row) => sum + getEffectivePace(row), 0) / sortedRows.length
+    : null;
+  let workIntervalCounter = 0;
+  
+  return sets.map((set) => ({
+    ...set,
+    steps: set.steps.map((step) => {
+      const currentIntervalNumber = workIntervalCounter++;
+      const targetType = step.work_type === "DISTANCE" ? "distance" : "time";
+      const targetVal = step.work_value;
+      
+      let relevantRow = sortedRows[currentIntervalNumber];
+      if (relevantRow && 
+          relevantRow.targetType === targetType && 
+          Math.abs(relevantRow.targetValue - targetVal) < 1) {
+      } else {
+        const matchingRows = sortedRows.filter(row => 
+          row.targetType === targetType && 
+          Math.abs(row.targetValue - targetVal) < 1
+        );
+        
+        if (matchingRows.length > 0) {
+          console.log("FALLBACK: Using average of matching rows", currentIntervalNumber);
+          const avgPaceForMatching = matchingRows.reduce((sum, row) => 
+            sum + getEffectivePace(row), 0
+          ) / matchingRows.length;
+          
+          return {
+            ...step,
+            target_pace: avgPaceForMatching,
+          };
+        } else {
+          return {
+            ...step,
+            target_pace: averagePace,
+          };
+        }
+      }
+      
+      if (!relevantRow) {
+        return { ...step, target_pace: averagePace };
+      }
+      
+      const msSinceLastDone = now - relevantRow.date.getTime();
+      
+      let proposedPace: number;
+      if (msSinceLastDone < ONE_MONTH_MS) {
+        proposedPace = getEffectivePace(relevantRow);
+      } else {
+        const matchingRows = sortedRows.filter(row => 
+          row.targetType === relevantRow.targetType && 
+          Math.abs(row.targetValue - relevantRow.targetValue) < 1
+        );
+        
+        if (matchingRows.length > 0) {
+          proposedPace = matchingRows.reduce((sum, row) => 
+            sum + getEffectivePace(row), 0
+          ) / matchingRows.length;
+        } else {
+          proposedPace = averagePace ?? getEffectivePace(relevantRow);
+        }
+      }
 
-  return components.map((comp, idx) => {
-    const targetVal = normalize(comp.value, comp.unit);
-    const targetType = (comp.unit === 'm' || comp.unit === 'km') ? 'distance' : 'time';
-    let relevantRows = rows.filter(r => 
-      r.targetType === targetType && 
-      Math.abs(r.targetValue - targetVal) < 1 &&
-      r.segmentIndex === idx
-    );
-    if (relevantRows.length === 0) {
-      relevantRows = rows.filter(r => 
-        r.targetType === targetType && 
-        Math.abs(r.targetValue - targetVal) < 1
-      );
-    }
-
-    if (relevantRows.length === 0) return {   targetValue: comp.value,
-      unit: comp.unit, proposedPace: null };
-    const sortedRows = [...relevantRows].sort((a, b) => b.date.getTime() - a.date.getTime());
-    const latestEntry = sortedRows[0];
-    const msSinceLastDone = now - latestEntry.date.getTime();
-
-    let proposedPace: number;
-    if (msSinceLastDone < TWO_WEEKS_MS) {
-      proposedPace = getEffectivePace(latestEntry);
-    } else {
-      const totalPace = relevantRows.reduce((sum, r) => sum + getEffectivePace(r), 0);
-      proposedPace = totalPace / relevantRows.length;
-    }
-
-    return {
-      targetValue: comp.value,
-      unit: comp.unit,
-      proposedPace,
-    };
-  });
+      return {
+        ...step,
+        target_pace: proposedPace,
+      };
+    })
+  }));
 }

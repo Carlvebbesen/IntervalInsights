@@ -4,12 +4,12 @@ import {
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
-import { IntervalType, intervalTypeEnum, TargetTypeEnum, TrainingType, trainingTypeEnum, workoutPartEnum, WorkoutPartType } from "./enums";
+import { IntervalType, intervalTypeEnum, TrainingType, trainingTypeEnum, workoutPartEnum, WorkoutPartType } from "./enums";
 import { relations, eq } from "drizzle-orm";
 import { activities } from "./activities";
 import { IGlobalBindings } from "../types/IRouters";
 import { InsertIntervalSegment } from "./interval_segments";
-import { workoutBlock } from "../agent/initial_analysis_agent";
+import { workoutSet } from "../agent/initial_analysis_agent";
 import z from "zod";
 
 export const intervalStructures = pgTable("interval_structures", {
@@ -55,14 +55,14 @@ export const generateIntervalSignature = (
   return `${parts}`;
 };
 
-export const mapBlocksToComponents = (blocks: z.infer<typeof workoutBlock>[]): IntervalComponent[] => {
-  return blocks.map(b => (
-    Array(b.reps).fill(
-      {
-        value: b.work_value,
-        unit: b.work_type === "DISTANCE" ? 'm' : 'sec'
-      }
-      )
+export const mapSetsToIntervalComponent = (sets: z.infer<typeof workoutSet>[]): IntervalComponent[] => {
+  return sets.map(set => (
+    Array(set.set_reps).fill(
+      set.steps.map((step)=>Array(step.reps).fill({
+        value: step.work_value,
+        unit: step.work_type === "DISTANCE" ? 'm' : 'sec'
+      })
+      ))
 )).flat();
 };
 

@@ -5,7 +5,7 @@ import { WorkoutAnalysisOutput } from "./initial_analysis_agent";
 import { Lap } from "../types/strava/IDetailedActivity";
 import { geminiFlashModel } from "./model";
 import { targetTypeEnum, TrainingType, workoutPartEnum, WorkoutPartType } from "../schema";
-import { IntervalGroup } from "../types/IintervalGroup";
+import { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 export type SegmentPlanOutput = z.infer<typeof segmentPlanOutput>;
 
 type ValidWorkoutPart = Exclude<WorkoutPartType, "JOGGING">;
@@ -30,7 +30,7 @@ export async function invokeCompleteActivityAnalysisAgent(
   trainingType: TrainingType,
   laps: Lap[],
   initalAgentResult: WorkoutAnalysisOutput | null,
-  groups: IntervalGroup[]
+  groups: ExpandedIntervalSet[]
 ): Promise<SegmentPlanOutput | null> {
   const normalized = normalizeActivityStreams(
     streams?.time?.data ?? [],
@@ -40,35 +40,29 @@ export async function invokeCompleteActivityAnalysisAgent(
     streams?.moving?.data
   );
 
-const specificIntervalPaces = groups.flatMap((group) => {
-  const firstItem = group.items[0];
-  const groupTarget = firstItem 
-    ? `${firstItem.targetValue}${firstItem.unit.toLowerCase()}` 
-    : 'Unknown';
-  const groupHeader = `Intervals with same target: ${groupTarget}, rest in this group:${group.restValue}`;
-  const intervalStrings = group.items.map((item, index) => {
-    const readablePace = formatRawPaceFromMps(item.proposedPace ?? 0);
-    const target = `${item.targetValue}${item.unit.toLowerCase()}`;
-    return `- Interval ${index + 1} with Target ${target} at Pace **${readablePace}**`;
+const specificIntervalPaces = groups.flatMap((group, setIndex) => {
+  const setHeader = `### SET ${setIndex + 1} (Recovery between sets: ${group.set_recovery ?? 'N/A'}s)`;
+  const stepStrings = group.steps.map((step, stepIndex) => {
+    const readablePace = step.target_pace 
+      ? formatRawPaceFromMps(Number(step.target_pace)) 
+      : "No target found";
+      
+    const target = step.work_type === "DISTANCE" 
+      ? `${step.work_value}m` 
+      : `${step.work_value}s`;
+
+    return `- Interval ${stepIndex + 1}: Target ${target} at Pace **${readablePace}** (Rest: ${step.recovery_value}s)`;
   });
-  return [groupHeader, ...intervalStrings];
+
+  return [setHeader, ...stepStrings, ""];
 }).join('\n');
   let initalAgentPrompt = "";
   if (initalAgentResult != null) {
-    const { confidence_score, intervals_description, structure } = initalAgentResult;
-    const structureSummary = structure
-      ? structure.map((block, index) => {
-        const typeLabel = block.work_type === 'DISTANCE' ? 'm' : 's';
-        const restLabel = block.recovery_value ? `with ${block.recovery_value}s rest` : 'continuous';
-        return `   - Block ${index + 1}: ${block.reps} x ${block.work_value}${typeLabel} (${restLabel})`;
-      }).join('\n')
-      : "   - No specific structure detected.";
+    const { confidence_score, intervals_description} = initalAgentResult;
     initalAgentPrompt = `Context: The previous agent identified this activity as:
   - Classification Confidence: ${(confidence_score * 100).toFixed(0)}%
   - Description: ${intervals_description ?? "N/A"}
-  
-  - Detected Structure (Blocks):
-${structureSummary}`;
+  `;
   }
 
   const buckets = prepareDataForLLM(normalized, 30);
@@ -79,10 +73,31 @@ The trainingType, confirmed by the user is: ${trainingType}
 ${initalAgentPrompt}
 
 ### USER-SPECIFIED TARGET PACES (MANDATORY):
-The user has provided specific target paces for each individual interval in the sequence. 
-Match these to the "WORK" segments you identify in the data:
+Below is the exact sequence of work intervals and their expected paces, grouped by Sets.
+Match these to the pace/HR surges in the data:
 ${specificIntervalPaces}
 
+TASK:
+1. **Set Grouping:** Use the 'set_group_index' (1-based) to group segments belonging to the same Set (e.g., all 10 intervals in Set 1 get set_group_index: 1).
+2. **Sequential Matching:** Match the identified "WORK" segments in the data to the list above in chronological order.
+3. **Pace Assignment:** For each "WORK" segment, set the 'target_pace_string' exactly as provided (e.g., "3:45").
+4. **Segment Types:** - Use "WARMUP" for the initial steady period.
+   - Use "WORK" for the intervals listed above.
+   - Use "REST" for the recovery periods between intervals.
+   - Use "COOLDOWN" for the final steady period.### USER-SPECIFIED TARGET PACES (MANDATORY):
+Below is the exact sequence of work intervals and their expected paces, grouped by Sets.
+Match these to the pace/HR surges in the data:
+${specificIntervalPaces}
+
+TASK:
+1. **Set Grouping:** Use the 'set_group_index' (1-based) to group segments belonging to the same Set (e.g., all 10 intervals in Set 1 get set_group_index: 1).
+2. **Sequential Matching:** Match the identified "WORK" segments in the data to the list above in chronological order.
+3. **Pace Assignment:** For each "WORK" segment, set the 'target_pace_string' exactly as provided (e.g., "3:45").
+4. **Segment Types:**
+   - Use "WARMUP" for the initial steady period.
+   - Use "WORK" for the intervals listed above.
+   - Use "REST" for the recovery periods between intervals.
+   - Use "COOLDOWN" for the final steady period.
 
 Comment from user: ${comment}
 
