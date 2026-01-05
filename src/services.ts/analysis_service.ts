@@ -1,22 +1,24 @@
-import { eq,and,desc, sql } from "drizzle-orm";
+import { eq,and,desc } from "drizzle-orm";
 import { invokeActivityAnalysisAgent, WorkoutAnalysisOutput, workoutBlock } from "../agent/initial_analysis_agent";
 import {
   activities,
   findOrCreateIntervalStructure,
   generateIntervalSignature,
   getDbInsertIntervalSegmentsFromStravaMetrics,
+  IntervalComponent,
   intervalSegments,
   intervalStructures,
   mapBlocksToComponents,
   normalize,
 } from "../schema";
 import { IGlobalBindings } from "../types/IRouters";
-import { DetailedActivity } from "../types/strava/IDetailedActivity";
+import { DetailedActivity, Lap } from "../types/strava/IDetailedActivity";
 import { stravaApiService } from "./strava_api_service";
 import { invokeCompleteActivityAnalysisAgent } from "../agent/full_analysis_agent";
 import { calculateSegmentStats, couldSkipCompleteAnalysis, needCompleteAnalysis, parsePaceStringToMetersPerSecond } from "./utils";
 import z from "zod";
 import { sleep } from "bun";
+import { IntervalGroup, ProposedIntervalSegment } from "../types/IintervalGroup";
 
 export const triggerInitialAnalysis = async (
   db: IGlobalBindings["db"],
@@ -131,7 +133,8 @@ export const triggerCompleteAnalysis = async (
   accessToken: string,
   activityId: number,
   stravaId: number,
-  userComment: string
+  notes: string,
+  groups: IntervalGroup[]
 ) => {
   try {
     const result = await db.query.activities.findFirst({where:
@@ -152,7 +155,7 @@ export const triggerCompleteAnalysis = async (
     if (!needCompleteAnalysis(result.trainingType)) {
       return await setStravaMetricsAsIntervalSegments(
         db,
-        userComment,
+        notes,
         activityId,
         stravaId,
         accessToken
@@ -179,10 +182,11 @@ const streams = await stravaApiService.getActivityStreams(
       .where(eq(activities.id, activityId));
     const analysisResult = await invokeCompleteActivityAnalysisAgent(
       streams,
-      userComment,
+      notes,
       result.trainingType,
       laps,
-      result.draftAnalysisResult
+      result.draftAnalysisResult,
+      groups,
     );
     if (analysisResult) {
       let segmentIndexCounter = 0;
@@ -222,7 +226,7 @@ const streams = await stravaApiService.getActivityStreams(
         trainingType:result.trainingType,
         analysisStatus: "completed" as const,
         analysedAt: new Date(),
-        notes: userComment,
+        notes: notes,
       };
       try {
         await db.transaction(async (tx) => {
@@ -262,7 +266,7 @@ const streams = await stravaApiService.getActivityStreams(
 
 const setStravaMetricsAsIntervalSegments = async (
   db: IGlobalBindings["db"],
-  userComment: string,
+  notes: string,
   activityId: number,
   stravaId: number,
   accessToken: string
@@ -271,7 +275,7 @@ const setStravaMetricsAsIntervalSegments = async (
     .update(activities)
     .set({
       analysisStatus: "completed",
-      notes: userComment,
+      notes: notes,
     })
     .where(eq(activities.id, activityId));
   const stravaActivity = await stravaApiService.getActivity(
@@ -295,24 +299,18 @@ const setStravaMetricsAsIntervalSegments = async (
 export const getProposedPaceForStructure = async (
   db: IGlobalBindings["db"],
   userId: string, 
-  blocks: z.infer<typeof workoutBlock>[]
+  blocks: z.infer<typeof workoutBlock>[],
 ) => {
   const components = mapBlocksToComponents(blocks);
   const signature = generateIntervalSignature(components);
-  const uniqueTargets = new Map<string, { type: 'distance' | 'time', val: number }>();
-  
-  components.forEach(c => {
-    const key = generateIntervalSignature(c);
-    uniqueTargets.set(key, { 
-      type: c.unit === 'm' || c.unit === 'km' ? 'distance' : 'time',
-      val: normalize(c.value, c.unit)
-    });
-  });
   const historyByStructure = await db
     .select({
       targetValue: intervalSegments.targetValue,
       targetType: intervalSegments.targetType,
       actualPace: intervalSegments.actualPace,
+      targetPace: intervalSegments.targetPace,
+      segmentIndex: intervalSegments.segmentIndex,
+      date: activities.startDateLocal, 
     })
     .from(intervalStructures)
     .innerJoin(activities, eq(activities.intervalStructureId, intervalStructures.id))
@@ -323,61 +321,64 @@ export const getProposedPaceForStructure = async (
       eq(intervalSegments.type, "INTERVALS")
     ))
     .orderBy(desc(activities.startDateLocal))
-    .limit(200);
+    .limit(10);
   if (historyByStructure.length > 0) {
-    return calculateAverages(historyByStructure, uniqueTargets);
+    return calculateAverages(historyByStructure, components);
   }
-  const conditions = Array.from(uniqueTargets.values()).map(t => 
-    and(
-      eq(intervalSegments.targetType, t.type),
-      eq(intervalSegments.targetValue, t.val) 
-    )
-  );
-
-  if (conditions.length === 0) return null;
-
-  const historyByComponent = await db
-    .select({
-      targetValue: intervalSegments.targetValue,
-      targetType: intervalSegments.targetType,
-      actualPace: intervalSegments.actualPace,
-    })
-    .from(intervalSegments)
-    .innerJoin(activities, eq(activities.id, intervalSegments.activityId))
-    .where(and(
-      eq(activities.userId, userId),
-      eq(intervalSegments.type, "INTERVALS"),
-      sql`(${sql.join(conditions, sql` OR `)})`
-    ))
-    .orderBy(desc(activities.startDateLocal))
-    .limit(100);
-
-  if (historyByComponent.length > 0) {
-    return calculateAverages(historyByComponent, uniqueTargets);
-  }
-
-  return null;
+  return components.map(comp => ({
+    targetValue: comp.value,
+    unit: comp.unit,
+    proposedPace: null,
+  }));
 };
-
 function calculateAverages(
-  rows: { targetValue: number; targetType: string; actualPace: number }[],
-  targets: Map<string, { type: string; val: number }>
-) {
-  const result: Record<string, number> = {};
+  rows: { 
+    targetValue: number; 
+    targetType: string; 
+    actualPace: number; 
+    targetPace: number | null; 
+    segmentIndex: number;
+    date: Date 
+  }[],
+  components: IntervalComponent[]
+): ProposedIntervalSegment[] {
+  const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
+  const now = new Date().getTime();
+  const getEffectivePace = (row: typeof rows[0]) => row.targetPace ?? row.actualPace;
 
-  targets.forEach((meta, key) => {
-    const relevantRows = rows.filter(r => 
-      r.targetType === meta.type && 
-      Math.abs(r.targetValue - meta.val) < 1
+  return components.map((comp, idx) => {
+    const targetVal = normalize(comp.value, comp.unit);
+    const targetType = (comp.unit === 'm' || comp.unit === 'km') ? 'distance' : 'time';
+    let relevantRows = rows.filter(r => 
+      r.targetType === targetType && 
+      Math.abs(r.targetValue - targetVal) < 1 &&
+      r.segmentIndex === idx
     );
+    if (relevantRows.length === 0) {
+      relevantRows = rows.filter(r => 
+        r.targetType === targetType && 
+        Math.abs(r.targetValue - targetVal) < 1
+      );
+    }
 
-    if (relevantRows.length === 0) return;
-    const totalSpeed = relevantRows.reduce((sum, r) => sum + r.actualPace, 0);
-    const avgSpeed = totalSpeed / relevantRows.length;
+    if (relevantRows.length === 0) return {   targetValue: comp.value,
+      unit: comp.unit, proposedPace: null };
+    const sortedRows = [...relevantRows].sort((a, b) => b.date.getTime() - a.date.getTime());
+    const latestEntry = sortedRows[0];
+    const msSinceLastDone = now - latestEntry.date.getTime();
 
-    result[key] = avgSpeed; 
+    let proposedPace: number;
+    if (msSinceLastDone < TWO_WEEKS_MS) {
+      proposedPace = getEffectivePace(latestEntry);
+    } else {
+      const totalPace = relevantRows.reduce((sum, r) => sum + getEffectivePace(r), 0);
+      proposedPace = totalPace / relevantRows.length;
+    }
+
+    return {
+      targetValue: comp.value,
+      unit: comp.unit,
+      proposedPace,
+    };
   });
-
-  return Object.keys(result).length > 0 ? result : null;
 }
-

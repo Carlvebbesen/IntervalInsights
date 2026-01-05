@@ -56,10 +56,14 @@ export const generateIntervalSignature = (
 };
 
 export const mapBlocksToComponents = (blocks: z.infer<typeof workoutBlock>[]): IntervalComponent[] => {
-  return blocks.map(b => ({
-    value: b.work_value,
-    unit: b.work_type === "DISTANCE" ? 'm' : 'sec'
-  }));
+  return blocks.map(b => (
+    Array(b.reps).fill(
+      {
+        value: b.work_value,
+        unit: b.work_type === "DISTANCE" ? 'm' : 'sec'
+      }
+      )
+)).flat();
 };
 
 const mapSegmentsToComponents = (segments: InsertIntervalSegment[]): IntervalComponent[] => {

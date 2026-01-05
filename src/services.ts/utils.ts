@@ -3,10 +3,8 @@ import { TrainingType } from "../schema";
 import { LLMActivitySummary } from "../types/LLMActivitySummary";
 import { ActivityDataPoint, StreamSet } from "../types/strava/IStream";
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-export function isRunningActivity(sportType: string): boolean {
-  const runningTypes = ["Run", "TrailRun", "VirtualRun", "Elliptical"];
+export function shouldAnalyze(sportType: string): boolean {
+  const runningTypes = ["Run", "TrailRun", "VirtualRun", "Elliptical", "Hike", "Ride", "Virtual Ride", "Rowing","Nordic Ski", "Backcountry Ski"];
   return runningTypes.includes(sportType);
 }
 export function needCompleteAnalysis(trainingType: TrainingType): boolean {
@@ -126,6 +124,19 @@ export function parsePaceStringToMetersPerSecond(paceStr: string | null): number
   if (!paceInMinPerKm || paceInMinPerKm === 0) return null;
   return 1000 / (paceInMinPerKm * 60);
 }
+export const formatRawPaceFromMps = (mps: number): string => {
+  if (mps <= 0) return "-:--";
+
+  const minPerKm = (1000 / mps) / 60;
+  let mins = Math.floor(minPerKm);
+  let secs = Math.round((minPerKm - mins) * 60);
+  if (secs === 60) {
+    mins++;
+    secs = 0;
+  }
+
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
 export function calculateSegmentStats(
   streamSet: Required<Pick<StreamSet, "time" | "distance" | "heartrate">>,
   startTime: number,

@@ -2,6 +2,7 @@ import { createClerkClient } from "@clerk/backend";
 import { createMiddleware } from 'hono/factory';
 import { TStravaEnv } from '../types/IRouters';
 import { env } from "bun";
+import { StravaError } from "../error";
 
 
 interface StravaTokenResponse {
@@ -20,20 +21,15 @@ interface StravaClerkData {
 type UserMetadata = {
   strava?: StravaClerkData;
 };
-export const stravaMiddleware = createMiddleware<TStravaEnv>(async (c, next) => {
-  const clerkUserId = c.get('clerkUserId'); 
-  try {
-    const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+export const getStravaAccessTokens= async (clerkUserId: string  )=>{
+  const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
     const user = await clerkClient.users.getUser(clerkUserId);
-    
     const metadata = user.privateMetadata as UserMetadata; 
     let tokens = metadata.strava;
     if (!tokens?.access_token || !tokens?.refresh_token) {
-      return c.json({ error: 'Strava account not linked' }, 403);
+      throw new StravaError( 403,"Strava account not linked");
     }
-
     const isExpired = tokens.expires_at < (Math.floor(Date.now() / 1000) + 300);
-
     if (isExpired) {
       const refreshResponse = await fetch('https://www.strava.com/oauth/token', {
         method: 'POST',
@@ -45,9 +41,10 @@ export const stravaMiddleware = createMiddleware<TStravaEnv>(async (c, next) => 
           refresh_token: tokens.refresh_token,
         }),
       });
-
-      if (!refreshResponse.ok) return c.json({ error: 'Strava session expired' }, 401);
-
+      
+      if (!refreshResponse.ok) { 
+        throw new StravaError( 401,"Strava session expired");
+      }
       const data = await refreshResponse.json() as StravaTokenResponse;
       tokens = {
         access_token: data.access_token,
@@ -59,11 +56,13 @@ export const stravaMiddleware = createMiddleware<TStravaEnv>(async (c, next) => 
         privateMetadata: { strava: tokens }
       });
     }
+    return tokens;
+}
+
+export const stravaMiddleware = createMiddleware<TStravaEnv>(async (c, next) => {
+  const clerkUserId = c.get('clerkUserId'); 
+    const tokens = await getStravaAccessTokens(clerkUserId);
     c.set('stravaAccessToken', tokens.access_token);
     c.set('stravaAthleteId', tokens.athlete_id);
     await next();
-  } catch (error) {
-    console.error('Strava Middleware Error:', error);
-    return c.json({ error: 'Internal Server Error' }, 500);
-  }
 });

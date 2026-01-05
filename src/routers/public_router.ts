@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
-import { TPublicEnv } from '../types/IRouters';
+import { TPublicEnv, TStravaEnv } from '../types/IRouters';
 import { env } from 'bun';
 import { processStravaWebhook } from '../services.ts/process_strava_event';
 import { IStravaWebhookEvent } from '../types/strava/IWebHookEvent';
+import { stravaMiddleware } from '../middlewares/strava_middleware';
 
 const publicRouter = new Hono<TPublicEnv>();
 
@@ -14,7 +15,6 @@ publicRouter.get("/strava/event", (c) => {
   if (mode === "subscribe" && token === process.env.STRAVA_WEBHOOK_VERIFY_TOKEN) {
     return c.json({ "hub.challenge": challenge }, 200);
   }
-
   console.error("Verification failed: Token mismatch or invalid mode");
   return c.json({ error: "Verification failed" }, 403);
 });
@@ -22,7 +22,6 @@ publicRouter.get("/health", (c) => {
   console.log("Health triggered");
   return c.json("i'm alive :D ", 200);
 });
-
 publicRouter.post("/strava/event", async (c) => {
   const body = (await c.req.json()) as IStravaWebhookEvent;
 

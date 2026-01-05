@@ -6,6 +6,8 @@ import { stravaMiddleware } from "../middlewares/strava_middleware";
 import { getProposedPaceForStructure, triggerCompleteAnalysis } from "../services.ts/analysis_service";
 import z from "zod";
 import { workoutBlock } from "../agent/initial_analysis_agent";
+import { zValidator } from "@hono/zod-validator";
+import { IntervalGroup } from "../types/IintervalGroup";
 
 
 const agentsRouter = new Hono<TStravaEnv>();
@@ -39,8 +41,8 @@ agentsRouter.get("/pending", async (c)=>{
 
 agentsRouter.post("/start-complete-analysis", async (c) => {
   try {
-    const body = await c.req.json<{ activityId: number;stravaId: number; userComment: string }>();
-    const { activityId, userComment, stravaId } = body;
+    const body = await c.req.json<{ activityId: number;stravaId: number; notes: string;groups?: IntervalGroup[]; }>();
+    const { activityId, notes, stravaId, groups } = body;
     if (!activityId) {
       return c.json({ error: "Activity ID is required" }, 400);
     }
@@ -54,7 +56,9 @@ agentsRouter.post("/start-complete-analysis", async (c) => {
       accessToken,
       activityId,
       stravaId,
-      userComment || ""
+      notes || "",
+      groups??[],
+
     );
     return c.json({ success: true, message: "Analysis Started successfully" }, 200);
   } catch (error) {
@@ -70,23 +74,19 @@ const paceRequestSchema = z.object({
 
 agentsRouter.post(
   "/proposed-pace",
+  zValidator("json", paceRequestSchema),
   async (c) => {
   const user = c.get("userId");
-  // TODO: also check the strava laps to see if they fit better for pacing, if it is an outdoor activity
-  const rawBody = await c.req.json();
-  const result = paceRequestSchema.safeParse(rawBody);
-  if (!result.success) {
-    return c.json({ error: result.error }, 400);
-  }
-  const { structure } = result.data;
+  const data = c.req.valid("json");
+  const { structure } = data;
   if (!structure || structure.length === 0) {
     return c.json({ proposed_paces: null });
   }
     try {
       const proposedPaces = await getProposedPaceForStructure(c.env.db, user, structure);
-      return c.json({ 
-        proposed_paces: proposedPaces 
-      });
+      return c.json(
+        proposedPaces 
+      );
     } catch (error) {
       console.error("Error calculating proposed pace:", error);
       return c.json({ error: "Failed to calculate pace" }, 500);
