@@ -58,42 +58,20 @@ activitiesRouter.get("/", zValidator("query", querySchema), async (c) => {
     return c.json({ error: "Internal Server Error" }, 500);
   }
 });
-
-const updateActivitySchema = z.object({
-  id: z.number(),
-  trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),
-  notes: z.string().nullable().optional(),
-  feeling: z.number().nullable().optional(),
-});
-activitiesRouter.get("/:id", async (c) => {
+activitiesRouter.get("/:id/segments", async (c) => {
   try {
     const activityId = parseInt(c.req.param("id"));
+    console.log(`AcitityDetails for${activityId} `)
     if (isNaN(activityId)) {
       return c.json({ error: "Invalid activity ID" }, 400);
     }
-
-    const userId = c.get("userId");
-
-    // Fetch the activity
-    const activity = await c.env.db
-      .select()
-      .from(activities)
-      .where(and(eq(activities.id, activityId), eq(activities.userId, userId)))
-      .limit(1);
-
-    if (activity.length === 0) {
-      return c.json({ error: "Activity not found or unauthorized" }, 404);
-    }
-
-    // Fetch all interval segments for this activity
     const segments = await c.env.db
-      .select()
-      .from(intervalSegments)
-      .where(eq(intervalSegments.activityId, activityId))
-      .orderBy(asc(intervalSegments.segmentIndex));
-
+    .select()
+    .from(intervalSegments)
+    .where(eq(intervalSegments.activityId, activityId))
+    .orderBy(asc(intervalSegments.segmentIndex));
+    
     return c.json({
-      activity: activity[0],
       intervalSegments: segments,
     });
   } catch (error) {
@@ -102,6 +80,13 @@ activitiesRouter.get("/:id", async (c) => {
   }
 });
 
+
+const updateActivitySchema = z.object({
+  id: z.number(),
+  trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),
+  notes: z.string().nullable().optional(),
+  feeling: z.number().nullable().optional(),
+});
 activitiesRouter.post("/update", async (c) => {
   try {
     const body = await c.req.json();
