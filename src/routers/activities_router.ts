@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { TGlobalEnv } from "../types/IRouters";
-import { activities, trainingTypeEnum } from "../schema";
-import { eq,desc, inArray,and, or, ilike, gte } from "drizzle-orm";
+import { activities, trainingTypeEnum, intervalSegments } from "../schema";
+import { eq, desc, asc, inArray, and, or, ilike, gte } from "drizzle-orm";
 import { zValidator } from "@hono/zod-validator";
 import z from "zod";
 
@@ -15,13 +15,13 @@ const querySchema = z.object({
   trainingType: z.enum(trainingTypeEnum.enumValues).optional(),
 });
 
-activitiesRouter.get("/",zValidator("query", querySchema), async (c) => {
-  try{
+activitiesRouter.get("/", zValidator("query", querySchema), async (c) => {
+  try {
     const userId = c.get("userId");
     const { page, search, distance, trainingType } = c.req.valid("query");
     const filters = [];
-    filters.push(eq(activities.userId, userId)); 
-    filters.push(eq(activities.analysisStatus, "completed")); 
+    filters.push(eq(activities.userId, userId));
+    filters.push(eq(activities.analysisStatus, "completed"));
     if (search) {
       filters.push(
         or(
@@ -65,6 +65,43 @@ const updateActivitySchema = z.object({
   notes: z.string().nullable().optional(),
   feeling: z.number().nullable().optional(),
 });
+activitiesRouter.get("/:id", async (c) => {
+  try {
+    const activityId = parseInt(c.req.param("id"));
+    if (isNaN(activityId)) {
+      return c.json({ error: "Invalid activity ID" }, 400);
+    }
+
+    const userId = c.get("userId");
+
+    // Fetch the activity
+    const activity = await c.env.db
+      .select()
+      .from(activities)
+      .where(and(eq(activities.id, activityId), eq(activities.userId, userId)))
+      .limit(1);
+
+    if (activity.length === 0) {
+      return c.json({ error: "Activity not found or unauthorized" }, 404);
+    }
+
+    // Fetch all interval segments for this activity
+    const segments = await c.env.db
+      .select()
+      .from(intervalSegments)
+      .where(eq(intervalSegments.activityId, activityId))
+      .orderBy(asc(intervalSegments.segmentIndex));
+
+    return c.json({
+      activity: activity[0],
+      intervalSegments: segments,
+    });
+  } catch (error) {
+    console.error("Error fetching activity:", error);
+    return c.json({ error: "Internal Server Error" }, 500);
+  }
+});
+
 activitiesRouter.post("/update", async (c) => {
   try {
     const body = await c.req.json();
@@ -77,19 +114,13 @@ activitiesRouter.post("/update", async (c) => {
     const updated = await c.env.db
       .update(activities)
       .set(data)
-      .where(
-        and(
-          eq(activities.id, id), 
-          eq(activities.userId, userId)
-        )
-      )
+      .where(and(eq(activities.id, id), eq(activities.userId, userId)))
       .returning();
 
     if (updated.length === 0) {
       return c.json({ error: "Activity not found or unauthorized" }, 404);
     }
     return c.json(updated[0]);
-
   } catch (error) {
     if (error instanceof z.ZodError) {
       return c.json({ error: "Invalid input", details: error.errors }, 400);

@@ -10,7 +10,7 @@ import {
   mapSetsToIntervalComponent,
 } from "../schema";
 import { IGlobalBindings } from "../types/IRouters";
-import { DetailedActivity, Lap } from "../types/strava/IDetailedActivity";
+import { DetailedActivity } from "../types/strava/IDetailedActivity";
 import { stravaApiService } from "./strava_api_service";
 import { invokeCompleteActivityAnalysisAgent } from "../agent/full_analysis_agent";
 import { calculateSegmentStats, couldSkipCompleteAnalysis, generateCompleteIntervalSet, needCompleteAnalysis, parsePaceStringToMetersPerSecond } from "./utils";
