@@ -91,26 +91,29 @@ activitiesRouter.post("/update", async (c) => {
   try {
     const body = await c.req.json();
     const { id, ...data } = updateActivitySchema.parse(body);
-    if (Object.keys(data).length === 0) {
-      return c.json({ error: "No fields provided for update" }, 400);
+    const updateData = Object.fromEntries(
+      Object.entries(data).filter(([_, value]) => value != null)
+    );
+    if (Object.keys(updateData).length === 0) {
+      return c.json({ error: "No valid data provided to update" }, 400);
     }
 
     const userId = c.get("userId");
     const updated = await c.env.db
       .update(activities)
-      .set(data)
+      .set(updateData)
       .where(and(eq(activities.id, id), eq(activities.userId, userId)))
       .returning();
 
     if (updated.length === 0) {
       return c.json({ error: "Activity not found or unauthorized" }, 404);
     }
+
     return c.json(updated[0]);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return c.json({ error: "Invalid input", details: error.errors }, 400);
     }
-    console.error(error);
     return c.json({ error: "Internal Server Error" }, 500);
   }
 });

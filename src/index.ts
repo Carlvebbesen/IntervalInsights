@@ -1,9 +1,8 @@
 import { clerkMiddleware, } from "@hono/clerk-auth";
-import { Hono } from "hono";
 import { cors } from "hono/cors";
 import stravaEntryRouter from "./routers/strava/strava_entry_router";
 import { authGuard } from "./middlewares/auth_middleware";
-import {  TGlobalEnv } from "./types/IRouters";
+import { TGlobalEnv } from "./types/IRouters";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema";
@@ -12,6 +11,9 @@ import publicRouter from "./routers/public_router";
 import { StravaError } from "./error";
 import activitiesRouter from "./routers/activities_router";
 import agentsRouter from "./routers/agents_router";
+import intervalStructureRouter from "./routers/interval_structure_router";
+import dashboardRouter from "./routers/dashboard_router";
+import { Hono } from "hono";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const db = drizzle({ client: pool, schema });
@@ -39,6 +41,8 @@ app.use('/api/*', authGuard);
 app.route("/api/activity", activitiesRouter);
 app.route("/api/agents", agentsRouter);
 app.route("/api/strava", stravaEntryRouter);
+app.route("/api/interval-structures", intervalStructureRouter);
+app.route("/api/dashboard", dashboardRouter);
 
 // 404 handler
 app.notFound((c) => {

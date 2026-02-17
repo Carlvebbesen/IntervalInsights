@@ -1,4 +1,3 @@
-import z from "zod";
 import { StreamSet } from "../types/strava/IStream";
 import { formatRawPaceFromMps, normalizeActivityStreams, prepareDataForLLM } from "../services.ts/utils";
 import { WorkoutAnalysisOutput } from "./initial_analysis_agent";
@@ -6,6 +5,7 @@ import { Lap } from "../types/strava/IDetailedActivity";
 import { geminiFlashModel } from "./model";
 import { targetTypeEnum, TrainingType, workoutPartEnum, WorkoutPartType } from "../schema";
 import { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
+import z from "zod";
 export type SegmentPlanOutput = z.infer<typeof segmentPlanOutput>;
 
 type ValidWorkoutPart = Exclude<WorkoutPartType, "JOGGING">;
