@@ -178,6 +178,26 @@ export function calculateSegmentStats(
     timeSeriesEndTime: streamSet.time.data[endIdx],
   };
 }
+// ─── Activity Conversion Helpers ─────────────────────────────────────────────
+
+/** Sport types where distance is measured in time (not metres) and needs conversion */
+const TIME_BASED_SPORT_TYPES: string[] = ["Elliptical"];
+
+/**
+ * Converts elliptical moving time (seconds) to an equivalent distance in metres.
+ * Conversion: 30 min (1800 s) = 5 km (5000 m)
+ */
+export function ellipticalTimeToMetres(movingTimeSeconds: number): number {
+  return (movingTimeSeconds / 1800) * 5000;
+}
+
+/**
+ * Returns whether a sport type should use time-based distance conversion.
+ */
+export function isTimeBased(sportType: string): boolean {
+  return TIME_BASED_SPORT_TYPES.includes(sportType);
+}
+
 export const generateCompleteIntervalSet = (sets: z.infer<typeof workoutSet>[]) => {
   return sets.flatMap((set) => {
     const expandedSets = [];

@@ -49,3 +49,29 @@ export const workoutPartEnum = pgEnum('workout_part', [
 
 
 export type WorkoutPartType = (typeof workoutPartEnum.enumValues)[number];
+
+// ─── Sport Type Constants ─────────────────────────────────────────────────────
+
+/** All Strava sport types that count as "running" */
+export const RUNNING_SPORT_TYPES = [
+  "Run",
+  "VirtualRun",
+  "TrailRun",
+] as const;
+
+export type RunningSportType = (typeof RUNNING_SPORT_TYPES)[number];
+
+/** Sport types included in the "other activities" effort graph */
+export const OTHER_SPORT_TYPES = [
+  "NordicSki",
+  "BackcountrySki",
+  "Elliptical",
+  "Swim",
+  "Ride",
+  "VirtualRide",
+  "EBikeRide",
+  "Walk",
+  "Hike",
+] as const;
+
+export type OtherSportType = (typeof OTHER_SPORT_TYPES)[number];
