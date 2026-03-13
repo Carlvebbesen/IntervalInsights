@@ -41,6 +41,19 @@ export const targetTypeEnum = pgEnum("target_type_enum", [
 
 export type TargetTypeEnum = (typeof targetTypeEnum.enumValues)[number];
 export type TrainingType = (typeof trainingTypeEnum.enumValues)[number];
+
+/** Training types that count as interval / quality sessions */
+export const INTERVAL_TRAINING_TYPES = [
+  "TEMPO",
+  "PROGRESSIVE_LONG_RUN",
+  "LONG_INTERVALS",
+  "SHORT_INTERVALS",
+  "SPRINTS",
+  "HILL_SPRINTS",
+  "FARTLEK",
+] as const satisfies readonly TrainingType[];
+
+export type IntervalTrainingType = (typeof INTERVAL_TRAINING_TYPES)[number];
 export type IntervalType = (typeof intervalTypeEnum.enumValues)[number];
 
 export const workoutPartEnum = pgEnum('workout_part', [

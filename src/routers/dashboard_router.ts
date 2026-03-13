@@ -2,7 +2,7 @@ import { TGlobalEnv } from "../types/IRouters";
 import { activities } from "../schema";
 import { eq, and, gte, lte, sql, avg, sum, count, inArray } from "drizzle-orm";
 import { Hono } from "hono";
-import { RUNNING_SPORT_TYPES, OTHER_SPORT_TYPES } from "../schema/enums";
+import { RUNNING_SPORT_TYPES, OTHER_SPORT_TYPES, INTERVAL_TRAINING_TYPES, TrainingType } from "../schema/enums";
 import { ellipticalTimeToMetres, isTimeBased } from "../services.ts/utils";
 
 const dashboardRouter = new Hono<TGlobalEnv>();
@@ -133,7 +133,7 @@ dashboardRouter.get("/", async (c) => {
       ? 0
       : ((thisWeekKm - avgKmByThisPointInWeek) / avgKmByThisPointInWeek) * 100;
 
-  // ── 3. Running graph (8 weeks) ────────────────────────────────────────────
+  
 
   const weeklyRunData = await c.env.db
     .select({
@@ -151,7 +151,7 @@ dashboardRouter.get("/", async (c) => {
     .groupBy(sql`DATE_TRUNC('week', ${activities.startDateLocal})`)
     .orderBy(sql`DATE_TRUNC('week', ${activities.startDateLocal}) ASC`);
 
-  // ── 4. Other activities graph (8 weeks) ───────────────────────────────────
+  
 
   const otherTypes = OTHER_SPORT_TYPES as unknown as string[];
 
@@ -176,7 +176,7 @@ dashboardRouter.get("/", async (c) => {
     )
     .orderBy(sql`DATE_TRUNC('week', ${activities.startDateLocal}) ASC`);
 
-  // ── 5. Build graph data ───────────────────────────────────────────────────
+  
 
   const graphData = [];
   for (let i = 8; i >= 0; i--) {
@@ -218,22 +218,12 @@ dashboardRouter.get("/", async (c) => {
     });
   }
 
-  const intervalTypes = [
-    "TEMPO",
-    "PROGRESSIVE_LONG_RUN",
-    "LONG_INTERVALS",
-    "SHORT_INTERVALS",
-    "SPRINTS",
-    "HILL_SPRINTS",
-    "FARTLEK",
-  ];
-
   const longTermStats = await c.env.db
     .select({
       totalSessions: count(),
       totalIntervals: count(
         sql`CASE WHEN ${activities.trainingType} IN (${sql.raw(
-          intervalTypes.map((t) => `'${t}'`).join(",")
+          INTERVAL_TRAINING_TYPES.map((t) => `'${t}'`).join(",")
         )}) THEN 1 ELSE NULL END`
       ),
       avgElevationPerRun: avg(activities.totalElevationGain),
@@ -258,7 +248,7 @@ dashboardRouter.get("/", async (c) => {
     ? (Number(longTermStats[0].avgDistancePerRun) || 0) / 1000
     : null;
 
-  // ── 7. Response ───────────────────────────────────────────────────────────
+  
 
   return c.json({
     summary: {
@@ -283,6 +273,188 @@ dashboardRouter.get("/", async (c) => {
       avgFeelingMonth: Number(result.lastMonthFeeling) || null,
       avgElevationPerRun,
       avgDistancePerRunKm,
+    },
+  });
+});
+
+dashboardRouter.get("/week/:weekStart", async (c) => {
+  const userId = c.get("userId");
+
+  
+  const weekStartParam = c.req.param("weekStart"); 
+  const weekStart = new Date(weekStartParam);
+  if (isNaN(weekStart.getTime())) {
+    return c.json({ error: "Invalid weekStart date. Use ISO format: YYYY-MM-DD (Monday of the target week)" }, 400);
+  }
+  weekStart.setHours(0, 0, 0, 0);
+
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 7);
+
+  const prevWeekStart = new Date(weekStart);
+  prevWeekStart.setDate(prevWeekStart.getDate() - 7);
+  const prevWeekEnd = weekStart; 
+
+  
+  const monthAgoWeekStart = new Date(weekStart);
+  monthAgoWeekStart.setDate(monthAgoWeekStart.getDate() - 28);
+  const monthAgoWeekEnd = new Date(monthAgoWeekStart);
+  monthAgoWeekEnd.setDate(monthAgoWeekEnd.getDate() + 7);
+
+  const runningTypes = RUNNING_SPORT_TYPES as unknown as string[];
+  const otherTypes = OTHER_SPORT_TYPES as unknown as string[];
+
+  
+  const runningStatsRaw = await c.env.db
+    .select({
+      
+      thisWeekDistance: sum(
+        sql`CASE WHEN ${activities.startDateLocal} >= ${weekStart} AND ${activities.startDateLocal} < ${weekEnd} THEN ${activities.distance} ELSE 0 END`
+      ),
+      thisWeekElevation: sum(
+        sql`CASE WHEN ${activities.startDateLocal} >= ${weekStart} AND ${activities.startDateLocal} < ${weekEnd} THEN ${activities.totalElevationGain} ELSE 0 END`
+      ),
+      thisWeekMovingTime: sum(
+        sql`CASE WHEN ${activities.startDateLocal} >= ${weekStart} AND ${activities.startDateLocal} < ${weekEnd} THEN ${activities.movingTime} ELSE 0 END`
+      ),
+      thisWeekAvgHR: avg(
+        sql`CASE WHEN ${activities.startDateLocal} >= ${weekStart} AND ${activities.startDateLocal} < ${weekEnd} AND ${activities.averageHeartRate} IS NOT NULL THEN ${activities.averageHeartRate} ELSE NULL END`
+      ),
+      thisWeekFeeling: avg(
+        sql`CASE WHEN ${activities.startDateLocal} >= ${weekStart} AND ${activities.startDateLocal} < ${weekEnd} THEN ${activities.feeling} ELSE NULL END`
+      ),
+      thisWeekSessions: count(
+        sql`CASE WHEN ${activities.startDateLocal} >= ${weekStart} AND ${activities.startDateLocal} < ${weekEnd} THEN 1 ELSE NULL END`
+      ),
+      thisWeekIndoor: count(
+        sql`CASE WHEN ${activities.startDateLocal} >= ${weekStart} AND ${activities.startDateLocal} < ${weekEnd} AND ${activities.indoor} = true THEN 1 ELSE NULL END`
+      ),
+      
+      prevWeekDistance: sum(
+        sql`CASE WHEN ${activities.startDateLocal} >= ${prevWeekStart} AND ${activities.startDateLocal} < ${prevWeekEnd} THEN ${activities.distance} ELSE 0 END`
+      ),
+      
+      monthAgoDistance: sum(
+        sql`CASE WHEN ${activities.startDateLocal} >= ${monthAgoWeekStart} AND ${activities.startDateLocal} < ${monthAgoWeekEnd} THEN ${activities.distance} ELSE 0 END`
+      ),
+    })
+    .from(activities)
+    .where(
+      and(
+        eq(activities.userId, userId),
+        inArray(activities.sportType, runningTypes),
+        gte(activities.startDateLocal, monthAgoWeekStart), 
+        lte(activities.startDateLocal, weekEnd)
+      )
+    );
+
+  const rs = runningStatsRaw[0];
+
+  const thisWeekKm = (Number(rs.thisWeekDistance) || 0) / 1000;
+  const prevWeekKm = (Number(rs.prevWeekDistance) || 0) / 1000;
+  const monthAgoKm = (Number(rs.monthAgoDistance) || 0) / 1000;
+  const thisWeekMovingTimeSec = Number(rs.thisWeekMovingTime) || 0;
+
+  const percentChangeVsPrevWeek =
+    prevWeekKm === 0 ? null : ((thisWeekKm - prevWeekKm) / prevWeekKm) * 100;
+
+  const percentChangeVsSameWeek1MonthAgo =
+    monthAgoKm === 0 ? null : ((thisWeekKm - monthAgoKm) / monthAgoKm) * 100;
+
+  
+  const avgPaceMinPerKm =
+    thisWeekKm > 0 && thisWeekMovingTimeSec > 0
+      ? thisWeekMovingTimeSec / 60 / thisWeekKm
+      : null;
+
+  const thisWeekSessions = Number(rs.thisWeekSessions) || 0;
+  const thisWeekIndoor = Number(rs.thisWeekIndoor) || 0;
+  const thisWeekOutdoor = thisWeekSessions - thisWeekIndoor;
+
+  
+  const weekActivities = await c.env.db
+    .select({
+      trainingType: activities.trainingType,
+    })
+    .from(activities)
+    .where(
+      and(
+        eq(activities.userId, userId),
+        inArray(activities.sportType, runningTypes),
+        gte(activities.startDateLocal, weekStart),
+        lte(activities.startDateLocal, weekEnd)
+      )
+    );
+
+  
+  const trainingTypeBreakdown: Record<string, number> = {};
+  for (const { trainingType } of weekActivities) {
+    if (!trainingType) continue;
+    trainingTypeBreakdown[trainingType] = (trainingTypeBreakdown[trainingType] ?? 0) + 1;
+  }
+
+  
+  const intervalCount = weekActivities.filter(
+    (a) => a.trainingType && (INTERVAL_TRAINING_TYPES as readonly string[]).includes(a.trainingType)
+  ).length;
+
+  
+  const otherActivitiesRaw = await c.env.db
+    .select({
+      sportType: activities.sportType,
+      totalDistance: sum(activities.distance),
+      totalMovingTime: sum(activities.movingTime),
+    })
+    .from(activities)
+    .where(
+      and(
+        eq(activities.userId, userId),
+        inArray(activities.sportType, otherTypes),
+        gte(activities.startDateLocal, weekStart),
+        lte(activities.startDateLocal, weekEnd)
+      )
+    )
+    .groupBy(activities.sportType);
+
+  let otherCombinedKm = 0;
+  const otherActivities = otherActivitiesRaw.map((row) => {
+    const sport = row.sportType;
+    const km = isTimeBased(sport)
+      ? ellipticalTimeToMetres(Number(row.totalMovingTime) || 0) / 1000
+      : (Number(row.totalDistance) || 0) / 1000;
+    otherCombinedKm += km;
+    return {
+      sportType: sport,
+      km,
+      movingTimeSec: Number(row.totalMovingTime) || 0,
+    };
+  });
+
+  
+  return c.json({
+    weekStart: weekStartParam,
+    running: {
+      totalKm: thisWeekKm,
+      totalElevationGain: Number(rs.thisWeekElevation) || 0,
+      totalMovingTimeSec: thisWeekMovingTimeSec,
+      avgHeartRate: Number(rs.thisWeekAvgHR) || null,
+      avgPaceMinPerKm,
+      numSessions: thisWeekSessions,
+      indoorSessions: thisWeekIndoor,
+      outdoorSessions: thisWeekOutdoor,
+      avgFeeling: Number(rs.thisWeekFeeling) || null,
+      percentChangeVsPrevWeek,
+      percentChangeVsSameWeek1MonthAgo,
+      prevWeekKm,
+      monthAgoWeekKm: monthAgoKm,
+      trainingTypeBreakdown,
+    },
+    intervals: {
+      count: intervalCount,
+    },
+    otherActivities: {
+      combinedKm: otherCombinedKm,
+      breakdown: otherActivities,
     },
   });
 });
