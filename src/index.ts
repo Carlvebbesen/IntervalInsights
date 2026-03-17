@@ -9,11 +9,13 @@ import * as schema from "./schema";
 import { logger } from 'hono/logger'
 import publicRouter from "./routers/public_router";
 import { StravaError } from "./error";
-import activitiesRouter from "./routers/activities_router";
+import activitiesRouter, { stravaActivitiesRouter } from "./routers/activities_router";
 import agentsRouter from "./routers/agents_router";
 import intervalStructureRouter from "./routers/interval_structure_router";
 import dashboardRouter from "./routers/dashboard_router";
 import { Hono } from "hono";
+import { openAPIRouteHandler } from "hono-openapi";
+import { swaggerUI } from "@hono/swagger-ui";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const db = drizzle({ client: pool, schema });
@@ -35,10 +37,27 @@ app.use('/api/*', async (c, next) => {
   await next();
 });
 app.route("/api", publicRouter);
+if (process.env.NODE_ENV !== "production") {
+  app.get("/api/openapi.json", openAPIRouteHandler(app, {
+    documentation: {
+      info: { title: "Interval Insights API", version: "1.0.0" },
+      servers: [{ url: "http://localhost:3000" }],
+      components: {
+        securitySchemes: {
+          bearerAuth: { type: "http", scheme: "bearer" },
+        },
+      },
+      security: [{ bearerAuth: [] }],
+    },
+  }));
+  app.get("/api/docs", swaggerUI({ url: "/api/openapi.json" }));
+}
+
 app.use('/api/*', clerkMiddleware())
 app.use('/api/*', authGuard);
 
 app.route("/api/activity", activitiesRouter);
+app.route("/api/activity", stravaActivitiesRouter);
 app.route("/api/agents", agentsRouter);
 app.route("/api/strava", stravaEntryRouter);
 app.route("/api/interval-structures", intervalStructureRouter);

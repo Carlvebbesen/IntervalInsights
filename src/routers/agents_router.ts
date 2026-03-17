@@ -6,14 +6,23 @@ import { stravaMiddleware } from "../middlewares/strava_middleware";
 import { getProposedPaceForStructure, triggerCompleteAnalysis, triggerInitialAnalysis } from "../services.ts/analysis_service";
 import z from "zod";
 import { workoutSet } from "../agent/initial_analysis_agent";
-import { zValidator } from "@hono/zod-validator";
+import { describeRoute, resolver, validator } from "hono-openapi";
 import { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
+import { ErrorSchema, PendingActivitySchema } from "../schemas/api_schemas";
 
 
 const agentsRouter = new Hono<TStravaEnv>();
 agentsRouter.use('*', stravaMiddleware);
 
-agentsRouter.get("/pending", async (c)=>{
+agentsRouter.get(
+  "/pending",
+  describeRoute({
+    description: "Get activities pending analysis",
+    responses: {
+      200: { description: "Pending activities", content: { "application/json": { schema: resolver(z.array(PendingActivitySchema)) } } },
+    },
+  }),
+  async (c)=>{
     const userId = c.get("userId");
     const result = await c.env.db
   .select({
@@ -46,10 +55,28 @@ c.env.db,
   return c.json(pending, 200);
 });
 
-agentsRouter.post("/start-complete-analysis", async (c) => {
+const startCompleteAnalysisSchema = z.object({
+  activityId: z.number(),
+  stravaId: z.number(),
+  notes: z.string(),
+  sets: z.array(z.unknown()).optional(),
+});
+
+agentsRouter.post(
+  "/start-complete-analysis",
+  describeRoute({
+    description: "Start a complete analysis for an activity",
+    responses: {
+      200: { description: "Analysis started", content: { "application/json": { schema: resolver(z.object({ success: z.boolean(), message: z.string() })) } } },
+      400: { description: "Bad request", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  validator("json", startCompleteAnalysisSchema),
+  async (c) => {
   try {
-    const body = await c.req.json<{ activityId: number;stravaId: number; notes: string;sets?: ExpandedIntervalSet[]; }>();
-    const { activityId, notes, stravaId, sets } = body;
+    const { activityId, notes, stravaId, sets } = c.req.valid("json");
     if (!activityId) {
       return c.json({ error: "Activity ID is required" }, 400);
     }
@@ -64,7 +91,7 @@ agentsRouter.post("/start-complete-analysis", async (c) => {
       activityId,
       stravaId,
       notes || "",
-      sets??[],
+      (sets ?? []) as ExpandedIntervalSet[],
 
     );
     return c.json({ success: true, message: "Analysis Started successfully" }, 200);
@@ -81,7 +108,14 @@ const paceRequestSchema = z.object({
 
 agentsRouter.post(
   "/proposed-pace",
-  zValidator("json", paceRequestSchema),
+  describeRoute({
+    description: "Get proposed paces for an interval structure",
+    responses: {
+      200: { description: "Proposed paces", content: { "application/json": { schema: resolver(z.unknown()) } } },
+      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  validator("json", paceRequestSchema),
   async (c) => {
   const user = c.get("userId");
   const data = c.req.valid("json");

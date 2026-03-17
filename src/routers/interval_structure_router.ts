@@ -2,10 +2,22 @@ import { TGlobalEnv } from "../types/IRouters";
 import { activities, intervalStructures } from "../schema";
 import { eq, } from "drizzle-orm";
 import { Hono } from "hono";
+import { describeRoute, resolver } from "hono-openapi";
+import { IntervalStructureSchema, ErrorSchema } from "../schemas/api_schemas";
+import { z } from "zod";
 
 const intervalStructureRouter = new Hono<TGlobalEnv>();
 
-intervalStructureRouter.get("/filter", async (c) => {
+intervalStructureRouter.get(
+  "/filter",
+  describeRoute({
+    description: "Get distinct interval structures for the authenticated user",
+    responses: {
+      200: { description: "List of interval structures", content: { "application/json": { schema: resolver(z.array(IntervalStructureSchema)) } } },
+      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  async (c) => {
   try {
     const userId = c.get("userId");
     const result = await c.env.db

@@ -1,9 +1,17 @@
 import { Hono } from "hono";
-import { TGlobalEnv } from "../types/IRouters";
+import { TGlobalEnv, TStravaEnv } from "../types/IRouters";
 import { activities, trainingTypeEnum, intervalSegments } from "../schema";
-import { eq, desc, asc, inArray, and, or, ilike, gte } from "drizzle-orm";
-import { zValidator } from "@hono/zod-validator";
+import { eq, desc, asc, inArray, and, or, ilike, gte, isNotNull } from "drizzle-orm";
+import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
+import { stravaMiddleware } from "../middlewares/strava_middleware";
+import { stravaApiService } from "../services.ts/strava_api_service";
+import {
+  ActivityListResponseSchema,
+  ActivitySchema,
+  ErrorSchema,
+  IntervalSegmentSchema,
+} from "../schemas/api_schemas";
 
 const activitiesRouter = new Hono<TGlobalEnv>();
 const PAGE_SIZE = 15;
@@ -15,7 +23,17 @@ const querySchema = z.object({
   trainingType: z.enum(trainingTypeEnum.enumValues).optional(),
 });
 
-activitiesRouter.get("/", zValidator("query", querySchema), async (c) => {
+activitiesRouter.get(
+  "/",
+  describeRoute({
+    description: "List activities for the authenticated user",
+    responses: {
+      200: { description: "Paginated activity list", content: { "application/json": { schema: resolver(ActivityListResponseSchema) } } },
+      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  validator("query", querySchema),
+  async (c) => {
   try {
     const userId = c.get("userId");
     const { page, search, distance, trainingType } = c.req.valid("query");
@@ -58,7 +76,19 @@ activitiesRouter.get("/", zValidator("query", querySchema), async (c) => {
     return c.json({ error: "Internal Server Error" }, 500);
   }
 });
-activitiesRouter.get("/:id/segments", async (c) => {
+activitiesRouter.get(
+  "/:id/segments",
+  describeRoute({
+    description: "Get interval segments for an activity",
+    responses: {
+      200: {
+        description: "Interval segments",
+        content: { "application/json": { schema: resolver(z.object({ intervalSegments: z.array(IntervalSegmentSchema) })) } },
+      },
+      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  async (c) => {
   try {
     const activityId = parseInt(c.req.param("id"));
     console.log(`AcitityDetails for${activityId} `)
@@ -81,16 +111,125 @@ activitiesRouter.get("/:id/segments", async (c) => {
 });
 
 
+const activityIdParamSchema = z.object({
+  id: z.coerce.number().int().positive(),
+});
+
+const stravaActivitiesRouter = new Hono<TStravaEnv>();
+stravaActivitiesRouter.use("*", stravaMiddleware);
+
+stravaActivitiesRouter.get(
+  "/gear",
+  describeRoute({
+    description: "Get gear for the authenticated user from Strava",
+    responses: {
+      200: { description: "Gear list", content: { "application/json": { schema: resolver(z.object({ gear: z.array(z.unknown()) })) } } },
+      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  async (c) => {
+  try {
+    const userId = c.get("userId");
+    const gearRows = await c.env.db
+      .selectDistinct({ gearId: activities.gearId })
+      .from(activities)
+      .where(and(eq(activities.userId, userId), isNotNull(activities.gearId)));
+
+    const gearIds = gearRows.map((r) => r.gearId as string);
+    const gear = await Promise.all(
+      gearIds.map((id) => stravaApiService.getGear(c.get("stravaAccessToken"), id))
+    );
+    return c.json({ gear });
+  } catch (error) {
+    console.error("Error fetching gear:", error);
+    return c.json({ error: "Internal Server Error" }, 500);
+  }
+});
+
+stravaActivitiesRouter.get(
+  "/:id/laps",
+  describeRoute({
+    description: "Get Strava laps for an activity",
+    responses: {
+      200: { description: "Activity laps", content: { "application/json": { schema: resolver(z.object({ laps: z.array(z.unknown()) })) } } },
+      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  validator("param", activityIdParamSchema),
+  async (c) => {
+  try {
+    const { id } = c.req.valid("param");
+    const laps = await stravaApiService.getActivityLaps(c.get("stravaAccessToken"), id);
+    return c.json({ laps });
+  } catch (error) {
+    console.error("Error fetching laps:", error);
+    return c.json({ error: "Internal Server Error" }, 500);
+  }
+});
+
+stravaActivitiesRouter.get(
+  "/:id/splits",
+  describeRoute({
+    description: "Get Strava metric splits for an activity",
+    responses: {
+      200: { description: "Activity splits", content: { "application/json": { schema: resolver(z.object({ splits_metric: z.array(z.unknown()) })) } } },
+      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  validator("param", activityIdParamSchema),
+  async (c) => {
+  try {
+    const { id } = c.req.valid("param");
+    const activity = await stravaApiService.getActivity(c.get("stravaAccessToken"), id);
+    return c.json({ splits_metric: activity.splits_metric ?? [] });
+  } catch (error) {
+    console.error("Error fetching splits:", error);
+    return c.json({ error: "Internal Server Error" }, 500);
+  }
+});
+
+stravaActivitiesRouter.get(
+  "/:id/heartrate",
+  describeRoute({
+    description: "Get heartrate stream for an activity",
+    responses: {
+      200: { description: "Heartrate stream data", content: { "application/json": { schema: resolver(z.unknown()) } } },
+      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  validator("param", activityIdParamSchema),
+  async (c) => {
+  try {
+    const { id } = c.req.valid("param");
+    const streams = await stravaApiService.getActivityStreams(c.get("stravaAccessToken"), id, ["heartrate", "time", "distance"]);
+    return c.json(streams);
+  } catch (error) {
+    console.error("Error fetching heartrate stream:", error);
+    return c.json({ error: "Internal Server Error" }, 500);
+  }
+});
+
 const updateActivitySchema = z.object({
   id: z.number(),
   trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),
   notes: z.string().nullable().optional(),
   feeling: z.number().nullable().optional(),
 });
-activitiesRouter.post("/update", async (c) => {
+activitiesRouter.post(
+  "/update",
+  describeRoute({
+    description: "Update activity metadata (trainingType, notes, feeling)",
+    responses: {
+      200: { description: "Updated activity", content: { "application/json": { schema: resolver(ActivitySchema) } } },
+      400: { description: "Bad request", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      404: { description: "Activity not found", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  validator("json", updateActivitySchema),
+  async (c) => {
   try {
-    const body = await c.req.json();
-    const { id, ...data } = updateActivitySchema.parse(body);
+    const { id, ...data } = c.req.valid("json");
     const updateData = Object.fromEntries(
       Object.entries(data).filter(([_, value]) => value != null)
     );
@@ -117,4 +256,5 @@ activitiesRouter.post("/update", async (c) => {
     return c.json({ error: "Internal Server Error" }, 500);
   }
 });
+export { stravaActivitiesRouter };
 export default activitiesRouter;
