@@ -8,11 +8,13 @@ import { stravaMiddleware } from '../middlewares/strava_middleware';
 const publicRouter = new Hono<TPublicEnv>();
 
 publicRouter.get("/strava/event", (c) => {
-  console.log("Strava handshake triggered");  
+  console.log("Strava handshake triggered");
   const mode = c.req.query("hub.mode");
   const token = c.req.query("hub.verify_token");
   const challenge = c.req.query("hub.challenge");
-  if (mode === "subscribe" && token === process.env.STRAVA_WEBHOOK_VERIFY_TOKEN) {
+  const expectedToken = process.env.STRAVA_WEBHOOK_VERIFY_TOKEN;
+  console.log(`Handshake - mode: ${mode}, token match: ${token === expectedToken}, challenge: ${challenge}`);
+  if (mode === "subscribe" && token === expectedToken) {
     return c.json({ "hub.challenge": challenge }, 200);
   }
   console.error("Verification failed: Token mismatch or invalid mode");
