@@ -7,6 +7,7 @@ export interface IGlobalBindings {
 export interface IGlobalVariables {
   clerkUserId: string;
   userId: string;
+  role: 'guest' | 'premium' | 'admin';
 }
 
 // Extend the global variables for Strava-specific routes

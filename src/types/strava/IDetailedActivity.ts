@@ -153,6 +153,7 @@ export interface Gear {
   name: string;
   resource_state: number;
   distance: number;
+  retired?: boolean;
 }
 export interface PhotosSummary {
   primary: {

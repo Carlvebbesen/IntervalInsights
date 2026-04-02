@@ -13,6 +13,7 @@ import activitiesRouter, { stravaActivitiesRouter } from "./routers/activities_r
 import agentsRouter from "./routers/agents_router";
 import intervalStructureRouter from "./routers/interval_structure_router";
 import dashboardRouter from "./routers/dashboard_router";
+import adminRouter from "./routers/admin_router";
 import { Hono } from "hono";
 import { openAPIRouteHandler } from "hono-openapi";
 import { swaggerUI } from "@hono/swagger-ui";
@@ -62,6 +63,7 @@ app.route("/api/agents", agentsRouter);
 app.route("/api/strava", stravaEntryRouter);
 app.route("/api/interval-structures", intervalStructureRouter);
 app.route("/api/dashboard", dashboardRouter);
+app.route("/api/admin", adminRouter);
 
 // 404 handler
 app.notFound((c) => {
