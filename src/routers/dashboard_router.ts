@@ -59,9 +59,10 @@ dashboardRouter.get(
 
 		const eightWeeksAgo = new Date(startOfThisWeek);
 		eightWeeksAgo.setUTCDate(eightWeeksAgo.getUTCDate() - 7 * 8);
-		const msElapsedThisWeek = now.getTime() - startOfThisWeek.getTime();
-		const msInWeek = 7 * 24 * 60 * 60 * 1000;
-		const weekProgressFraction = Math.min(msElapsedThisWeek / msInWeek, 1);
+		const msInDay = 24 * 60 * 60 * 1000;
+		const utcDay = now.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+		const dayOfWeek = utcDay === 0 ? 6 : utcDay - 1; // 0=Mon ... 6=Sun
+		const daysElapsed = dayOfWeek + 1; // include today fully
 
 		const runningTypes = RUNNING_SPORT_TYPES as unknown as string[];
 
@@ -136,9 +137,7 @@ dashboardRouter.get(
 		for (let w = 1; w <= 4; w++) {
 			const weekStart = new Date(startOfThisWeek);
 			weekStart.setUTCDate(weekStart.getUTCDate() - 7 * w);
-			const weekCutoff = new Date(
-				weekStart.getTime() + weekProgressFraction * msInWeek,
-			);
+			const weekCutoff = new Date(weekStart.getTime() + daysElapsed * msInDay);
 
 			const distInWindow = pastFourWeeksRuns
 				.filter((r) => {
@@ -274,7 +273,6 @@ dashboardRouter.get(
 				weekPercentChange,
 				sevenDayPercentChange,
 				weightedWeekPercentChange,
-				weekProgressFraction,
 				avgKmByThisPointInWeek,
 				thisWeekElevationGain: Number(result.thisWeekElevation) || 0,
 				thisWeekMovingTimeSec: Number(result.thisWeekMovingTime) || 0,

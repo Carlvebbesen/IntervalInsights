@@ -14,10 +14,11 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
     return c.json({ error: 'Unauthorized' }, 401);
   }
 
-  const metadata = auth.sessionClaims?.metadata as { userId?: string } | undefined;
-  if (metadata?.userId) {
+  const metadata = auth.sessionClaims?.metadata as { userId?: string; role?: 'guest' | 'premium' | 'admin' } | undefined;
+  if (metadata?.userId && metadata?.role) {
     c.set('clerkUserId', auth.userId);
     c.set('userId', metadata.userId);
+    c.set('role', metadata.role);
     return next();
   }
   
@@ -38,12 +39,14 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
 
   clerkClient.users.updateUserMetadata(auth.userId, {
     publicMetadata: {
-      userId: dbUser.id
+      userId: dbUser.id,
+      role: dbUser.role,
     }
   }).catch(err => console.error("Failed to sync Clerk metadata", err));
 
   c.set('clerkUserId', auth.userId);
   c.set('userId', dbUser.id);
+  c.set('role', dbUser.role ?? 'guest');
   
   await next();
 });

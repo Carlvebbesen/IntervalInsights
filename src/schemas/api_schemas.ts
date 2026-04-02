@@ -81,7 +81,6 @@ export const DashboardResponseSchema = z.object({
     weekPercentChange: z.number(),
     sevenDayPercentChange: z.number(),
     weightedWeekPercentChange: z.number(),
-    weekProgressFraction: z.number(),
     avgKmByThisPointInWeek: z.number(),
     thisWeekElevationGain: z.number(),
     thisWeekMovingTimeSec: z.number(),
@@ -132,6 +131,16 @@ export const WeekDetailResponseSchema = z.object({
     })),
   }),
 });
+
+export const GearStatsItemSchema = z.object({
+  gearId: z.string(),
+  gearName: z.string(),
+  activityCount: z.number(),
+  trainingTypeCounts: z.record(z.string(), z.number()),
+  distanceKm: z.number(),
+});
+
+export const GearStatsResponseSchema = z.object({ stats: z.array(GearStatsItemSchema) });
 
 export const PendingActivitySchema = z.object({
   id: z.number(),
