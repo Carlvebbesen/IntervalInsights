@@ -44,6 +44,7 @@ export const ActivityListResponseSchema = z.object({
       search: z.string().optional(),
       trainingType: z.enum(trainingTypeEnum.enumValues).optional(),
       distance: z.number().optional(),
+      intervalStructureId: z.number().optional(),
     }),
   }),
 });

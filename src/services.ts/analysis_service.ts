@@ -4,7 +4,6 @@ import {
   activities,
   findOrCreateIntervalStructure,
   generateIntervalSignature,
-  getDbInsertIntervalSegmentsFromStravaMetrics,
   intervalSegments,
   intervalStructures,
   mapSetsToIntervalComponent,
@@ -13,7 +12,7 @@ import { IGlobalBindings } from "../types/IRouters";
 import { DetailedActivity } from "../types/strava/IDetailedActivity";
 import { stravaApiService } from "./strava_api_service";
 import { invokeCompleteActivityAnalysisAgent } from "../agent/full_analysis_agent";
-import { calculateSegmentStats, couldSkipCompleteAnalysis, generateCompleteIntervalSet, needCompleteAnalysis, parsePaceStringToMetersPerSecond } from "./utils";
+import { calculateSegmentStats, couldSkipCompleteAnalysis, generateCompleteIntervalSet, lapsMatchIntervals, needCompleteAnalysis, parsePaceStringToMetersPerSecond } from "./utils";
 import z from "zod";
 import { sleep } from "bun";
 import { ExpandedIntervalSet, } from "../types/ExpandedIntervalSet";
@@ -67,25 +66,34 @@ export const triggerInitialAnalysis = async (
         draftAnalysisResult: analysisResult,
         analysisVersion : "v2.0",
       };
-      const couldSkip = couldSkipCompleteAnalysis(analysisResult);
-      const finalUpdateObject = couldSkip
-        ? {
-            ...baseUpdate,
-            trainingType: analysisResult.training_type,
-            analysisStatus: "completed" as const,
+      if (couldSkipCompleteAnalysis(analysisResult)) {
+        // Easy/long/normal run — no segments stored, frontend fetches from Strava splits
+        await db.update(activities).set({
+          ...baseUpdate,
+          trainingType: analysisResult.training_type,
+          analysisStatus: "completed" as const,
+        }).where(eq(activities.id, activityId));
+      } else if (needCompleteAnalysis(analysisResult.training_type)) {
+        if (currentStravaActivity!.trainer) {
+          // Indoor interval — always need LLM analysis (GPS pace is unreliable)
+          await db.update(activities).set(baseUpdate).where(eq(activities.id, activityId));
+        } else {
+          // Outdoor interval — check if Strava laps already capture the structure
+          const laps = await stravaApiService.getActivityLaps(accessToken, stravaId);
+          if (lapsMatchIntervals(laps, analysisResult)) {
+            // Laps match — no segments stored, frontend fetches from Strava laps
+            await db.update(activities).set({
+              ...baseUpdate,
+              trainingType: analysisResult.training_type,
+              analysisStatus: "completed" as const,
+            }).where(eq(activities.id, activityId));
+          } else {
+            await db.update(activities).set(baseUpdate).where(eq(activities.id, activityId));
           }
-        : baseUpdate;
-      await db
-        .update(activities)
-        .set(finalUpdateObject)
-        .where(eq(activities.id, activityId));
-      if (couldSkip) {
-        await setStravaMetricsAsIntervalSegments(
-          db,
-          "",
-          activityId,stravaId,
-          accessToken
-        );
+        }
+      } else {
+        // Other types (TEMPO, RACE, RECOVERY, etc.) — wait for user to trigger complete
+        await db.update(activities).set(baseUpdate).where(eq(activities.id, activityId));
       }
       return analysisResult;
     }
@@ -152,13 +160,11 @@ export const triggerCompleteAnalysis = async (
       );
     }
     if (!needCompleteAnalysis(result.trainingType)) {
-      return await setStravaMetricsAsIntervalSegments(
-        db,
-        notes,
-        activityId,
-        stravaId,
-        accessToken
-      );
+      await db.update(activities).set({
+        analysisStatus: "completed",
+        notes: notes,
+      }).where(eq(activities.id, activityId));
+      return;
     }
 const streams = await stravaApiService.getActivityStreams(
   accessToken,
@@ -260,37 +266,6 @@ const streams = await stravaApiService.getActivityStreams(
       error
     );
     return null;
-  }
-};
-
-const setStravaMetricsAsIntervalSegments = async (
-  db: IGlobalBindings["db"],
-  notes: string,
-  activityId: number,
-  stravaId: number,
-  accessToken: string
-) => {
-  await db
-    .update(activities)
-    .set({
-      analysisStatus: "completed",
-      notes: notes,
-    })
-    .where(eq(activities.id, activityId));
-  const stravaActivity = await stravaApiService.getActivity(
-    accessToken,
-    stravaId
-  );
-  const splits = stravaActivity.splits_metric ??[];
-  if (splits.length > 0) {
-    await db
-      .insert(intervalSegments)
-      .values(
-        getDbInsertIntervalSegmentsFromStravaMetrics(
-          activityId,
-          splits ??[]
-        )
-      );
   }
 };
 

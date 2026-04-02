@@ -3,6 +3,7 @@ import { WorkoutAnalysisOutput, workoutSet, } from "../agent/initial_analysis_ag
 import { TrainingType } from "../schema";
 import { LLMActivitySummary } from "../types/LLMActivitySummary";
 import { ActivityDataPoint, StreamSet } from "../types/strava/IStream";
+import { Lap } from "../types/strava/IDetailedActivity";
 
 export function shouldAnalyze(sportType: string): boolean {
   const runningTypes = ["Run", "TrailRun", "VirtualRun", "Elliptical", "Hike", "Ride", "Virtual Ride", "Rowing","Nordic Ski", "Backcountry Ski"];
@@ -24,6 +25,18 @@ export const couldSkipCompleteAnalysis = (result: WorkoutAnalysisOutput)=>{
   'EASY_RUN',
   "NORMAL_RUN",]
   return result.confidence_score > 0.94 && running.includes(result.training_type);
+}
+
+export function lapsMatchIntervals(laps: Lap[], draft: WorkoutAnalysisOutput): boolean {
+  if (!draft.structure || draft.structure.length === 0) return false;
+  if (laps.length <= 1) return false;
+  let expectedWorkIntervals = 0;
+  for (const set of draft.structure) {
+    for (const step of set.steps) {
+      expectedWorkIntervals += set.set_reps * step.reps;
+    }
+  }
+  return laps.length >= expectedWorkIntervals;
 }
 
 
