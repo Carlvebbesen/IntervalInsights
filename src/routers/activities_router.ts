@@ -32,6 +32,7 @@ const querySchema = z.object({
 	search: z.string().optional(),
 	distance: z.coerce.number().optional(),
 	trainingType: z.enum(trainingTypeEnum.enumValues).optional(),
+	intervalStructureId: z.coerce.number().int().positive().optional(),
 });
 
 activitiesRouter.get(
@@ -55,7 +56,7 @@ activitiesRouter.get(
 	async (c) => {
 		try {
 			const userId = c.get("userId");
-			const { page, search, distance, trainingType } = c.req.valid("query");
+			const { page, search, distance, trainingType, intervalStructureId } = c.req.valid("query");
 			const filters = [];
 			filters.push(eq(activities.userId, userId));
 			filters.push(eq(activities.analysisStatus, "completed"));
@@ -75,6 +76,9 @@ activitiesRouter.get(
 					filters.push(gte(activities.distance, distance));
 				}
 			}
+			if (intervalStructureId) {
+				filters.push(eq(activities.intervalStructureId, intervalStructureId));
+			}
 			const result = await c.env.db
 				.select()
 				.from(activities)
@@ -87,7 +91,7 @@ activitiesRouter.get(
 				meta: {
 					page,
 					pageSize: PAGE_SIZE,
-					filterApplied: { search, trainingType, distance: distance },
+					filterApplied: { search, trainingType, distance, intervalStructureId },
 				},
 			});
 		} catch (error) {
@@ -96,6 +100,7 @@ activitiesRouter.get(
 		}
 	},
 );
+
 activitiesRouter.get(
 	"/:id/segments",
 	describeRoute({
@@ -120,7 +125,6 @@ activitiesRouter.get(
 	async (c) => {
 		try {
 			const activityId = parseInt(c.req.param("id"));
-			console.log(`AcitityDetails for${activityId} `);
 			if (isNaN(activityId)) {
 				return c.json({ error: "Invalid activity ID" }, 400);
 			}
@@ -129,10 +133,7 @@ activitiesRouter.get(
 				.from(intervalSegments)
 				.where(eq(intervalSegments.activityId, activityId))
 				.orderBy(asc(intervalSegments.segmentIndex));
-
-			return c.json({
-				intervalSegments: segments,
-			});
+			return c.json({ intervalSegments: segments });
 		} catch (error) {
 			console.error("Error fetching activity:", error);
 			return c.json({ error: "Internal Server Error" }, 500);

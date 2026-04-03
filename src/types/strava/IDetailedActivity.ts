@@ -144,6 +144,8 @@ export interface Lap {
   average_cadence: number;
   device_watts: boolean;
   average_watts: number;
+  average_heartrate?: number;
+  max_heartrate?: number;
   lap_index: number;
   split: number;
 }
