@@ -66,7 +66,7 @@ export const mapSetsToIntervalComponent = (sets: z.infer<typeof workoutSet>[]): 
 )).flat();
 };
 
-const mapSegmentsToComponents = (segments: InsertIntervalSegment[]): IntervalComponent[] => {
+export const mapSegmentsToComponents = (segments: InsertIntervalSegment[]): IntervalComponent[] => {
   const coreSegments = segments.filter(s => s.type === "INTERVALS");
 
   return coreSegments.map((seg) => {
