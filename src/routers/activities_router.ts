@@ -6,14 +6,16 @@ import {
 	eq,
 	gte,
 	ilike,
+	inArray,
 	isNotNull,
+	lte,
 	or,
 } from "drizzle-orm";
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
-import { activities, intervalSegments, trainingTypeEnum } from "../schema";
+import { activities, intervalSegments, intervalStructures, trainingTypeEnum } from "../schema";
 import {
 	ActivityListResponseSchema,
 	ActivitySchema,
@@ -27,15 +29,19 @@ import type { TGlobalEnv, TStravaEnv } from "../types/IRouters";
 const activitiesRouter = new Hono<TGlobalEnv>();
 const PAGE_SIZE = 15;
 
-const querySchema = z.object({
-	page: z.coerce.number().min(1).default(1),
+const bodySchema = z.object({
+	page: z.number().min(1).default(1),
 	search: z.string().optional(),
-	distance: z.coerce.number().optional(),
-	trainingType: z.enum(trainingTypeEnum.enumValues).optional(),
-	intervalStructureId: z.coerce.number().int().positive().optional(),
+	distance: z.number().optional(),
+	trainingType: z.array(z.enum(trainingTypeEnum.enumValues)).optional(),
+	intervalStructureId: z.number().int().positive().optional(),
+	sportTypes: z.array(z.string()).optional(),
+	signatures: z.array(z.string()).optional(),
+	dateFrom: z.string().datetime().optional(),
+	dateTo: z.string().datetime().optional(),
 });
 
-activitiesRouter.get(
+activitiesRouter.post(
 	"/",
 	describeRoute({
 		description: "List activities for the authenticated user",
@@ -52,11 +58,11 @@ activitiesRouter.get(
 			},
 		},
 	}),
-	validator("query", querySchema),
+	validator("json", bodySchema),
 	async (c) => {
 		try {
 			const userId = c.get("userId");
-			const { page, search, distance, trainingType, intervalStructureId } = c.req.valid("query");
+			const { page, search, distance, trainingType, intervalStructureId, sportTypes, signatures, dateFrom, dateTo } = c.req.valid("json");
 			const filters = [];
 			filters.push(eq(activities.userId, userId));
 			filters.push(eq(activities.analysisStatus, "completed"));
@@ -68,16 +74,42 @@ activitiesRouter.get(
 					),
 				);
 			}
-			if (trainingType) {
-				filters.push(eq(activities.trainingType, trainingType as any));
+			if (trainingType?.length) {
+				filters.push(inArray(activities.trainingType, trainingType));
 			}
 			if (distance) {
-				if (!isNaN(distance)) {
-					filters.push(gte(activities.distance, distance));
-				}
+				filters.push(gte(activities.distance, distance));
 			}
 			if (intervalStructureId) {
 				filters.push(eq(activities.intervalStructureId, intervalStructureId));
+			}
+			if (sportTypes?.length) {
+				filters.push(inArray(activities.sportType, sportTypes));
+			}
+			if (dateFrom) {
+				filters.push(gte(activities.startDateLocal, new Date(dateFrom)));
+			}
+			if (dateTo) {
+				filters.push(lte(activities.startDateLocal, new Date(dateTo)));
+			}
+			if (signatures?.length) {
+				const structs = await c.env.db
+					.select({ id: intervalStructures.id })
+					.from(intervalStructures)
+					.where(inArray(intervalStructures.signature, signatures));
+				const ids = structs.map((s) => s.id);
+				if (ids.length > 0) {
+					filters.push(inArray(activities.intervalStructureId, ids));
+				} else {
+					return c.json({
+						data: [],
+						meta: {
+							page,
+							pageSize: PAGE_SIZE,
+							filterApplied: { search, trainingType, distance, intervalStructureId, sportTypes, signatures, dateFrom, dateTo },
+						},
+					});
+				}
 			}
 			const result = await c.env.db
 				.select()
@@ -91,7 +123,7 @@ activitiesRouter.get(
 				meta: {
 					page,
 					pageSize: PAGE_SIZE,
-					filterApplied: { search, trainingType, distance, intervalStructureId },
+					filterApplied: { search, trainingType, distance, intervalStructureId, sportTypes, signatures, dateFrom, dateTo },
 				},
 			});
 		} catch (error) {
