@@ -3,7 +3,7 @@ import { activities, getDbInsertActivity } from "../schema";
 import { IGlobalBindings } from "../types/IRouters";
 import { DetailedActivity, Gear, Lap, SummaryActivity } from "../types/strava/IDetailedActivity";
 import { StreamTypeMap } from "../types/strava/IStream";
-import { triggerInitialAnalysis } from "./analysis_service";
+import { eq } from "drizzle-orm";
 async function fetchStrava<T>(endpoint: string, accessToken: string, params?: Record<string, string>): Promise<T> {
   const url = new URL(`https://www.strava.com/api/v3${endpoint}`);
   if (params) {
@@ -54,7 +54,13 @@ export const stravaApiService = {
   async listAthleteActivities(accessToken: string, query: { before?: string; after?: string; page?: string; per_page?: string }) {
     return fetchStrava<SummaryActivity[]>("/athlete/activities", accessToken, query);
   },
-  async syncStravaActivities(accessToken: string,userId: string, ids: number[], db: IGlobalBindings["db"]) {
+  async syncStravaActivities(
+    accessToken: string,
+    userId: string,
+    ids: number[],
+    db: IGlobalBindings["db"],
+    onActivitySynced?: (internalId: number, stravaActivityId: number) => void,
+  ) {
     const BATCH_SIZE = 5;
     const results = [];
     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
@@ -63,7 +69,14 @@ export const stravaApiService = {
         try {
           const activity = await this.getActivity(accessToken, id);
           await db.insert(activities).values(getDbInsertActivity(activity, userId)).onConflictDoNothing();
-          triggerInitialAnalysis(db,accessToken, activity.id,i, activity);
+          if (onActivitySynced) {
+            const [row] = await db
+              .select({ id: activities.id })
+              .from(activities)
+              .where(eq(activities.stravaActivityId, activity.id))
+              .limit(1);
+            if (row) onActivitySynced(row.id, activity.id);
+          }
           return { id, status: "success" };
         } catch (error) {
           console.error(`Failed to sync activity ${id}:`, error);

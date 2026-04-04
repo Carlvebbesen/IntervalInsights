@@ -3,7 +3,8 @@ import { TStravaEnv } from "../types/IRouters";
 import { activities } from "../schema";
 import { eq,inArray,and } from "drizzle-orm";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
-import { getProposedPaceForStructure, triggerCompleteAnalysis, triggerInitialAnalysis } from "../services.ts/analysis_service";
+import { getProposedPaceForStructure, resumeAnalysis, startAnalysis } from "../services.ts/analysis_service";
+import { TrainingType } from "../schema/enums";
 import z from "zod";
 import { workoutSet } from "../agent/initial_analysis_agent";
 import { describeRoute, resolver, validator } from "hono-openapi";
@@ -45,12 +46,12 @@ agentsRouter.get(
       inArray(activities.analysisStatus, ["initial", "pending", "error"])
     )
   );
-  result.filter((activity )=> activity.analysisStatus === "error" ).forEach((errorActivity, index) => triggerInitialAnalysis(
-c.env.db,
-  c.get("stravaAccessToken"),
-  errorActivity.stravaId,
-  index,
-  ));
+  const accessToken = c.get("stravaAccessToken");
+  result
+    .filter((activity) => activity.analysisStatus === "error")
+    .forEach((errorActivity) =>
+      startAnalysis(c.env.db, accessToken, errorActivity.id, errorActivity.stravaId, userId),
+    );
   const pending = result.filter((activity )=> activity.analysisStatus !== "error" );
   return c.json(pending, 200);
 });
@@ -65,7 +66,7 @@ const startCompleteAnalysisSchema = z.object({
 agentsRouter.post(
   "/start-complete-analysis",
   describeRoute({
-    description: "Start a complete analysis for an activity",
+    description: "Resume the complete analysis for an activity (alias for /resume-analysis)",
     responses: {
       200: { description: "Analysis started", content: { "application/json": { schema: resolver(z.object({ success: z.boolean(), message: z.string() })) } } },
       400: { description: "Bad request", content: { "application/json": { schema: resolver(ErrorSchema) } } },
@@ -75,32 +76,105 @@ agentsRouter.post(
   }),
   validator("json", startCompleteAnalysisSchema),
   async (c) => {
-  try {
-    const { activityId, notes, stravaId, sets } = c.req.valid("json");
-    if (!activityId) {
-      return c.json({ error: "Activity ID is required" }, 400);
+    try {
+      const { activityId, notes, sets } = c.req.valid("json");
+      if (!activityId) {
+        return c.json({ error: "Activity ID is required" }, 400);
+      }
+      const accessToken = c.get("stravaAccessToken");
+      if (!accessToken) {
+        return c.json({ error: "Access token missing from context" }, 401);
+      }
+      resumeAnalysis(
+        c.env.db,
+        accessToken,
+        activityId,
+        notes || "",
+        (sets ?? []) as ExpandedIntervalSet[],
+        null,
+      );
+      return c.json({ success: true, message: "Analysis started successfully" }, 200);
+    } catch (error) {
+      console.error("Error starting analysis:", error);
+      return c.json({ error: "Internal Server Error" }, 500);
     }
-    const accessToken = c.get("stravaAccessToken"); 
-    
-    if (!accessToken) {
-      return c.json({ error: "Access token missing from context" }, 401);
-    }
-    triggerCompleteAnalysis(
-      c.env.db,
-      accessToken,
-      activityId,
-      stravaId,
-      notes || "",
-      (sets ?? []) as ExpandedIntervalSet[],
+  },
+);
 
-    );
-    return c.json({ success: true, message: "Analysis Started successfully" }, 200);
-  } catch (error) {
-    console.error("Error starting analysis:", error);
-    return c.json({ error: "Internal Server Error" }, 500);
-  }
+
+const startAnalysisSchema = z.object({
+  activityId: z.number(),
+  stravaActivityId: z.number(),
 });
 
+agentsRouter.post(
+  "/start-analysis",
+  describeRoute({
+    description: "Start the LangGraph analysis pipeline for an activity",
+    responses: {
+      200: { description: "Analysis started", content: { "application/json": { schema: resolver(z.object({ success: z.boolean() })) } } },
+      400: { description: "Bad request", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  validator("json", startAnalysisSchema),
+  async (c) => {
+    try {
+      const { activityId, stravaActivityId } = c.req.valid("json");
+      const userId = c.get("userId");
+      const accessToken = c.get("stravaAccessToken");
+      if (!accessToken) {
+        return c.json({ error: "Access token missing" }, 400);
+      }
+      startAnalysis(c.env.db, accessToken, activityId, stravaActivityId, userId);
+      return c.json({ success: true }, 200);
+    } catch (error) {
+      console.error("Error starting analysis:", error);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  },
+);
+
+const resumeAnalysisSchema = z.object({
+  activityId: z.number(),
+  notes: z.string(),
+  sets: z.array(z.unknown()).optional(),
+  trainingType: z.string().nullable().optional(),
+});
+
+agentsRouter.post(
+  "/resume-analysis",
+  describeRoute({
+    description: "Resume the LangGraph analysis pipeline after user input",
+    responses: {
+      200: { description: "Analysis resumed", content: { "application/json": { schema: resolver(z.object({ success: z.boolean() })) } } },
+      400: { description: "Bad request", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+    },
+  }),
+  validator("json", resumeAnalysisSchema),
+  async (c) => {
+    try {
+      const { activityId, notes, sets, trainingType } = c.req.valid("json");
+      const accessToken = c.get("stravaAccessToken");
+      if (!accessToken) {
+        return c.json({ error: "Access token missing" }, 400);
+      }
+      resumeAnalysis(
+        c.env.db,
+        accessToken,
+        activityId,
+        notes ?? "",
+        (sets ?? []) as ExpandedIntervalSet[],
+        (trainingType as TrainingType | null) ?? null,
+      );
+      return c.json({ success: true }, 200);
+    } catch (error) {
+      console.error("Error resuming analysis:", error);
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  },
+);
 
 const paceRequestSchema = z.object({
   structure: z.array(workoutSet),
