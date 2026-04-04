@@ -33,7 +33,7 @@ const bodySchema = z.object({
 	page: z.number().min(1).default(1),
 	search: z.string().optional(),
 	distance: z.number().optional(),
-	trainingType: z.enum(trainingTypeEnum.enumValues).optional(),
+	trainingType: z.array(z.enum(trainingTypeEnum.enumValues)).optional(),
 	intervalStructureId: z.number().int().positive().optional(),
 	sportTypes: z.array(z.string()).optional(),
 	signatures: z.array(z.string()).optional(),
@@ -74,8 +74,8 @@ activitiesRouter.post(
 					),
 				);
 			}
-			if (trainingType) {
-				filters.push(eq(activities.trainingType, trainingType as any));
+			if (trainingType?.length) {
+				filters.push(inArray(activities.trainingType, trainingType));
 			}
 			if (distance) {
 				filters.push(gte(activities.distance, distance));
