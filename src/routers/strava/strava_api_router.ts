@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { TStravaEnv } from "../../types/IRouters";
 import { stravaApiService } from "../../services.ts/strava_api_service";
+import { startAnalysis } from "../../services.ts/analysis_service";
 import { activities } from "../../schema";
 import { eq, gte, inArray, and } from "drizzle-orm";
 
@@ -46,7 +47,11 @@ stravaApiRouter.post("sync/activities", async (c) => {
   const userId = c.get("userId");
   if (!accessToken || !userId) return c.json({ error: "Unauthorized" }, 401);
   const body = (await c.req.json()) as {ids: number[]};
-  return c.json(await stravaApiService.syncStravaActivities(accessToken,userId, body.ids, c.env.db ));
+  return c.json(
+    await stravaApiService.syncStravaActivities(accessToken, userId, body.ids, c.env.db, (internalId, stravaActivityId) => {
+      startAnalysis(c.env.db, accessToken, internalId, stravaActivityId, userId);
+    }),
+  );
 } )
 
 

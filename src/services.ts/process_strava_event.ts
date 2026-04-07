@@ -4,7 +4,7 @@ import { IGlobalBindings,} from "../types/IRouters";
 import { shouldAnalyze } from "./utils";
 import { stravaApiService } from "./strava_api_service";
 import { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
-import { triggerInitialAnalysis } from "./analysis_service";
+import { startAnalysisByStravaId } from "./analysis_service";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 
 export async function processStravaWebhook(body: IStravaWebhookEvent, context: IGlobalBindings) {
@@ -37,7 +37,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
   } else if (body.aspect_type === "update") {
     await context.db.update(activities).set(activity).where(eq(activities.stravaActivityId, stravaActivityId));
     if ((body.updates?.title || body.updates?.description)) {
-      await triggerInitialAnalysis(context.db,accessToken, stravaActivityId,0, data);
+      await startAnalysisByStravaId(context.db, accessToken, stravaActivityId, user.id);
     }
   }
 }
