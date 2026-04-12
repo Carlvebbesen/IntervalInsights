@@ -4,8 +4,10 @@ import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
 import { ErrorSchema } from "../schemas/api_schemas";
 import { processStravaWebhook } from "../services.ts/process_strava_event";
+import { processIntervalsWebhook } from "../services.ts/process_intervals_event";
 import type { TPublicEnv } from "../types/IRouters";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
+import type { IIntervalsWebhookEvent } from "../types/intervals/IIntervalsWebhookEvent";
 
 const publicRouter = new Hono<TPublicEnv>();
 
@@ -175,6 +177,23 @@ publicRouter.post(
     return c.json({ status: "ok" }, 200);
   },
 );
+
+publicRouter.post("/intervals/event", async (c) => {
+  const body = (await c.req.json()) as IIntervalsWebhookEvent;
+
+  console.log(
+    `Intervals.icu event received: ${body.event} for athlete: ${body.athlete_id}, activity: ${body.activity_id}`,
+  );
+
+  if (body.secret !== env.INTERVALS_WEBHOOK_SECRET) {
+    return c.json({ status: "unauthorized" }, 401);
+  }
+
+  processIntervalsWebhook(body, c.env).catch((err) =>
+    console.error("Intervals.icu webhook processing failed:", err),
+  );
+  return c.json({ status: "ok" }, 200);
+});
 
 publicRouter.route("/", publicRouter);
 

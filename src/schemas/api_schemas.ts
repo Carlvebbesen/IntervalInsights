@@ -104,6 +104,16 @@ export const DashboardResponseSchema = z.object({
     avgElevationPerRun: z.number().nullable(),
     avgDistancePerRunKm: z.number().nullable(),
   }),
+  wellness: z
+    .object({
+      ctl: z.number().nullable(),
+      atl: z.number().nullable(),
+      tsb: z.number().nullable(),
+      avgHrv: z.number().nullable(),
+      avgSleepQuality: z.number().nullable(),
+      restingHr: z.number().nullable(),
+    })
+    .nullable(),
 });
 
 export const WeekDetailResponseSchema = z.object({

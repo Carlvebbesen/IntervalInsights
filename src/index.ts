@@ -7,12 +7,13 @@ import { logger } from "hono/logger";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { openAPIRouteHandler } from "hono-openapi";
 import { Pool } from "pg";
-import { StravaError } from "./error";
+import { IntervalsError, StravaError } from "./error";
 import { authGuard } from "./middlewares/auth_middleware";
 import activitiesRouter, { stravaActivitiesRouter } from "./routers/activities_router";
 import adminRouter from "./routers/admin_router";
 import agentsRouter from "./routers/agents_router";
 import dashboardRouter from "./routers/dashboard_router";
+import intervalsEntryRouter from "./routers/intervals/intervals_entry_router";
 import intervalStructureRouter from "./routers/interval_structure_router";
 import publicRouter from "./routers/public_router";
 import stravaEntryRouter from "./routers/strava/strava_entry_router";
@@ -103,6 +104,7 @@ app.route("/api/interval-structures", intervalStructureRouter);
 app.route("/api/dashboard", dashboardRouter);
 app.route("/api/admin", adminRouter);
 app.route("/api/user", userRouter);
+app.route("/api/intervals", intervalsEntryRouter);
 
 // 404 handler
 app.notFound((c) => {
@@ -118,6 +120,12 @@ app.onError((err, c) => {
   if (err instanceof StravaError) {
     return c.json(
       { error: "Strava API Error", details: err.details },
+      err.status as ContentfulStatusCode,
+    );
+  }
+  if (err instanceof IntervalsError) {
+    return c.json(
+      { error: "Intervals.icu API Error", details: err.details },
       err.status as ContentfulStatusCode,
     );
   }
