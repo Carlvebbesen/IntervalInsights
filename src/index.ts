@@ -14,6 +14,7 @@ import agentsRouter from "./routers/agents_router";
 import intervalStructureRouter from "./routers/interval_structure_router";
 import dashboardRouter from "./routers/dashboard_router";
 import adminRouter from "./routers/admin_router";
+import userRouter from "./routers/user_router";
 import { Hono } from "hono";
 import { openAPIRouteHandler } from "hono-openapi";
 import { swaggerUI } from "@hono/swagger-ui";
@@ -23,6 +24,21 @@ const db = drizzle({ client: pool, schema });
 
 
 const app = new Hono<TGlobalEnv>()
+
+app.get("/", async (c) => {
+  const html = await Bun.file(new URL("./landing.html", import.meta.url).pathname).text();
+  return c.html(html);
+});
+
+app.get("/app-icon.png", async (c) => {
+  const file = Bun.file(new URL("./app_icon.png", import.meta.url).pathname);
+  return new Response(file, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
+});
+
+app.get("/favicon.ico", async (c) => {
+  const file = Bun.file(new URL("./app_icon.png", import.meta.url).pathname);
+  return new Response(file, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
+});
 
 app.use('*', logger())
 app.use('*', cors({
@@ -64,6 +80,7 @@ app.route("/api/strava", stravaEntryRouter);
 app.route("/api/interval-structures", intervalStructureRouter);
 app.route("/api/dashboard", dashboardRouter);
 app.route("/api/admin", adminRouter);
+app.route("/api/user", userRouter);
 
 // 404 handler
 app.notFound((c) => {

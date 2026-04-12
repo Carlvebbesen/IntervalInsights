@@ -1,13 +1,39 @@
 import { eq } from "drizzle-orm";
-import { activities, getDbInsertActivity, } from "../schema";
+import { activities, getDbInsertActivity, users } from "../schema";
 import { IGlobalBindings,} from "../types/IRouters";
 import { shouldAnalyze } from "./utils";
 import { stravaApiService } from "./strava_api_service";
 import { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
 import { triggerInitialAnalysis } from "./analysis_service";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
+import { createClerkClient } from "@clerk/backend";
+import { env } from "bun";
 
 export async function processStravaWebhook(body: IStravaWebhookEvent, context: IGlobalBindings) {
+  if (body.object_type === "athlete" && body.aspect_type === "update") {
+    // Strava deauthorization event
+    const user = await context.db.query.users.findFirst({
+      where: (u, { eq }) => eq(u.stravaId, body.owner_id.toString()),
+    });
+    if (!user) return;
+
+    // Delete all activities (interval_segments cascade via ON DELETE CASCADE)
+    await context.db.delete(activities).where(eq(activities.userId, user.id));
+
+    // Clear Strava connection
+    await context.db.update(users).set({ stravaId: null }).where(eq(users.id, user.id));
+
+    // Clear Clerk metadata
+    const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+    await clerkClient.users.updateUserMetadata(user.clerkId, {
+      privateMetadata: { strava: null },
+      publicMetadata: { strava_connected: false },
+    });
+
+    console.log(`Processed deauthorization for Strava athlete ${body.owner_id}`);
+    return;
+  }
+
   if (body.object_type !== "activity") return;
 
   const stravaActivityId = body.object_id;
