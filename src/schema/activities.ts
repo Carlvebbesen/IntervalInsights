@@ -55,6 +55,8 @@ export const activities = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
     averageTmp: integer("average_tmp"),
     indoor: boolean("indoor").notNull(),
+    intervalsIcuId: text("intervals_icu_id"),
+    intervalsAnalyzed: boolean("intervals_analyzed").default(false),
   },
   (table) => {
     return[

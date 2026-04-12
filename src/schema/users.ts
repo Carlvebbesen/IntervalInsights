@@ -10,7 +10,8 @@ export const users = pgTable('users', {
   stravaId: text('strava_id').unique(),
   createdAt: timestamp('created_at').defaultNow(),
   role: userRoleEnum("role").default("guest"),
-  maxHeartRate: integer("max_heart_rate")
+  maxHeartRate: integer("max_heart_rate"),
+  intervalsAthleteId: text("intervals_athlete_id").unique(),
 });
 
 export const usersRelations = relations(users, ({ many }) => ({

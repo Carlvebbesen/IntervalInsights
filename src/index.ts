@@ -8,13 +8,14 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema";
 import { logger } from 'hono/logger'
 import publicRouter from "./routers/public_router";
-import { StravaError } from "./error";
+import { IntervalsError, StravaError } from "./error";
 import activitiesRouter, { stravaActivitiesRouter } from "./routers/activities_router";
 import agentsRouter from "./routers/agents_router";
 import intervalStructureRouter from "./routers/interval_structure_router";
 import dashboardRouter from "./routers/dashboard_router";
 import adminRouter from "./routers/admin_router";
 import userRouter from "./routers/user_router";
+import intervalsEntryRouter from "./routers/intervals/intervals_entry_router";
 import { Hono } from "hono";
 import { openAPIRouteHandler } from "hono-openapi";
 import { swaggerUI } from "@hono/swagger-ui";
@@ -81,6 +82,7 @@ app.route("/api/interval-structures", intervalStructureRouter);
 app.route("/api/dashboard", dashboardRouter);
 app.route("/api/admin", adminRouter);
 app.route("/api/user", userRouter);
+app.route("/api/intervals", intervalsEntryRouter);
 
 // 404 handler
 app.notFound((c) => {
@@ -92,6 +94,9 @@ app.notFound((c) => {
 app.onError((err, c) => {
   if (err instanceof StravaError) {
     return c.json({ error: "Strava API Error", details: err.details }, err.status as any);
+  }
+  if (err instanceof IntervalsError) {
+    return c.json({ error: "Intervals.icu API Error", details: err.details }, err.status as any);
   }
   console.error("Internal Error:", err);
   return c.json({ error: "Internal Server Error" }, 500);
