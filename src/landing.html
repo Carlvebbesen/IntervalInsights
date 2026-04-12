@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Interval Insights</title>
+  <link rel="icon" type="image/png" href="/favicon.ico" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #F1F5F9;
+      color: #0F0A51;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1.5rem 3rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #0F0A51;
+      text-decoration: none;
+    }
+
+    .logo span { color: #448AFF; }
+
+    .logo img {
+      width: 38px;
+      height: 38px;
+      object-fit: contain;
+    }
+
+    .hero {
+      text-align: center;
+      padding: 5rem 2rem 4rem;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .hero-logo {
+      width: 140px;
+      height: 140px;
+      margin: 0 auto 2.5rem;
+      background: #fff;
+      border: 1px solid #CBD5E1;
+      border-radius: 28px;
+      overflow: hidden;
+      box-shadow: 0 4px 24px rgba(15, 10, 81, 0.08);
+    }
+
+    .hero-logo img {
+      width: 160%;
+      height: 160%;
+      object-fit: cover;
+      object-position: center;
+      margin: -30% 0 0 -30%;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.35rem 1rem;
+      border: 1px solid #CBD5E1;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      color: #64748B;
+      margin-bottom: 2rem;
+      background: #fff;
+    }
+
+    .badge span {
+      color: #448AFF;
+      font-weight: 600;
+    }
+
+    h1 {
+      font-size: clamp(2.5rem, 6vw, 4rem);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      color: #0F0A51;
+      margin-bottom: 1.5rem;
+    }
+
+    h1 .accent { color: #448AFF; }
+
+    .hero p {
+      font-size: 1.125rem;
+      line-height: 1.7;
+      color: #64748B;
+      max-width: 560px;
+      margin: 0 auto 3rem;
+    }
+
+    .cta-group {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.85rem 2rem;
+      background: #0F0A51;
+      color: #F1F5F9;
+      font-weight: 600;
+      font-size: 0.95rem;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.15s;
+      text-decoration: none;
+    }
+
+    .btn-primary:hover {
+      background: #1a1270;
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.85rem 2rem;
+      background: #fff;
+      color: #64748B;
+      font-weight: 600;
+      font-size: 0.95rem;
+      border: 1px solid #CBD5E1;
+      border-radius: 10px;
+      cursor: not-allowed;
+      opacity: 0.7;
+      text-decoration: none;
+    }
+
+    .btn-secondary svg { width: 18px; height: 18px; }
+
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      max-width: 1000px;
+      margin: 2rem auto 0;
+      padding: 0 2rem 6rem;
+    }
+
+    .feature-card {
+      background: #fff;
+      border: 1px solid #CBD5E1;
+      border-radius: 14px;
+      padding: 2rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .feature-card:hover {
+      border-color: #98D2EB;
+      box-shadow: 0 4px 16px rgba(15, 10, 81, 0.06);
+    }
+
+    .feature-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1.25rem;
+      font-size: 1.25rem;
+    }
+
+    .feature-icon.blue { background: #98D2EB33; }
+    .feature-icon.green { background: #D4E09B55; }
+    .feature-icon.pink { background: #ECCBD955; }
+
+    .feature-card h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #0F0A51;
+      margin-bottom: 0.5rem;
+    }
+
+    .feature-card p {
+      font-size: 0.9rem;
+      line-height: 1.6;
+      color: #64748B;
+    }
+
+    footer {
+      text-align: center;
+      padding: 2rem;
+      color: #94A3B8;
+      font-size: 0.8rem;
+      border-top: 1px solid #CBD5E1;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/" class="logo">
+      <img src="/app-icon.png" alt="Interval Insights icon" />
+      Interval<span>Insights</span>
+    </a>
+  </nav>
+
+  <section class="hero">
+    <div class="hero-logo">
+      <img src="/app-icon.png" alt="Interval Insights" />
+    </div>
+
+    <div class="badge"><span>Coming soon</span> to App Store & Google Play</div>
+
+    <h1>Understand your <span class="accent">intervals</span>, not just your splits</h1>
+
+    <p>
+      Interval Insights connects to Strava and uses AI to break down your workouts into meaningful segments &mdash; so you can see exactly how each rep, set, or interval went.
+    </p>
+
+    <div class="cta-group">
+      <a href="https://strava.com" class="btn-primary">Connect with Strava</a>
+      <span class="btn-secondary">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+        App Store &mdash; Soon
+      </span>
+    </div>
+  </section>
+
+  <section class="features">
+    <div class="feature-card">
+      <div class="feature-icon blue">&#9889;</div>
+      <h3>AI-Powered Analysis</h3>
+      <p>Automatically classifies your workout type and breaks it into structured intervals with pace, heart rate, and recovery data.</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon green">&#128200;</div>
+      <h3>Interval Breakdown</h3>
+      <p>See every rep individually. Compare your 4th repeat to your 1st. Spot drift, track consistency, and find patterns across workouts.</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon pink">&#127939;</div>
+      <h3>Strava Sync</h3>
+      <p>Connects directly to your Strava account. Your activities are pulled in automatically &mdash; no manual upload needed.</p>
+    </div>
+  </section>
+
+  <footer>
+    &copy; 2026 Interval Insights
+  </footer>
+</body>
+</html>
