@@ -16,8 +16,14 @@ export interface IStravaVariables extends IGlobalVariables {
   stravaAthleteId: number | undefined;
 }
 
+// Extend the global variables for Intervals.icu-specific routes
+export interface IIntervalsVariables extends IGlobalVariables {
+  intervalsApiKey: string;
+}
+
 // Helper types for the Hono Generics
 
 export type TGlobalEnv = { Bindings: IGlobalBindings; Variables: IGlobalVariables };
 export type TPublicEnv = { Bindings: IGlobalBindings; Variables:{} };
 export type TStravaEnv = { Bindings: IGlobalBindings; Variables: IStravaVariables };
+export type TIntervalsEnv = { Bindings: IGlobalBindings; Variables: IIntervalsVariables };

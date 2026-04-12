@@ -16,6 +16,7 @@ import {
 } from "../schemas/api_schemas";
 import { ellipticalTimeToMetres, isTimeBased } from "../services.ts/utils";
 import type { TGlobalEnv } from "../types/IRouters";
+import { fetchWellnessSummary } from "../services.ts/intervals_wellness_service";
 
 const dashboardRouter = new Hono<TGlobalEnv>();
 function getStartOfWeek(date: Date): Date {
@@ -264,6 +265,11 @@ dashboardRouter.get(
 			? (Number(longTermStats[0].avgDistancePerRun) || 0) / 1000
 			: null;
 
+		// Best-effort Intervals.icu wellness enrichment
+		const todayStr = now.toISOString().split("T")[0];
+		const weekAgoStr = sevenDaysAgo.toISOString().split("T")[0];
+		const wellness = await fetchWellnessSummary(c.get("clerkUserId"), weekAgoStr, todayStr);
+
 		return c.json({
 			summary: {
 				thisWeekKm,
@@ -287,6 +293,7 @@ dashboardRouter.get(
 				avgElevationPerRun,
 				avgDistancePerRunKm,
 			},
+			wellness,
 		});
 	},
 );
