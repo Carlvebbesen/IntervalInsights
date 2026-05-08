@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["PPN6SCWMYC.no.cvebbesen.intervalinsights"],
+        "components": [
+          {
+            "/": "*",
+            "comment": "Matches all paths on this domain"
+          }
+        ]
+      }
+    ]
+  }
+}

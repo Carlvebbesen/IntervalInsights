@@ -44,6 +44,18 @@ app.get("/favicon.ico", async (_c) => {
   });
 });
 
+app.get("/.well-known/apple-app-site-association", async (_c) => {
+  const file = Bun.file(
+    new URL("./.well-known/apple-app-site-association.json", import.meta.url).pathname,
+  );
+  return new Response(file, {
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
+});
+
 app.use("*", logger());
 app.use(
   "*",
