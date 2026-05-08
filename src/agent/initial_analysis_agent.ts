@@ -40,16 +40,15 @@ export const workoutAnalysisOutput = z.object({
 });
 
 const CLASSIFICATION_RULES = `
-- **LONG_RUN**: Total distance is > 20 km. Pace is generally steady or easy.
-- **EASY_RUN**: Total distance is <= 20 km. Low intensity, steady pace.
-- **RECOVERY**: IF the activty is elliptical or cycling activity not containing intervals.
-- **NORMAL_RUN**: Distance <= 20 km. Standard steady aerobic effort (Zone 2/3). Faster than an easy run, but not a hard workout. The "default" daily run.
+- **LONG**: Total distance is > 20 km (running) or equivalent endurance session in another sport. Pace is generally steady or easy.
+- **EASY**: Steady aerobic effort, no structured intervals. Covers both true low-intensity recovery-pace work and standard daily Zone 2/3 sessions. Distance <= 20 km for running.
+- **RECOVERY**: Cross-training (elliptical, cycling, etc.) used as active recovery, not containing intervals.
 - **SHORT_INTERVALS**: Structured work/rest periods. Work intervals are < 800m OR < 2 minutes duration.
 - **LONG_INTERVALS**: Structured work/rest periods. Work intervals are >= 800m.
 - **HILL_SPRINTS**: Short intervals (< 300m) with significant elevation gain during the work period.
 - **SPRINTS**: Very short duration (< 30s), maximum effort (Max Speed/Anaerobic).
 - **FARTLEK**: "Speed play." A mix of various interval lengths/intensities with NO clear repeating structure (e.g., random surges). Do NOT select this just because pace is messy; requires distinct high-effort surges.
-- **PROGRESSIVE_LONG_RUN**: Distance > 15km. Pace strictly increases (gets faster) from start to finish.
+- **PROGRESSIVE_LONG**: Distance > 15km. Pace strictly increases (gets faster) from start to finish.
 - **TEMPO**: Sustained high effort (Threshold pace) for a block of time (e.g., 20-40 mins).
 - **RACE**: Sustained maximal effort for the distance.
 `;
@@ -87,7 +86,7 @@ export async function invokeActivityAnalysisAgent(
   ### 1. PRIORITY & CONTEXT
   - **Title/Description Priority:** You must prioritize the user's Title and Description over raw data IF the user explicitly names the workout (e.g., "10x400m", "Tempo Run", "Long Run").
   - **Ignore Generics:** If the title is generic (e.g., "Morning Run", "Lunch Run", "Run"), ignore it and rely 100% on the data stats.
-  - **Fartlek Warning:** Do not default to "Fartlek" just because the data is noisy. Fartlek requires distinct, intentional surges in pace that don't fit a fixed grid. If it's just a steady run with bad GPS data, classify as EASY_RUN.
+  - **Fartlek Warning:** Do not default to "Fartlek" just because the data is noisy. Fartlek requires distinct, intentional surges in pace that don't fit a fixed grid. If it's just a steady run with bad GPS data, classify as EASY.
 
   ### 2. CLASSIFICATION DEFINITIONS
   Use these strict definitions:

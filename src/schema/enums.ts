@@ -1,16 +1,15 @@
 
 import {  pgEnum, } from 'drizzle-orm/pg-core';
 export const trainingTypeEnum = pgEnum('training_type', [
-  'LONG_RUN',
-  'EASY_RUN',
-  "NORMAL_RUN",
-  "RECOVERY",
+  'LONG',
+  'EASY',
+  'RECOVERY',
   'SHORT_INTERVALS',
   'HILL_SPRINTS',
   'LONG_INTERVALS',
   'SPRINTS',
   'FARTLEK',
-  'PROGRESSIVE_LONG_RUN',
+  'PROGRESSIVE_LONG',
   'RACE',
   'TEMPO',
   'OTHER'
@@ -45,7 +44,7 @@ export type TrainingType = (typeof trainingTypeEnum.enumValues)[number];
 /** Training types that count as interval / quality sessions */
 export const INTERVAL_TRAINING_TYPES = [
   "TEMPO",
-  "PROGRESSIVE_LONG_RUN",
+  "PROGRESSIVE_LONG",
   "LONG_INTERVALS",
   "SHORT_INTERVALS",
   "SPRINTS",

@@ -206,22 +206,16 @@ stravaActivitiesRouter.get(
 			const rows = await c.env.db
 				.select({
 					gearId: activities.gearId,
-					gearName: activities.gearName,
 					trainingType: activities.trainingType,
 					count: count(),
 				})
 				.from(activities)
 				.where(and(eq(activities.userId, userId), isNotNull(activities.gearId)))
-				.groupBy(
-					activities.gearId,
-					activities.gearName,
-					activities.trainingType,
-				);
+				.groupBy(activities.gearId, activities.trainingType);
 
 			const statsMap = new Map<
 				string,
 				{
-					gearName: string;
 					activityCount: number;
 					trainingTypeCounts: Record<string, number>;
 				}
@@ -232,7 +226,6 @@ stravaActivitiesRouter.get(
 				const existing = statsMap.get(id);
 				if (!existing) {
 					statsMap.set(id, {
-						gearName: row.gearName ?? "",
 						activityCount: rowCount,
 						trainingTypeCounts: row.trainingType
 							? { [row.trainingType]: rowCount }

@@ -6,7 +6,6 @@
     "build": "bun build src/index.ts --compile --outfile server",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "types:api": "openapi-typescript http://localhost:3000/api/openapi.json -o src/types/api.d.ts"
   },

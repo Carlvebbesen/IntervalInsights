@@ -131,6 +131,7 @@ async function markCompleted(
     .set({
       trainingType: state.initialResult!.training_type,
       analysisStatus: "completed",
+      draftAnalysisResult: null,
     })
     .where(eq(activities.id, state.activityId));
 
@@ -166,6 +167,7 @@ async function runCompleteAnalysis(
         analysisStatus: "completed",
         notes: state.userNotes,
         trainingType,
+        draftAnalysisResult: null,
       })
       .where(eq(activities.id, state.activityId));
     return { computedSegments: [] };
@@ -222,10 +224,7 @@ async function runCompleteAnalysis(
         timeSeriesEndTime: stats.timeSeriesEndTime,
         actualDistance: stats.actualDistance,
         actualDuration: stats.actualDuration,
-        actualPace: stats.actualPace,
         avgHeartRate: stats.avgHeartRate,
-        maxHeartRate: stats.maxHeartRate,
-        medianHeartRate: stats.medianHeartRate,
       };
     })
     .filter((s): s is NonNullable<typeof s> => s !== null);
@@ -330,6 +329,7 @@ async function persistResults(
         analysisStatus: "completed",
         analyzedAt: new Date(),
         notes: state.userNotes,
+        draftAnalysisResult: null,
       })
       .where(eq(activities.id, state.activityId));
 

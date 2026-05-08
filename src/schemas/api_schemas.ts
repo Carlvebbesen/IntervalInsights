@@ -18,20 +18,14 @@ export const ActivitySchema = z.object({
   title: z.string(),
   description: z.string().nullable(),
   sportType: z.string(),
-  deviceName: z.string().nullable(),
   distance: z.number(),
   movingTime: z.number(),
-  elapsedTime: z.number(),
   totalElevationGain: z.number().nullable(),
-  averageSpeed: z.number().nullable(),
   averageHeartRate: z.number().nullable(),
-  maxHeartRate: z.number().nullable(),
   startDateLocal: z.string(),
   feeling: z.number().nullable(),
   notes: z.string().nullable(),
-  gearName: z.string().nullable(),
   createdAt: z.string().nullable(),
-  averageTmp: z.number().nullable(),
   indoor: z.boolean(),
 });
 
@@ -65,10 +59,7 @@ export const IntervalSegmentSchema = z.object({
   timeSeriesEndTime: z.number(),
   actualDistance: z.number(),
   actualDuration: z.number(),
-  actualPace: z.number(),
   avgHeartRate: z.number().nullable(),
-  maxHeartRate: z.number().nullable(),
-  medianHeartRate: z.number().nullable(),
 });
 
 export const IntervalStructureSchema = z.object({

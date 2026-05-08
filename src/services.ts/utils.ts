@@ -10,22 +10,21 @@ export function shouldAnalyze(sportType: string): boolean {
   return runningTypes.includes(sportType);
 }
 export function needCompleteAnalysis(trainingType: TrainingType): boolean {
-  const trainingTypes =[
-  'SHORT_INTERVALS',
-  'HILL_SPRINTS',
-  'LONG_INTERVALS',
-  'SPRINTS',
-  'FARTLEK',
-  'PROGRESSIVE_LONG_RUN'];
+  const trainingTypes: TrainingType[] = [
+    'SHORT_INTERVALS',
+    'HILL_SPRINTS',
+    'LONG_INTERVALS',
+    'SPRINTS',
+    'FARTLEK',
+    'PROGRESSIVE_LONG',
+  ];
   return trainingTypes.includes(trainingType);
 }
 
-export const couldSkipCompleteAnalysis = (result: WorkoutAnalysisOutput)=>{
-  const running = ['LONG_RUN',
-  'EASY_RUN',
-  "NORMAL_RUN",]
-  return result.confidence_score > 0.94 && running.includes(result.training_type);
-}
+export const couldSkipCompleteAnalysis = (result: WorkoutAnalysisOutput) => {
+  const steady: TrainingType[] = ['LONG', 'EASY'];
+  return result.confidence_score > 0.94 && steady.includes(result.training_type);
+};
 
 export function lapsMatchIntervals(laps: Lap[], draft: WorkoutAnalysisOutput): boolean {
   if (!draft.structure || draft.structure.length === 0) return false;
@@ -175,34 +174,17 @@ export function calculateSegmentStats(
   const duration = timeSlice[timeSlice.length - 1] - timeSlice[0];
   const distance = distSlice[distSlice.length - 1] - distSlice[0];
 
-  const avgSpeedMps = duration > 0 ? distance / duration : 0;
-
   let avgHeartRate: number | null = null;
-  let maxHeartRate: number | null = null;
-  let medianHeartRate: number | null = null;
-
   if (hrSlice && hrSlice.length > 0) {
-    const sortedHr = [...hrSlice].sort((a, b) => a - b);
-    const mid = Math.floor(sortedHr.length / 2);
-    const medianHr =
-      sortedHr.length % 2 !== 0
-        ? sortedHr[mid]
-        : (sortedHr[mid - 1] + sortedHr[mid]) / 2;
-
     avgHeartRate = Math.round(
       hrSlice.reduce((a, b) => a + b, 0) / hrSlice.length,
     );
-    maxHeartRate = Math.max(...hrSlice);
-    medianHeartRate = Math.round(medianHr);
   }
 
   return {
     actualDuration: duration,
     actualDistance: distance,
-    actualPace: avgSpeedMps,
     avgHeartRate,
-    maxHeartRate,
-    medianHeartRate,
     timeSeriesEndTime: streamSet.time.data[endIdx],
   };
 }

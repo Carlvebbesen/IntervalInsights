@@ -149,7 +149,8 @@ export const getProposedPaceForStructure = async (
     .select({
       targetValue: intervalSegments.targetValue,
       targetType: intervalSegments.targetType,
-      actualPace: intervalSegments.actualPace,
+      actualDistance: intervalSegments.actualDistance,
+      actualDuration: intervalSegments.actualDuration,
       targetPace: intervalSegments.targetPace,
       segmentIndex: intervalSegments.segmentIndex,
       date: activities.startDateLocal,
@@ -176,7 +177,8 @@ function calculateAverages(
   rows: {
     targetValue: number;
     targetType: string;
-    actualPace: number;
+    actualDistance: number;
+    actualDuration: number;
     targetPace: number | null;
     segmentIndex: number;
     date: Date;
@@ -185,7 +187,8 @@ function calculateAverages(
 ): ExpandedIntervalSet[] {
   const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
   const now = new Date().getTime();
-  const getEffectivePace = (row: (typeof rows)[0]) => row.targetPace ?? row.actualPace;
+  const getEffectivePace = (row: (typeof rows)[0]) =>
+    row.targetPace ?? (row.actualDuration > 0 ? row.actualDistance / row.actualDuration : 0);
   const sortedRows = [...rows].sort((a, b) => a.segmentIndex - b.segmentIndex);
   const averagePace =
     sortedRows.length > 0
