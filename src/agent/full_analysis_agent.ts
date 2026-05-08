@@ -104,37 +104,21 @@ export async function invokeCompleteActivityAnalysisAgent(
     )
     .join("\n");
 
+  const userPacesBlock =
+    specificIntervalPaces.trim().length > 0
+      ? `### USER-SPECIFIED TARGET PACES (MANDATORY):
+Below is the exact sequence of work intervals and their expected paces, grouped by Sets.
+Match these to the pace/HR surges in the data:
+${specificIntervalPaces}`
+      : `### USER-SPECIFIED TARGET PACES:
+The user did not provide explicit target paces. Detect work/rest segments from the pace and HR data alone.`;
+
   const prompt = `
 You are a Data Segmentation Agent.
 The trainingType, confirmed by the user is: ${trainingType}
 ${initalAgentPrompt}
 
-### USER-SPECIFIED TARGET PACES (MANDATORY):
-Below is the exact sequence of work intervals and their expected paces, grouped by Sets.
-Match these to the pace/HR surges in the data:
-${specificIntervalPaces}
-
-TASK:
-1. **Set Grouping:** Use the 'set_group_index' (1-based) to group segments belonging to the same Set (e.g., all 10 intervals in Set 1 get set_group_index: 1).
-2. **Sequential Matching:** Match the identified "WORK" segments in the data to the list above in chronological order.
-3. **Pace Assignment:** For each "WORK" segment, set the 'target_pace_string' exactly as provided (e.g., "3:45").
-4. **Segment Types:** - Use "WARMUP" for the initial steady period.
-   - Use "WORK" for the intervals listed above.
-   - Use "REST" for the recovery periods between intervals.
-   - Use "COOLDOWN" for the final steady period.### USER-SPECIFIED TARGET PACES (MANDATORY):
-Below is the exact sequence of work intervals and their expected paces, grouped by Sets.
-Match these to the pace/HR surges in the data:
-${specificIntervalPaces}
-
-TASK:
-1. **Set Grouping:** Use the 'set_group_index' (1-based) to group segments belonging to the same Set (e.g., all 10 intervals in Set 1 get set_group_index: 1).
-2. **Sequential Matching:** Match the identified "WORK" segments in the data to the list above in chronological order.
-3. **Pace Assignment:** For each "WORK" segment, set the 'target_pace_string' exactly as provided (e.g., "3:45").
-4. **Segment Types:**
-   - Use "WARMUP" for the initial steady period.
-   - Use "WORK" for the intervals listed above.
-   - Use "REST" for the recovery periods between intervals.
-   - Use "COOLDOWN" for the final steady period.
+${userPacesBlock}
 
 Comment from user: ${comment}
 
@@ -147,10 +131,15 @@ ${laps.map((l, i) => `Lap ${i}: ${l.distance}m in ${l.elapsed_time}s avg speed: 
   ${tableRows}
 
 TASK:
-1. **Sequential Matching:** Match the identified Work segments to the "USER-SPECIFIED TARGET PACES" list in order. 
-2. **Apply Paces:** For each identified Work segment, set the 'target_pace_string' exactly as provided in the list above (e.g., "3:45").
-3. **Handle Transitions:** Use the Recovery guidance to set the 'target_value' for REST segments.
-4. **Output Format:** Return the segments with correct start/end times, target types, and the specific target paces.
+1. **Set Grouping:** Use 'set_group_index' (1-based) to group segments in the same Set (e.g., all 10 intervals in Set 1 get set_group_index: 1).
+2. **Sequential Matching:** Match the identified "WORK" segments to the USER-SPECIFIED TARGET PACES list in chronological order.
+3. **Pace Assignment:** For each "WORK" segment, set 'target_pace_string' exactly as provided (e.g., "3:45"). If no user paces were given, omit it.
+4. **Segment Types:**
+   - "WARMUP" for the initial steady period.
+   - "WORK" for the intervals.
+   - "REST" for recovery periods between intervals.
+   - "COOLDOWN" for the final steady period.
+5. **Output Format:** Return the segments with correct start/end times, target types, and target paces.
 
 RETURN only the structured plan.
 `;
