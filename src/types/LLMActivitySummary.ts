@@ -2,14 +2,14 @@ export interface LLMActivitySummary {
   metadata: {
     totalDistance: number;
     totalTime: number;
-    avgHeartRate: number;
+    avgHeartRate: number | null;
     maxVelocity: number;
-    hrStandardDeviation: number;
+    hrStandardDeviation: number | null;
   };
   buckets: {
     time: string;
     pace: string;
-    avgHr: number;
+    avgHr: number | null;
     isMoving: string;
   }[];
 }

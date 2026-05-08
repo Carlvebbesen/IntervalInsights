@@ -1,5 +1,5 @@
-export type StravaObjectType = 'activity' | 'athlete';
-export type StravaAspectType = 'create' | 'update' | 'delete';
+export type StravaObjectType = "activity" | "athlete";
+export type StravaAspectType = "create" | "update" | "delete";
 
 export interface IStravaWebhookEvent {
   /** Always either "activity" or "athlete" */
@@ -14,5 +14,5 @@ export interface IStravaWebhookEvent {
   subscription_id: number;
   /** The time that the event occurred (epoch seconds) */
   event_time: number;
-  updates: {[key: string]: string|number | undefined};
+  updates: { [key: string]: string | number | undefined };
 }

@@ -1,77 +1,87 @@
-import { clerkMiddleware, } from "@hono/clerk-auth";
-import { cors } from "hono/cors";
-import stravaEntryRouter from "./routers/strava/strava_entry_router";
-import { authGuard } from "./middlewares/auth_middleware";
-import { TGlobalEnv } from "./types/IRouters";
-import { Pool } from "pg";
-import { drizzle } from "drizzle-orm/node-postgres";
-import * as schema from "./schema";
-import { logger } from 'hono/logger'
-import publicRouter from "./routers/public_router";
-import { StravaError } from "./error";
-import activitiesRouter, { stravaActivitiesRouter } from "./routers/activities_router";
-import agentsRouter from "./routers/agents_router";
-import intervalStructureRouter from "./routers/interval_structure_router";
-import dashboardRouter from "./routers/dashboard_router";
-import adminRouter from "./routers/admin_router";
-import userRouter from "./routers/user_router";
-import { Hono } from "hono";
-import { openAPIRouteHandler } from "hono-openapi";
+import { clerkMiddleware } from "@hono/clerk-auth";
 import { swaggerUI } from "@hono/swagger-ui";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { logger } from "hono/logger";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { openAPIRouteHandler } from "hono-openapi";
+import { Pool } from "pg";
+import { StravaError } from "./error";
+import { authGuard } from "./middlewares/auth_middleware";
+import activitiesRouter, { stravaActivitiesRouter } from "./routers/activities_router";
+import adminRouter from "./routers/admin_router";
+import agentsRouter from "./routers/agents_router";
+import dashboardRouter from "./routers/dashboard_router";
+import intervalStructureRouter from "./routers/interval_structure_router";
+import publicRouter from "./routers/public_router";
+import stravaEntryRouter from "./routers/strava/strava_entry_router";
+import userRouter from "./routers/user_router";
+import * as schema from "./schema";
+import type { TGlobalEnv } from "./types/IRouters";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const db = drizzle({ client: pool, schema });
 
-
-const app = new Hono<TGlobalEnv>()
+const app = new Hono<TGlobalEnv>();
 
 app.get("/", async (c) => {
   const html = await Bun.file(new URL("./landing.html", import.meta.url).pathname).text();
   return c.html(html);
 });
 
-app.get("/app-icon.png", async (c) => {
+app.get("/app-icon.png", async (_c) => {
   const file = Bun.file(new URL("./app_icon.png", import.meta.url).pathname);
-  return new Response(file, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
+  return new Response(file, {
+    headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+  });
 });
 
-app.get("/favicon.ico", async (c) => {
+app.get("/favicon.ico", async (_c) => {
   const file = Bun.file(new URL("./app_icon.png", import.meta.url).pathname);
-  return new Response(file, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
+  return new Response(file, {
+    headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+  });
 });
 
-app.use('*', logger())
-app.use('*', cors({
-  origin: '*',
-  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
-  exposeHeaders: ['Content-Length', 'X-Request-Id'],
-  maxAge: 3600,
-  credentials: true
-}))
-app.use('/api/*', async (c, next) => {
+app.use("*", logger());
+app.use(
+  "*",
+  cors({
+    origin: "*",
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization"],
+    exposeHeaders: ["Content-Length", "X-Request-Id"],
+    maxAge: 3600,
+    credentials: true,
+  }),
+);
+app.use("/api/*", async (c, next) => {
   c.env.db = db;
   await next();
 });
 app.route("/api", publicRouter);
 if (process.env.NODE_ENV !== "production") {
-  app.get("/api/openapi.json", openAPIRouteHandler(app, {
-    documentation: {
-      info: { title: "Interval Insights API", version: "1.0.0" },
-      servers: [{ url: "http://localhost:3000" }],
-      components: {
-        securitySchemes: {
-          bearerAuth: { type: "http", scheme: "bearer" },
+  app.get(
+    "/api/openapi.json",
+    openAPIRouteHandler(app, {
+      documentation: {
+        info: { title: "Interval Insights API", version: "1.0.0" },
+        servers: [{ url: "http://localhost:3000" }],
+        components: {
+          securitySchemes: {
+            bearerAuth: { type: "http", scheme: "bearer" },
+          },
         },
+        security: [{ bearerAuth: [] }],
       },
-      security: [{ bearerAuth: [] }],
-    },
-  }));
+    }),
+  );
   app.get("/api/docs", swaggerUI({ url: "/api/openapi.json" }));
 }
 
-app.use('/api/*', clerkMiddleware())
-app.use('/api/*', authGuard);
+app.use("/api/*", clerkMiddleware());
+app.use("/api/*", authGuard);
 
 app.route("/api/activity", activitiesRouter);
 app.route("/api/activity", stravaActivitiesRouter);
@@ -84,14 +94,20 @@ app.route("/api/user", userRouter);
 
 // 404 handler
 app.notFound((c) => {
-  return c.json({
-    status: 404,
-    message: 'Not Found'
-  }, 404)
-})
+  return c.json(
+    {
+      status: 404,
+      message: "Not Found",
+    },
+    404,
+  );
+});
 app.onError((err, c) => {
   if (err instanceof StravaError) {
-    return c.json({ error: "Strava API Error", details: err.details }, err.status as any);
+    return c.json(
+      { error: "Strava API Error", details: err.details },
+      err.status as ContentfulStatusCode,
+    );
   }
   console.error("Internal Error:", err);
   return c.json({ error: "Internal Server Error" }, 500);
@@ -99,5 +115,5 @@ app.onError((err, c) => {
 
 export default {
   port: Number(process.env.PORT) || 3000,
-  fetch: app.fetch
-}
+  fetch: app.fetch,
+};

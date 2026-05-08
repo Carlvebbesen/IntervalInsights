@@ -1,0 +1,6 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "deploy": {
+    "preDeployCommand": ["bun run db:migrate"]
+  }
+}

@@ -57,10 +57,10 @@ Routers that need Strava API access must use `TStravaEnv` and apply `stravaMiddl
 
 `analysisStatus` lifecycle: `pending` → `ongoing_init` → `initial` → `ongoing_completed` → `completed` (or `error` at any step).
 
-**LLM:** Gemini 2.5 Flash via `@langchain/google-genai`, zero temperature, defined in `src/agent/model.ts`. Zod schemas define structured outputs for both agents.
+**LLM:** GPT-4o-mini via `@langchain/openai`, zero temperature, defined in `src/agent/model.ts`. Zod schemas define structured outputs for both agents.
 
 **Strava API service** (`src/services.ts/strava_api_service.ts`): thin wrapper around Strava v3 REST API. All methods accept an `accessToken` — never stored on the service itself.
 
 ## Environment Variables Required
 
-`DATABASE_URL`, `CLERK_SECRET_KEY`, `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `GOOGLE_API_KEY` (for Gemini).
+`DATABASE_URL`, `CLERK_SECRET_KEY`, `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `OPENAI_API_KEY` (for GPT-4o-mini).

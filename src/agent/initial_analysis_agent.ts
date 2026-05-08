@@ -1,82 +1,111 @@
 import { z } from "zod";
 import { trainingTypeEnum } from "../schema";
 import { normalizeActivityStreams, prepareDataForLLM } from "../services.ts/utils";
-import { StreamSet } from "../types/strava/IStream";
-import { geminiFlashModel } from "./model";
+import type { StreamSet } from "../types/strava/IStream";
+import { gptMiniModel } from "./model";
 export type WorkoutAnalysisOutput = z.infer<typeof workoutAnalysisOutput>;
 
 export const workoutStep = z.object({
-  reps: z.number()
-    .describe("How many times this specific step is repeated within the set/series."),
+  reps: z.number().describe("How many times this specific step is repeated within the set/series."),
   work_type: z.enum(["DISTANCE", "TIME"]),
-  work_value: z.number()
-    .describe("The duration (seconds) or distance (meters)."),
-  recovery_type: z.enum(["DISTANCE", "TIME"]).optional(),
-  recovery_value: z.number().optional()
+  work_value: z.number().describe("The duration (seconds) or distance (meters)."),
+  recovery_type: z.enum(["DISTANCE", "TIME"]).nullable().optional(),
+  recovery_value: z
+    .number()
+    .nullable()
+    .optional()
     .describe("Rest after each rep in this step (seconds or meters)."),
 });
 
 export const workoutSet = z.object({
-  set_reps: z.number()
-    .describe("How many times the sequence of steps is repeated. Default to 1 if not a repeating series."),
-  steps: z.array(workoutStep)
-    .describe("The individual work segments within this set."),
-  set_recovery: z.number().optional()
-    .describe("The rest Period between sets, could be TIME or DISTANCE value, could be same as between reps"),
+  set_reps: z
+    .number()
+    .describe(
+      "How many times the sequence of steps is repeated. Default to 1 if not a repeating series.",
+    ),
+  steps: z.array(workoutStep).describe("The individual work segments within this set."),
+  set_recovery: z
+    .number()
+    .nullable()
+    .optional()
+    .describe(
+      "The rest Period between sets, could be TIME or DISTANCE value, could be same as between reps",
+    ),
 });
 
 export const workoutAnalysisOutput = z.object({
   training_type: z
     .enum(trainingTypeEnum.enumValues)
     .describe("The classified type of training based on pace and heart rate patterns."),
-  confidence_score: z.number().min(0).max(1)
+  confidence_score: z
+    .number()
+    .min(0)
+    .max(1)
     .describe("How certain the model is about this classification."),
-  intervals_description: z.string()
+  intervals_description: z
+    .string()
+    .nullable()
     .optional()
-    .describe("If intervals are detected, describe them (e.g. '6x800m @ 3:45 pace with 90s rest'). Omit for steady runs."),
-  structure: z.array(workoutSet)
+    .describe(
+      "If intervals are detected, describe them (e.g. '6x800m @ 3:45 pace with 90s rest'). Omit for steady runs.",
+    ),
+  structure: z
+    .array(workoutSet)
+    .nullable()
     .optional()
-    .describe("A list of workout sets. 10x1000m is one set with one step. 3x(3km,2km,1km) is one set with three steps and 3 set_reps."),
+    .describe(
+      "A list of workout sets. 10x1000m is one set with one step. 3x(3km,2km,1km) is one set with three steps and 3 set_reps.",
+    ),
 });
 
 const CLASSIFICATION_RULES = `
-- **LONG_RUN**: Total distance is > 20 km. Pace is generally steady or easy.
-- **EASY_RUN**: Total distance is <= 20 km. Low intensity, steady pace.
-- **RECOVERY**: IF the activty is elliptical or cycling activity not containing intervals.
-- **NORMAL_RUN**: Distance <= 20 km. Standard steady aerobic effort (Zone 2/3). Faster than an easy run, but not a hard workout. The "default" daily run.
+- **LONG**: Total distance is > 20 km (running) or equivalent endurance session in another sport. Pace is generally steady or easy.
+- **EASY**: Steady aerobic effort, no structured intervals. Covers both true low-intensity recovery-pace work and standard daily Zone 2/3 sessions. Distance <= 20 km for running.
+- **RECOVERY**: Cross-training (elliptical, cycling, etc.) used as active recovery, not containing intervals.
 - **SHORT_INTERVALS**: Structured work/rest periods. Work intervals are < 800m OR < 2 minutes duration.
 - **LONG_INTERVALS**: Structured work/rest periods. Work intervals are >= 800m.
 - **HILL_SPRINTS**: Short intervals (< 300m) with significant elevation gain during the work period.
 - **SPRINTS**: Very short duration (< 30s), maximum effort (Max Speed/Anaerobic).
 - **FARTLEK**: "Speed play." A mix of various interval lengths/intensities with NO clear repeating structure (e.g., random surges). Do NOT select this just because pace is messy; requires distinct high-effort surges.
-- **PROGRESSIVE_LONG_RUN**: Distance > 15km. Pace strictly increases (gets faster) from start to finish.
+- **PROGRESSIVE_LONG**: Distance > 15km. Pace strictly increases (gets faster) from start to finish.
 - **TEMPO**: Sustained high effort (Threshold pace) for a block of time (e.g., 20-40 mins).
 - **RACE**: Sustained maximal effort for the distance.
 `;
 
 export async function invokeActivityAnalysisAgent(
   streams: StreamSet,
-  title: string, 
+  title: string,
   description: string,
   totalElevationGain: number,
   type: string,
-): Promise<WorkoutAnalysisOutput|null> {
+): Promise<WorkoutAnalysisOutput | null> {
   const normalized = normalizeActivityStreams(
-    streams?.time?.data ??[],
+    streams?.time?.data ?? [],
     streams?.velocity_smooth?.data,
     streams?.heartrate?.data,
     streams?.distance?.data,
-    streams?.moving?.data
+    streams?.moving?.data,
   );
-  
+
   const summary = prepareDataForLLM(normalized, 30);
+  const hasHr = summary.metadata.avgHeartRate !== null;
+  const tableHeader = hasHr
+    ? `| Time | Pace (min/km) | HR | Moving% |\n  |------|--------------|----|---------|`
+    : `| Time | Pace (min/km) | Moving% |\n  |------|--------------|---------|`;
+  const tableRows = summary.buckets
+    .map((b) =>
+      hasHr
+        ? `| ${b.time} | ${b.pace} | ${b.avgHr ?? "-"} | ${b.isMoving} |`
+        : `| ${b.time} | ${b.pace} | ${b.isMoving} |`,
+    )
+    .join("\n");
   const prompt = `
   You are an expert running coach analyzing Strava activity data.
-  
+
   ### 1. PRIORITY & CONTEXT
-  - **Title/Description Priority:** You must prioritize the user's Title and Description over raw data IF the user explicitly names the workout (e.g., "10x400m", "Tempo Run", "Long Run"). 
+  - **Title/Description Priority:** You must prioritize the user's Title and Description over raw data IF the user explicitly names the workout (e.g., "10x400m", "Tempo Run", "Long Run").
   - **Ignore Generics:** If the title is generic (e.g., "Morning Run", "Lunch Run", "Run"), ignore it and rely 100% on the data stats.
-  - **Fartlek Warning:** Do not default to "Fartlek" just because the data is noisy. Fartlek requires distinct, intentional surges in pace that don't fit a fixed grid. If it's just a steady run with bad GPS data, classify as EASY_RUN.
+  - **Fartlek Warning:** Do not default to "Fartlek" just because the data is noisy. Fartlek requires distinct, intentional surges in pace that don't fit a fixed grid. If it's just a steady run with bad GPS data, classify as EASY.
 
   ### 2. CLASSIFICATION DEFINITIONS
   Use these strict definitions:
@@ -86,17 +115,16 @@ export async function invokeActivityAnalysisAgent(
   - **User Title:** "${title}"
   - **User Description:** "${description}"
   - Activity type: ${type}
-  
+
   **Aggregated Stats:**
   - Duration: ${(summary.metadata.totalTime / 60).toFixed(1)} minutes
   - Total Distance: ${(summary.metadata.totalDistance / 1000).toFixed(2)} km
-  - Avg HR: ${Math.round(summary.metadata.avgHeartRate)} bpm
+  ${summary.metadata.avgHeartRate !== null ? `- Avg HR: ${Math.round(summary.metadata.avgHeartRate)} bpm` : "- Heart-rate data not available for this user"}
   - Total Elevation gained: ${totalElevationGain}
-  
+
   **Sampled Data (30s Windows):**
-  | Time | Pace (min/km) | HR | Moving% |
-  |------|--------------|----|---------|
-  ${summary.buckets.map(b => `| ${b.time} | ${b.pace} | ${b.avgHr} | ${b.isMoving} |`).join('\n')}
+  ${tableHeader}
+  ${tableRows}
   
   ### 4. STRUCTURE EXTRACTION RULES (Hierarchical)
   You must populate the 'structure' array (an array of Sets) using these rules:
@@ -111,11 +139,9 @@ export async function invokeActivityAnalysisAgent(
   Analyze the data and classify the run according to the rules above.
 `;
   try {
-    const result = await geminiFlashModel
-      .withStructuredOutput(workoutAnalysisOutput)
-      .invoke(
-        prompt
-      );
+    const result = await gptMiniModel
+      .withStructuredOutput<WorkoutAnalysisOutput>(workoutAnalysisOutput)
+      .invoke(prompt);
     return result;
   } catch (error) {
     console.error("Failed to analyze activity:", error);
