@@ -1,9 +1,9 @@
 export interface DetailedActivity extends SummaryActivity {
   description?: string;
   calories: number;
-  segment_efforts: any[];
+  segment_efforts: unknown[];
   splits_metric?: SplitMetrics[];
-  laps: any[];
+  laps: unknown[];
   gear?: Gear;
   device_name: string;
   embed_token: string;
@@ -81,7 +81,7 @@ export interface SegmentEffort {
   segment: Segment;
   kom_rank: number | null;
   pr_rank: number | null;
-  achievements: any[];
+  achievements: unknown[];
   hidden: boolean;
 }
 

@@ -1,11 +1,11 @@
 import { Annotation } from "@langchain/langgraph";
-import type { WorkoutAnalysisOutput } from "./initial_analysis_agent";
-import type { InsertIntervalSegment } from "../schema/interval_segments";
 import type { TrainingType } from "../schema/enums";
+import type { InsertIntervalSegment } from "../schema/interval_segments";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
+import type { WorkoutAnalysisOutput } from "./initial_analysis_agent";
 
 // Last-write-wins reducer — used for all fields that are simply overwritten by nodes
-const overwrite = <T>(a: T, b: T): T => b;
+const overwrite = <T>(_a: T, b: T): T => b;
 
 export const AnalysisStateAnnotation = Annotation.Root({
   // Required inputs — must be provided on first invocation

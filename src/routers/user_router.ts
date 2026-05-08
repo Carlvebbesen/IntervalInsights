@@ -1,6 +1,6 @@
 import { createClerkClient } from "@clerk/backend";
-import { eq } from "drizzle-orm";
 import { env } from "bun";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
@@ -11,7 +11,7 @@ import {
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import { activities, users } from "../schema";
 import { ErrorSchema } from "../schemas/api_schemas";
-import { TGlobalEnv } from "../types/IRouters";
+import type { TGlobalEnv } from "../types/IRouters";
 
 const userRouter = new Hono<TGlobalEnv>();
 

@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { trainingTypeEnum, analysisStatusEnum, workoutPartEnum, targetTypeEnum } from "../schema/enums";
+import {
+  analysisStatusEnum,
+  targetTypeEnum,
+  trainingTypeEnum,
+  workoutPartEnum,
+} from "../schema/enums";
 
 export const ErrorSchema = z.object({ error: z.string() });
 
@@ -82,13 +87,15 @@ export const DashboardResponseSchema = z.object({
     thisWeekMovingTimeSec: z.number(),
     thisWeekAvgHeartRate: z.number().nullable(),
   }),
-  graph: z.array(z.object({
-    date: z.string(),
-    runKm: z.number(),
-    otherKm: z.number(),
-    otherBreakdown: z.record(z.string(), z.number()),
-    totalKm: z.number(),
-  })),
+  graph: z.array(
+    z.object({
+      date: z.string(),
+      runKm: z.number(),
+      otherKm: z.number(),
+      otherBreakdown: z.record(z.string(), z.number()),
+      totalKm: z.number(),
+    }),
+  ),
   averages: z.object({
     avgSessionsPerWeek: z.number(),
     avgIntervalsPerWeek: z.number(),
@@ -120,11 +127,13 @@ export const WeekDetailResponseSchema = z.object({
   intervals: z.object({ count: z.number() }),
   otherActivities: z.object({
     combinedKm: z.number(),
-    breakdown: z.array(z.object({
-      sportType: z.string(),
-      km: z.number(),
-      movingTimeSec: z.number(),
-    })),
+    breakdown: z.array(
+      z.object({
+        sportType: z.string(),
+        km: z.number(),
+        movingTimeSec: z.number(),
+      }),
+    ),
   }),
 });
 

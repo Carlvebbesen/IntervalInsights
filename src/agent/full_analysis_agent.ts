@@ -1,27 +1,50 @@
-import { StreamSet } from "../types/strava/IStream";
-import { formatRawPaceFromMps, normalizeActivityStreams, prepareDataForLLM } from "../services.ts/utils";
-import { WorkoutAnalysisOutput } from "./initial_analysis_agent";
-import { Lap } from "../types/strava/IDetailedActivity";
-import { gptMiniModel } from "./model";
-import { targetTypeEnum, TrainingType, workoutPartEnum, WorkoutPartType } from "../schema";
-import { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import z from "zod";
+import {
+  type TrainingType,
+  targetTypeEnum,
+  type WorkoutPartType,
+  workoutPartEnum,
+} from "../schema";
+import {
+  formatRawPaceFromMps,
+  normalizeActivityStreams,
+  prepareDataForLLM,
+} from "../services.ts/utils";
+import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
+import type { Lap } from "../types/strava/IDetailedActivity";
+import type { StreamSet } from "../types/strava/IStream";
+import type { WorkoutAnalysisOutput } from "./initial_analysis_agent";
+import { gptMiniModel } from "./model";
 export type SegmentPlanOutput = z.infer<typeof segmentPlanOutput>;
 
 type ValidWorkoutPart = Exclude<WorkoutPartType, "JOGGING">;
 export const segmentPlanOutput = z.object({
-  segments: z.array(z.object({
-    type: z.enum(workoutPartEnum.enumValues.filter((part) => part !== "JOGGING") as [ValidWorkoutPart, ...ValidWorkoutPart[]]),
-    start_time: z.number().describe("Start time in seconds from activity start"),
-    end_time: z.number().describe("End time in seconds"),
-    set_group_index: z.number().optional()
-      .describe("1-based index. Use this to group sets. Omit if not applicable."),
-    target_type: z.enum(targetTypeEnum.enumValues),
-    target_value: z.number()
-      .describe("Primary target value. IF DISTANCE: Must be in METERS. IF TIME: Must be in SECONDS."),
-    target_pace_string: z.string().optional()
-      .describe("The target pace for this segment. Format: 'M:SS'"),
-  })),
+  segments: z.array(
+    z.object({
+      type: z.enum(
+        workoutPartEnum.enumValues.filter((part) => part !== "JOGGING") as [
+          ValidWorkoutPart,
+          ...ValidWorkoutPart[],
+        ],
+      ),
+      start_time: z.number().describe("Start time in seconds from activity start"),
+      end_time: z.number().describe("End time in seconds"),
+      set_group_index: z
+        .number()
+        .optional()
+        .describe("1-based index. Use this to group sets. Omit if not applicable."),
+      target_type: z.enum(targetTypeEnum.enumValues),
+      target_value: z
+        .number()
+        .describe(
+          "Primary target value. IF DISTANCE: Must be in METERS. IF TIME: Must be in SECONDS.",
+        ),
+      target_pace_string: z
+        .string()
+        .optional()
+        .describe("The target pace for this segment. Format: 'M:SS'"),
+    }),
+  ),
 });
 
 export async function invokeCompleteActivityAnalysisAgent(
@@ -30,35 +53,36 @@ export async function invokeCompleteActivityAnalysisAgent(
   trainingType: TrainingType,
   laps: Lap[],
   initalAgentResult: WorkoutAnalysisOutput | null,
-  groups: ExpandedIntervalSet[]
+  groups: ExpandedIntervalSet[],
 ): Promise<SegmentPlanOutput | null> {
   const normalized = normalizeActivityStreams(
     streams?.time?.data ?? [],
     streams?.velocity_smooth?.data,
     streams?.heartrate?.data,
     streams?.distance?.data,
-    streams?.moving?.data
+    streams?.moving?.data,
   );
 
-const specificIntervalPaces = groups.flatMap((group, setIndex) => {
-  const setHeader = `### SET ${setIndex + 1} (Recovery between sets: ${group.set_recovery ?? 'N/A'}s)`;
-  const stepStrings = group.steps.map((step, stepIndex) => {
-    const readablePace = step.target_pace 
-      ? formatRawPaceFromMps(Number(step.target_pace)) 
-      : "No target found";
-      
-    const target = step.work_type === "DISTANCE" 
-      ? `${step.work_value}m` 
-      : `${step.work_value}s`;
+  const specificIntervalPaces = groups
+    .flatMap((group, setIndex) => {
+      const setHeader = `### SET ${setIndex + 1} (Recovery between sets: ${group.set_recovery ?? "N/A"}s)`;
+      const stepStrings = group.steps.map((step, stepIndex) => {
+        const readablePace = step.target_pace
+          ? formatRawPaceFromMps(Number(step.target_pace))
+          : "No target found";
 
-    return `- Interval ${stepIndex + 1}: Target ${target} at Pace **${readablePace}** (Rest: ${step.recovery_value}s)`;
-  });
+        const target =
+          step.work_type === "DISTANCE" ? `${step.work_value}m` : `${step.work_value}s`;
 
-  return [setHeader, ...stepStrings, ""];
-}).join('\n');
+        return `- Interval ${stepIndex + 1}: Target ${target} at Pace **${readablePace}** (Rest: ${step.recovery_value}s)`;
+      });
+
+      return [setHeader, ...stepStrings, ""];
+    })
+    .join("\n");
   let initalAgentPrompt = "";
   if (initalAgentResult != null) {
-    const { confidence_score, intervals_description} = initalAgentResult;
+    const { confidence_score, intervals_description } = initalAgentResult;
     initalAgentPrompt = `Context: The previous agent identified this activity as:
   - Classification Confidence: ${(confidence_score * 100).toFixed(0)}%
   - Description: ${intervals_description ?? "N/A"}
@@ -114,7 +138,7 @@ Comment from user: ${comment}
 
 INPUT DATA:
 1. **Strava Laps**:
-${laps.map((l, i) => `Lap ${i}: ${l.distance}m in ${l.elapsed_time}s avg speed: ${l.average_speed}`).join('\n')}
+${laps.map((l, i) => `Lap ${i}: ${l.distance}m in ${l.elapsed_time}s avg speed: ${l.average_speed}`).join("\n")}
 
 2. **Sampled Data (30s Windows):**
   ${tableHeader}

@@ -1,34 +1,34 @@
-import { StateGraph, START, END, interrupt } from "@langchain/langgraph";
-import { sleep } from "bun";
-import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
-import pg from "pg";
 import type { RunnableConfig } from "@langchain/core/runnables";
+import { END, interrupt, START, StateGraph } from "@langchain/langgraph";
+import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import { sleep } from "bun";
 import { and, eq } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { AnalysisStateAnnotation, type AnalysisState } from "./graph_state";
-import { invokeActivityAnalysisAgent } from "./initial_analysis_agent";
-import { invokeCompleteActivityAnalysisAgent } from "./full_analysis_agent";
-import { stravaApiService } from "../services.ts/strava_api_service";
-import { userHasHeartRateConsent } from "../services.ts/heart_rate_consent_service";
-import {
-  couldSkipCompleteAnalysis,
-  needCompleteAnalysis,
-  lapsMatchIntervals,
-  calculateSegmentStats,
-  parsePaceStringToMetersPerSecond,
-} from "../services.ts/utils";
+import pg from "pg";
+import type * as schema from "../schema";
 import {
   activities,
-  intervalSegments,
-  intervalStructures,
+  determineIntervalType,
   generateIntervalSignature,
   generateStructureName,
-  determineIntervalType,
+  intervalSegments,
+  intervalStructures,
   mapSegmentsToComponents,
 } from "../schema";
-import type * as schema from "../schema";
-import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { TrainingType } from "../schema/enums";
+import { userHasHeartRateConsent } from "../services.ts/heart_rate_consent_service";
+import { stravaApiService } from "../services.ts/strava_api_service";
+import {
+  calculateSegmentStats,
+  couldSkipCompleteAnalysis,
+  lapsMatchIntervals,
+  needCompleteAnalysis,
+  parsePaceStringToMetersPerSecond,
+} from "../services.ts/utils";
+import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
+import { invokeCompleteActivityAnalysisAgent } from "./full_analysis_agent";
+import { type AnalysisState, AnalysisStateAnnotation } from "./graph_state";
+import { invokeActivityAnalysisAgent } from "./initial_analysis_agent";
 
 type Db = NodePgDatabase<typeof schema>;
 type Configurable = { db: Db; stravaAccessToken: string };
@@ -38,17 +38,18 @@ type Configurable = { db: Db; stravaAccessToken: string };
 async function invokeWithRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
-  } catch (error: any) {
-    const msg = error?.message ?? "";
-    const isRateLimit = error?.status === 429 || msg.includes("429");
+  } catch (error) {
+    const err = error as { message?: string; status?: number; retryDelay?: string };
+    const msg = err?.message ?? "";
+    const isRateLimit = err?.status === 429 || msg.includes("429");
     if (!isRateLimit) throw error;
 
     let waitMs = 10_000;
     const retryMatch = msg.match(/retry in ([\d.]+)s/);
     if (retryMatch?.[1]) {
-      waitMs = Math.ceil(parseFloat(retryMatch[1]) * 1000) + 2000;
-    } else if (error?.retryDelay) {
-      waitMs = parseInt(error.retryDelay) * 1000 + 2000;
+      waitMs = Math.ceil(Number.parseFloat(retryMatch[1]) * 1000) + 2000;
+    } else if (err?.retryDelay) {
+      waitMs = Number.parseInt(err.retryDelay, 10) * 1000 + 2000;
     }
     console.warn(`Gemini quota exceeded. Waiting ${waitMs}ms before retry.`);
     await sleep(waitMs);
@@ -84,7 +85,7 @@ async function classifyActivity(
     .set({ analysisStatus: "ongoing_init" })
     .where(eq(activities.id, state.activityId));
 
-  let initialResult = await invokeWithRateLimitRetry(() =>
+  const initialResult = await invokeWithRateLimitRetry(() =>
     invokeActivityAnalysisAgent(
       streams,
       activity.name,
@@ -129,7 +130,7 @@ async function markCompleted(
   await db
     .update(activities)
     .set({
-      trainingType: state.initialResult!.training_type,
+      trainingType: state.initialResult?.training_type,
       analysisStatus: "completed",
       draftAnalysisResult: null,
     })
@@ -157,7 +158,10 @@ async function runCompleteAnalysis(
 ): Promise<Partial<AnalysisState>> {
   const { db, stravaAccessToken } = config.configurable as Configurable;
 
-  const trainingType = state.confirmedTrainingType ?? state.initialResult!.training_type;
+  const trainingType = state.confirmedTrainingType ?? state.initialResult?.training_type;
+  if (!trainingType) {
+    throw new Error("runCompleteAnalysis called without a resolved trainingType");
+  }
 
   // Types that don't need LLM segment breakdown — just mark completed with notes
   if (!needCompleteAnalysis(trainingType)) {
@@ -238,7 +242,10 @@ async function validateSignature(
 ): Promise<Partial<AnalysisState>> {
   const { db } = config.configurable as Configurable;
 
-  const trainingType = state.confirmedTrainingType ?? state.initialResult!.training_type;
+  const trainingType = state.confirmedTrainingType ?? state.initialResult?.training_type;
+  if (!trainingType) {
+    throw new Error("validateSignature called without a resolved trainingType");
+  }
   const components = mapSegmentsToComponents(state.computedSegments);
   const signature = generateIntervalSignature(components);
 
@@ -266,10 +273,7 @@ async function validateSignature(
     .from(intervalStructures)
     .innerJoin(activities, eq(activities.intervalStructureId, intervalStructures.id))
     .where(
-      and(
-        eq(activities.userId, state.userId),
-        eq(intervalStructures.trainingType, trainingType),
-      ),
+      and(eq(activities.userId, state.userId), eq(intervalStructures.trainingType, trainingType)),
     );
 
   let bestId: number | undefined;
@@ -300,8 +304,12 @@ async function persistResults(
 ): Promise<Partial<AnalysisState>> {
   const { db } = config.configurable as Configurable;
 
-  const trainingType = state.confirmedTrainingType ?? state.initialResult!.training_type;
-  const check = state.signatureCheck!;
+  const trainingType = state.confirmedTrainingType ?? state.initialResult?.training_type;
+  if (!trainingType) {
+    throw new Error("persistResults called without a resolved trainingType");
+  }
+  const check = state.signatureCheck;
+  if (!check) throw new Error("persistResults called without signatureCheck in state");
 
   let structureId: number;
   if (check.useExisting && check.structureId !== undefined) {
@@ -333,9 +341,7 @@ async function persistResults(
       })
       .where(eq(activities.id, state.activityId));
 
-    await tx
-      .delete(intervalSegments)
-      .where(eq(intervalSegments.activityId, state.activityId));
+    await tx.delete(intervalSegments).where(eq(intervalSegments.activityId, state.activityId));
 
     await tx.insert(intervalSegments).values(state.computedSegments);
   });
@@ -352,9 +358,7 @@ function routeAfterClassification(state: AnalysisState): "markCompleted" | "awai
   return "awaitUserInput";
 }
 
-function routeAfterCompleteAnalysis(
-  state: AnalysisState,
-): "validateSignature" | typeof END {
+function routeAfterCompleteAnalysis(state: AnalysisState): "validateSignature" | typeof END {
   return state.computedSegments.length > 0 ? "validateSignature" : END;
 }
 
@@ -365,7 +369,9 @@ let _checkpointerPromise: Promise<PostgresSaver> | null = null;
 export function getCheckpointer(): Promise<PostgresSaver> {
   if (!_checkpointerPromise) {
     _checkpointerPromise = (async () => {
-      const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL! });
+      const databaseUrl = process.env.DATABASE_URL;
+      if (!databaseUrl) throw new Error("DATABASE_URL is not set");
+      const pool = new pg.Pool({ connectionString: databaseUrl });
       const cp = new PostgresSaver(pool);
       await cp.setup();
       return cp;
@@ -419,4 +425,3 @@ export function buildAnalysisGraph(): Promise<ReturnType<typeof workflow.compile
   }
   return _compiledGraphPromise;
 }
-

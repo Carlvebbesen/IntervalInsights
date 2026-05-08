@@ -1,42 +1,57 @@
 import { z } from "zod";
 import { trainingTypeEnum } from "../schema";
 import { normalizeActivityStreams, prepareDataForLLM } from "../services.ts/utils";
-import { StreamSet } from "../types/strava/IStream";
+import type { StreamSet } from "../types/strava/IStream";
 import { gptMiniModel } from "./model";
 export type WorkoutAnalysisOutput = z.infer<typeof workoutAnalysisOutput>;
 
 export const workoutStep = z.object({
-  reps: z.number()
-    .describe("How many times this specific step is repeated within the set/series."),
+  reps: z.number().describe("How many times this specific step is repeated within the set/series."),
   work_type: z.enum(["DISTANCE", "TIME"]),
-  work_value: z.number()
-    .describe("The duration (seconds) or distance (meters)."),
+  work_value: z.number().describe("The duration (seconds) or distance (meters)."),
   recovery_type: z.enum(["DISTANCE", "TIME"]).optional(),
-  recovery_value: z.number().optional()
+  recovery_value: z
+    .number()
+    .optional()
     .describe("Rest after each rep in this step (seconds or meters)."),
 });
 
 export const workoutSet = z.object({
-  set_reps: z.number()
-    .describe("How many times the sequence of steps is repeated. Default to 1 if not a repeating series."),
-  steps: z.array(workoutStep)
-    .describe("The individual work segments within this set."),
-  set_recovery: z.number().optional()
-    .describe("The rest Period between sets, could be TIME or DISTANCE value, could be same as between reps"),
+  set_reps: z
+    .number()
+    .describe(
+      "How many times the sequence of steps is repeated. Default to 1 if not a repeating series.",
+    ),
+  steps: z.array(workoutStep).describe("The individual work segments within this set."),
+  set_recovery: z
+    .number()
+    .optional()
+    .describe(
+      "The rest Period between sets, could be TIME or DISTANCE value, could be same as between reps",
+    ),
 });
 
 export const workoutAnalysisOutput = z.object({
   training_type: z
     .enum(trainingTypeEnum.enumValues)
     .describe("The classified type of training based on pace and heart rate patterns."),
-  confidence_score: z.number().min(0).max(1)
+  confidence_score: z
+    .number()
+    .min(0)
+    .max(1)
     .describe("How certain the model is about this classification."),
-  intervals_description: z.string()
+  intervals_description: z
+    .string()
     .optional()
-    .describe("If intervals are detected, describe them (e.g. '6x800m @ 3:45 pace with 90s rest'). Omit for steady runs."),
-  structure: z.array(workoutSet)
+    .describe(
+      "If intervals are detected, describe them (e.g. '6x800m @ 3:45 pace with 90s rest'). Omit for steady runs.",
+    ),
+  structure: z
+    .array(workoutSet)
     .optional()
-    .describe("A list of workout sets. 10x1000m is one set with one step. 3x(3km,2km,1km) is one set with three steps and 3 set_reps."),
+    .describe(
+      "A list of workout sets. 10x1000m is one set with one step. 3x(3km,2km,1km) is one set with three steps and 3 set_reps.",
+    ),
 });
 
 const CLASSIFICATION_RULES = `
@@ -55,19 +70,19 @@ const CLASSIFICATION_RULES = `
 
 export async function invokeActivityAnalysisAgent(
   streams: StreamSet,
-  title: string, 
+  title: string,
   description: string,
   totalElevationGain: number,
   type: string,
-): Promise<WorkoutAnalysisOutput|null> {
+): Promise<WorkoutAnalysisOutput | null> {
   const normalized = normalizeActivityStreams(
-    streams?.time?.data ??[],
+    streams?.time?.data ?? [],
     streams?.velocity_smooth?.data,
     streams?.heartrate?.data,
     streams?.distance?.data,
-    streams?.moving?.data
+    streams?.moving?.data,
   );
-  
+
   const summary = prepareDataForLLM(normalized, 30);
   const hasHr = summary.metadata.avgHeartRate !== null;
   const tableHeader = hasHr
@@ -100,7 +115,7 @@ export async function invokeActivityAnalysisAgent(
   **Aggregated Stats:**
   - Duration: ${(summary.metadata.totalTime / 60).toFixed(1)} minutes
   - Total Distance: ${(summary.metadata.totalDistance / 1000).toFixed(2)} km
-  ${hasHr ? `- Avg HR: ${Math.round(summary.metadata.avgHeartRate!)} bpm` : "- Heart-rate data not available for this user"}
+  ${summary.metadata.avgHeartRate !== null ? `- Avg HR: ${Math.round(summary.metadata.avgHeartRate)} bpm` : "- Heart-rate data not available for this user"}
   - Total Elevation gained: ${totalElevationGain}
 
   **Sampled Data (30s Windows):**
@@ -122,9 +137,7 @@ export async function invokeActivityAnalysisAgent(
   try {
     const result = await gptMiniModel
       .withStructuredOutput<WorkoutAnalysisOutput>(workoutAnalysisOutput)
-      .invoke(
-        prompt
-      );
+      .invoke(prompt);
     return result;
   } catch (error) {
     console.error("Failed to analyze activity:", error);

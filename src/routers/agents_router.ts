@@ -1,60 +1,65 @@
+import { and, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
-import { TStravaEnv } from "../types/IRouters";
-import { activities } from "../schema";
-import { eq,inArray,and } from "drizzle-orm";
-import { stravaMiddleware } from "../middlewares/strava_middleware";
-import { getProposedPaceForStructure, resumeAnalysis, startAnalysis } from "../services.ts/analysis_service";
-import { TrainingType } from "../schema/enums";
+import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
 import { workoutSet } from "../agent/initial_analysis_agent";
-import { describeRoute, resolver, validator } from "hono-openapi";
-import { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
+import { stravaMiddleware } from "../middlewares/strava_middleware";
+import { activities } from "../schema";
+import type { TrainingType } from "../schema/enums";
 import { ErrorSchema, PendingActivitySchema } from "../schemas/api_schemas";
-
+import {
+  getProposedPaceForStructure,
+  resumeAnalysis,
+  startAnalysis,
+} from "../services.ts/analysis_service";
+import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
+import type { TStravaEnv } from "../types/IRouters";
 
 const agentsRouter = new Hono<TStravaEnv>();
-agentsRouter.use('*', stravaMiddleware);
+agentsRouter.use("*", stravaMiddleware);
 
 agentsRouter.get(
   "/pending",
   describeRoute({
     description: "Get activities pending analysis",
     responses: {
-      200: { description: "Pending activities", content: { "application/json": { schema: resolver(z.array(PendingActivitySchema)) } } },
+      200: {
+        description: "Pending activities",
+        content: { "application/json": { schema: resolver(z.array(PendingActivitySchema)) } },
+      },
     },
   }),
-  async (c)=>{
+  async (c) => {
     const userId = c.get("userId");
     const result = await c.env.db
-  .select({
-    id: activities.id,
-    stravaId: activities.stravaActivityId,
-    trainingType: activities.trainingType,
-    analysisStatus: activities.analysisStatus,
-    draftAnalysisResult: activities.draftAnalysisResult,
-    title: activities.title,
-    notes: activities.notes,
-    distance: activities.distance,
-    movingTime: activities.movingTime,
-    description: activities.description,
-    indoor: activities.indoor,
-  })
-  .from(activities)
-  .where(
-    and(
-      eq(activities.userId, userId),
-      inArray(activities.analysisStatus, ["initial", "pending", "error"])
-    )
-  );
-  const accessToken = c.get("stravaAccessToken");
-  result
-    .filter((activity) => activity.analysisStatus === "error")
-    .forEach((errorActivity) =>
-      startAnalysis(c.env.db, accessToken, errorActivity.id, errorActivity.stravaId, userId),
-    );
-  const pending = result.filter((activity )=> activity.analysisStatus !== "error" );
-  return c.json(pending, 200);
-});
+      .select({
+        id: activities.id,
+        stravaId: activities.stravaActivityId,
+        trainingType: activities.trainingType,
+        analysisStatus: activities.analysisStatus,
+        draftAnalysisResult: activities.draftAnalysisResult,
+        title: activities.title,
+        notes: activities.notes,
+        distance: activities.distance,
+        movingTime: activities.movingTime,
+        description: activities.description,
+        indoor: activities.indoor,
+      })
+      .from(activities)
+      .where(
+        and(
+          eq(activities.userId, userId),
+          inArray(activities.analysisStatus, ["initial", "pending", "error"]),
+        ),
+      );
+    const accessToken = c.get("stravaAccessToken");
+    for (const errorActivity of result.filter((activity) => activity.analysisStatus === "error")) {
+      startAnalysis(c.env.db, accessToken, errorActivity.id, errorActivity.stravaId, userId);
+    }
+    const pending = result.filter((activity) => activity.analysisStatus !== "error");
+    return c.json(pending, 200);
+  },
+);
 
 const startCompleteAnalysisSchema = z.object({
   activityId: z.number(),
@@ -68,10 +73,26 @@ agentsRouter.post(
   describeRoute({
     description: "Resume the complete analysis for an activity (alias for /resume-analysis)",
     responses: {
-      200: { description: "Analysis started", content: { "application/json": { schema: resolver(z.object({ success: z.boolean(), message: z.string() })) } } },
-      400: { description: "Bad request", content: { "application/json": { schema: resolver(ErrorSchema) } } },
-      401: { description: "Unauthorized", content: { "application/json": { schema: resolver(ErrorSchema) } } },
-      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      200: {
+        description: "Analysis started",
+        content: {
+          "application/json": {
+            schema: resolver(z.object({ success: z.boolean(), message: z.string() })),
+          },
+        },
+      },
+      400: {
+        description: "Bad request",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      401: {
+        description: "Unauthorized",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
     },
   }),
   validator("json", startCompleteAnalysisSchema),
@@ -101,7 +122,6 @@ agentsRouter.post(
   },
 );
 
-
 const startAnalysisSchema = z.object({
   activityId: z.number(),
   stravaActivityId: z.number(),
@@ -112,9 +132,18 @@ agentsRouter.post(
   describeRoute({
     description: "Start the LangGraph analysis pipeline for an activity",
     responses: {
-      200: { description: "Analysis started", content: { "application/json": { schema: resolver(z.object({ success: z.boolean() })) } } },
-      400: { description: "Bad request", content: { "application/json": { schema: resolver(ErrorSchema) } } },
-      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      200: {
+        description: "Analysis started",
+        content: { "application/json": { schema: resolver(z.object({ success: z.boolean() })) } },
+      },
+      400: {
+        description: "Bad request",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
     },
   }),
   validator("json", startAnalysisSchema),
@@ -147,9 +176,18 @@ agentsRouter.post(
   describeRoute({
     description: "Resume the LangGraph analysis pipeline after user input",
     responses: {
-      200: { description: "Analysis resumed", content: { "application/json": { schema: resolver(z.object({ success: z.boolean() })) } } },
-      400: { description: "Bad request", content: { "application/json": { schema: resolver(ErrorSchema) } } },
-      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      200: {
+        description: "Analysis resumed",
+        content: { "application/json": { schema: resolver(z.object({ success: z.boolean() })) } },
+      },
+      400: {
+        description: "Bad request",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
     },
   }),
   validator("json", resumeAnalysisSchema),
@@ -185,29 +223,32 @@ agentsRouter.post(
   describeRoute({
     description: "Get proposed paces for an interval structure",
     responses: {
-      200: { description: "Proposed paces", content: { "application/json": { schema: resolver(z.unknown()) } } },
-      500: { description: "Internal server error", content: { "application/json": { schema: resolver(ErrorSchema) } } },
+      200: {
+        description: "Proposed paces",
+        content: { "application/json": { schema: resolver(z.unknown()) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
     },
   }),
   validator("json", paceRequestSchema),
   async (c) => {
-  const user = c.get("userId");
-  const data = c.req.valid("json");
-  const { structure } = data;
-  if (!structure || structure.length === 0) {
-    return c.json({ proposed_paces: null });
-  }
+    const user = c.get("userId");
+    const data = c.req.valid("json");
+    const { structure } = data;
+    if (!structure || structure.length === 0) {
+      return c.json({ proposed_paces: null });
+    }
     try {
       const proposedPaces = await getProposedPaceForStructure(c.env.db, user, structure);
-      return c.json(
-        proposedPaces 
-      );
+      return c.json(proposedPaces);
     } catch (error) {
       console.error("Error calculating proposed pace:", error);
       return c.json({ error: "Failed to calculate pace" }, 500);
     }
-  }
+  },
 );
-
 
 export default agentsRouter;

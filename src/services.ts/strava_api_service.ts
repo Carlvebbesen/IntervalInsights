@@ -1,12 +1,22 @@
 import { sleep } from "bun";
+import { eq } from "drizzle-orm";
 import { StravaError } from "../error";
 import { activities, getDbInsertActivity } from "../schema";
-import { IGlobalBindings } from "../types/IRouters";
-import { DetailedActivity, Gear, Lap, SummaryActivity } from "../types/strava/IDetailedActivity";
-import { StreamTypeMap } from "../types/strava/IStream";
-import { eq } from "drizzle-orm";
+import type { IGlobalBindings } from "../types/IRouters";
+import type {
+  DetailedActivity,
+  Gear,
+  Lap,
+  SummaryActivity,
+} from "../types/strava/IDetailedActivity";
+import type { StreamTypeMap } from "../types/strava/IStream";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
-async function fetchStrava<T>(endpoint: string, accessToken: string, params?: Record<string, string>): Promise<T> {
+
+async function fetchStrava<T>(
+  endpoint: string,
+  accessToken: string,
+  params?: Record<string, string>,
+): Promise<T> {
   const url = new URL(`https://www.strava.com/api/v3${endpoint}`);
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
@@ -29,9 +39,15 @@ async function fetchStrava<T>(endpoint: string, accessToken: string, params?: Re
 
 export const stravaApiService = {
   async getActivity(accessToken: string, id: number, includeEfforts?: string) {
-    return fetchStrava<DetailedActivity>(`/activities/${id}`, accessToken, includeEfforts ?{
-      include_all_efforts: includeEfforts,
-    }: {});
+    return fetchStrava<DetailedActivity>(
+      `/activities/${id}`,
+      accessToken,
+      includeEfforts
+        ? {
+            include_all_efforts: includeEfforts,
+          }
+        : {},
+    );
   },
   async getGear(accessToken: string, id: string) {
     return fetchStrava<Gear>(`/gear/${id}`, accessToken);
@@ -40,7 +56,7 @@ export const stravaApiService = {
   async getActivityStreams<K extends keyof StreamTypeMap>(
     accessToken: string,
     id: number,
-    keys: K[]
+    keys: K[],
   ): Promise<Pick<StreamTypeMap, K>> {
     const keysString = keys.join(",");
     return fetchStrava<Pick<StreamTypeMap, K>>(`/activities/${id}/streams`, accessToken, {
@@ -53,7 +69,10 @@ export const stravaApiService = {
     return fetchStrava<Lap[]>(`/activities/${id}/laps`, accessToken);
   },
 
-  async listAthleteActivities(accessToken: string, query: { before?: string; after?: string; page?: string; per_page?: string }) {
+  async listAthleteActivities(
+    accessToken: string,
+    query: { before?: string; after?: string; page?: string; per_page?: string },
+  ) {
     return fetchStrava<SummaryActivity[]>("/athlete/activities", accessToken, query);
   },
   async syncStravaActivities(
@@ -73,7 +92,10 @@ export const stravaApiService = {
       const batchPromises = batch.map(async (id) => {
         try {
           const activity = await this.getActivity(accessToken, id);
-          await db.insert(activities).values(getDbInsertActivity(activity, userId, processHeartRate)).onConflictDoNothing();
+          await db
+            .insert(activities)
+            .values(getDbInsertActivity(activity, userId, processHeartRate))
+            .onConflictDoNothing();
           if (onActivitySynced) {
             const [row] = await db
               .select({ id: activities.id })

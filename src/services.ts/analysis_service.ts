@@ -1,5 +1,8 @@
-import { eq, and, desc } from "drizzle-orm";
-import { workoutSet } from "../agent/initial_analysis_agent";
+import { Command } from "@langchain/langgraph";
+import { and, desc, eq } from "drizzle-orm";
+import type z from "zod";
+import { buildAnalysisGraph, resetAnalysisThread } from "../agent/analysis_graph";
+import type { workoutSet } from "../agent/initial_analysis_agent";
 import {
   activities,
   generateIntervalSignature,
@@ -7,13 +10,10 @@ import {
   intervalStructures,
   mapSetsToIntervalComponent,
 } from "../schema";
-import { IGlobalBindings } from "../types/IRouters";
+import type { TrainingType } from "../schema/enums";
+import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
+import type { IGlobalBindings } from "../types/IRouters";
 import { generateCompleteIntervalSet } from "./utils";
-import z from "zod";
-import { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
-import { buildAnalysisGraph, resetAnalysisThread } from "../agent/analysis_graph";
-import { Command } from "@langchain/langgraph";
-import { TrainingType } from "../schema/enums";
 
 // ── LangGraph pipeline ────────────────────────────────────────────────────────
 
@@ -59,16 +59,13 @@ export const resumeAnalysis = async (
 ): Promise<void> => {
   try {
     const graph = await buildAnalysisGraph();
-    await graph.invoke(
-      new Command({ resume: { notes, sets, trainingType } }),
-      {
-        configurable: {
-          thread_id: String(activityId),
-          db,
-          stravaAccessToken,
-        },
+    await graph.invoke(new Command({ resume: { notes, sets, trainingType } }), {
+      configurable: {
+        thread_id: String(activityId),
+        db,
+        stravaAccessToken,
       },
-    );
+    });
   } catch (error) {
     console.error(`Error in resumeAnalysis for activity ${activityId}:`, error);
     try {
@@ -186,7 +183,7 @@ function calculateAverages(
   sets: ExpandedIntervalSet[],
 ): ExpandedIntervalSet[] {
   const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
-  const now = new Date().getTime();
+  const now = Date.now();
   const getEffectivePace = (row: (typeof rows)[0]) =>
     row.targetPace ?? (row.actualDuration > 0 ? row.actualDistance / row.actualDuration : 0);
   const sortedRows = [...rows].sort((a, b) => a.segmentIndex - b.segmentIndex);
@@ -203,7 +200,7 @@ function calculateAverages(
       const targetType = step.work_type === "DISTANCE" ? "distance" : "time";
       const targetVal = step.work_value;
 
-      let relevantRow = sortedRows[currentIntervalNumber];
+      const relevantRow = sortedRows[currentIntervalNumber];
       if (
         relevantRow &&
         relevantRow.targetType === targetType &&
@@ -216,8 +213,7 @@ function calculateAverages(
         );
         if (matchingRows.length > 0) {
           const avgPaceForMatching =
-            matchingRows.reduce((sum, row) => sum + getEffectivePace(row), 0) /
-            matchingRows.length;
+            matchingRows.reduce((sum, row) => sum + getEffectivePace(row), 0) / matchingRows.length;
           return { ...step, target_pace: avgPaceForMatching };
         } else {
           return { ...step, target_pace: averagePace };
@@ -240,8 +236,7 @@ function calculateAverages(
         );
         if (matchingRows.length > 0) {
           proposedPace =
-            matchingRows.reduce((sum, row) => sum + getEffectivePace(row), 0) /
-            matchingRows.length;
+            matchingRows.reduce((sum, row) => sum + getEffectivePace(row), 0) / matchingRows.length;
         } else {
           proposedPace = averagePace ?? getEffectivePace(relevantRow);
         }

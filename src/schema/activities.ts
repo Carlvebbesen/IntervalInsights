@@ -1,23 +1,23 @@
+import { type InferInsertModel, relations } from "drizzle-orm";
 import {
+  bigint,
+  boolean,
   doublePrecision,
   index,
   integer,
+  json,
   pgTable,
   serial,
   text,
   timestamp,
   uuid,
-  boolean,
-  bigint,
-  json,
 } from "drizzle-orm/pg-core";
-import { users } from "./users";
-import { intervalStructures } from "./interval_structure";
+import type { WorkoutAnalysisOutput } from "../agent/initial_analysis_agent";
+import type { DetailedActivity } from "../types/strava/IDetailedActivity";
 import { analysisStatusEnum, trainingTypeEnum } from "./enums";
 import { intervalSegments } from "./interval_segments";
-import { InferInsertModel, relations } from "drizzle-orm";
-import { DetailedActivity } from "../types/strava/IDetailedActivity";
-import { WorkoutAnalysisOutput } from "../agent/initial_analysis_agent";
+import { intervalStructures } from "./interval_structure";
+import { users } from "./users";
 
 export const activities = pgTable(
   "activities",
@@ -27,14 +27,12 @@ export const activities = pgTable(
       .references(() => users.id)
       .notNull(),
     trainingType: trainingTypeEnum("training_type"),
-    intervalStructureId: integer("interval_structure_id").references(
-      () => intervalStructures.id
-    ),
+    intervalStructureId: integer("interval_structure_id").references(() => intervalStructures.id),
     analyzedAt: timestamp("analyzed_at"),
     analysisStatus: analysisStatusEnum("analysis_status").default("pending"),
     draftAnalysisResult: json("draft_analysis_result").$type<WorkoutAnalysisOutput>(),
     analysisVersion: text("analysis_version").default("v1.0"),
-    stravaActivityId: bigint("strava_activity_id",{ mode: "number" }).unique().notNull(),
+    stravaActivityId: bigint("strava_activity_id", { mode: "number" }).unique().notNull(),
     gearId: text("gear_id"),
     hasHeartrate: boolean("has_heart_rate"),
     title: text("title").notNull(),
@@ -51,15 +49,13 @@ export const activities = pgTable(
     indoor: boolean("indoor").notNull(),
   },
   (table) => {
-    return[
+    return [
       index("user_idx").on(table.userId),
       index("date_idx").on(table.startDateLocal),
       index("type_idx").on(table.trainingType),
-      index("interval_structure_idx").on(
-        table.intervalStructureId
-      ),
+      index("interval_structure_idx").on(table.intervalStructureId),
     ];
-  }
+  },
 );
 
 export const activitiesRelations = relations(activities, ({ one, many }) => ({
@@ -75,7 +71,6 @@ export const activitiesRelations = relations(activities, ({ one, many }) => ({
 }));
 
 export type InsertActivity = InferInsertModel<typeof activities>;
-
 
 export function getDbInsertActivity(
   data: DetailedActivity,

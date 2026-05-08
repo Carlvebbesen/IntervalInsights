@@ -6,8 +6,7 @@ export interface ActivityDataPoint {
   moving: boolean;
 }
 
-
-export type StreamType = 
+export type StreamType =
   | "time"
   | "distance"
   | "latlng"

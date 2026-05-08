@@ -1,28 +1,39 @@
-import z from "zod";
-import { WorkoutAnalysisOutput, workoutSet, } from "../agent/initial_analysis_agent";
-import { TrainingType } from "../schema";
-import { LLMActivitySummary } from "../types/LLMActivitySummary";
-import { ActivityDataPoint, StreamSet } from "../types/strava/IStream";
-import { Lap } from "../types/strava/IDetailedActivity";
+import type z from "zod";
+import type { WorkoutAnalysisOutput, workoutSet } from "../agent/initial_analysis_agent";
+import type { TrainingType } from "../schema";
+import type { LLMActivitySummary } from "../types/LLMActivitySummary";
+import type { Lap } from "../types/strava/IDetailedActivity";
+import type { ActivityDataPoint, StreamSet } from "../types/strava/IStream";
 
 export function shouldAnalyze(sportType: string): boolean {
-  const runningTypes = ["Run", "TrailRun", "VirtualRun", "Elliptical", "Hike", "Ride", "Virtual Ride", "Rowing","Nordic Ski", "Backcountry Ski"];
+  const runningTypes = [
+    "Run",
+    "TrailRun",
+    "VirtualRun",
+    "Elliptical",
+    "Hike",
+    "Ride",
+    "Virtual Ride",
+    "Rowing",
+    "Nordic Ski",
+    "Backcountry Ski",
+  ];
   return runningTypes.includes(sportType);
 }
 export function needCompleteAnalysis(trainingType: TrainingType): boolean {
   const trainingTypes: TrainingType[] = [
-    'SHORT_INTERVALS',
-    'HILL_SPRINTS',
-    'LONG_INTERVALS',
-    'SPRINTS',
-    'FARTLEK',
-    'PROGRESSIVE_LONG',
+    "SHORT_INTERVALS",
+    "HILL_SPRINTS",
+    "LONG_INTERVALS",
+    "SPRINTS",
+    "FARTLEK",
+    "PROGRESSIVE_LONG",
   ];
   return trainingTypes.includes(trainingType);
 }
 
 export const couldSkipCompleteAnalysis = (result: WorkoutAnalysisOutput) => {
-  const steady: TrainingType[] = ['LONG', 'EASY'];
+  const steady: TrainingType[] = ["LONG", "EASY"];
   return result.confidence_score > 0.94 && steady.includes(result.training_type);
 };
 
@@ -38,14 +49,12 @@ export function lapsMatchIntervals(laps: Lap[], draft: WorkoutAnalysisOutput): b
   return laps.length >= expectedWorkIntervals;
 }
 
-
-
 export function normalizeActivityStreams(
   timeStream: number[],
   velocityStream?: number[],
   heartrateStream?: number[],
   distanceStream?: number[],
-  movingStream?: boolean[]
+  movingStream?: boolean[],
 ): ActivityDataPoint[] {
   return timeStream.map((t, index) => {
     return {
@@ -60,20 +69,15 @@ export function normalizeActivityStreams(
 
 export function prepareDataForLLM(
   data: ActivityDataPoint[],
-  bucketSizeSeconds = 30
+  bucketSizeSeconds = 30,
 ): LLMActivitySummary {
   const buckets = [];
   const hrValues = data.map((d) => d.heartrate).filter((h) => h > 0);
   const hasHr = hrValues.length > 0;
   const startTime = data[0]?.time ?? 0;
-  for (
-    let t = 0;
-    t < data[data.length - 1].time - startTime;
-    t += bucketSizeSeconds
-  ) {
+  for (let t = 0; t < data[data.length - 1].time - startTime; t += bucketSizeSeconds) {
     const chunk = data.filter(
-      (d) =>
-        d.time >= t + startTime && d.time < t + startTime + bucketSizeSeconds
+      (d) => d.time >= t + startTime && d.time < t + startTime + bucketSizeSeconds,
     );
 
     if (chunk.length === 0) continue;
@@ -82,9 +86,7 @@ export function prepareDataForLLM(
 
     const pace =
       avgVel > 0.5
-        ? `${Math.floor(16.666 / avgVel)}:${Math.round(
-            ((16.666 / avgVel) % 1) * 60
-          )
+        ? `${Math.floor(16.666 / avgVel)}:${Math.round(((16.666 / avgVel) % 1) * 60)
             .toString()
             .padStart(2, "0")}`
         : "Stopped";
@@ -95,12 +97,8 @@ export function prepareDataForLLM(
       time: `${t}s`,
       pace: pace,
       avgHr:
-        chunkHr.length > 0
-          ? Math.round(chunkHr.reduce((s, h) => s + h, 0) / chunkHr.length)
-          : null,
-      isMoving: (chunk.filter((c) => c.moving).length / chunk.length).toFixed(
-        2
-      ),
+        chunkHr.length > 0 ? Math.round(chunkHr.reduce((s, h) => s + h, 0) / chunkHr.length) : null,
+      isMoving: (chunk.filter((c) => c.moving).length / chunk.length).toFixed(2),
     });
   }
 
@@ -108,9 +106,7 @@ export function prepareDataForLLM(
     metadata: {
       totalDistance: data[data.length - 1].distance,
       totalTime: data.length,
-      avgHeartRate: hasHr
-        ? hrValues.reduce((a, b) => a + b, 0) / hrValues.length
-        : null,
+      avgHeartRate: hasHr ? hrValues.reduce((a, b) => a + b, 0) / hrValues.length : null,
       maxVelocity: Math.max(...data.map((d) => d.velocity)),
       hrStandardDeviation: hasHr ? calculateSD(hrValues) : null,
     },
@@ -121,21 +117,19 @@ export function prepareDataForLLM(
 function calculateSD(array: number[]) {
   const n = array.length;
   const mean = array.reduce((a, b) => a + b) / n;
-  return Math.sqrt(
-    array.map((x) => Math.pow(x - mean, 2)).reduce((a, b) => a + b) / n
-  );
+  return Math.sqrt(array.map((x) => (x - mean) ** 2).reduce((a, b) => a + b) / n);
 }
 export function parsePaceStringToMetersPerSecond(paceStr: string | null): number | null {
   if (!paceStr) return null;
 
-  const clean = paceStr.replace(/[^\d:.]/g, ''); 
-  
+  const clean = paceStr.replace(/[^\d:.]/g, "");
+
   let paceInMinPerKm: number;
 
-  if (clean.includes(':')) {
-    const parts = clean.split(':').map(Number);
-    if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) return null;
-    paceInMinPerKm = parts[0] + (parts[1] / 60);
+  if (clean.includes(":")) {
+    const parts = clean.split(":").map(Number);
+    if (parts.length !== 2 || Number.isNaN(parts[0]) || Number.isNaN(parts[1])) return null;
+    paceInMinPerKm = parts[0] + parts[1] / 60;
   } else {
     paceInMinPerKm = parseFloat(clean);
   }
@@ -146,7 +140,7 @@ export function parsePaceStringToMetersPerSecond(paceStr: string | null): number
 export const formatRawPaceFromMps = (mps: number): string => {
   if (mps <= 0) return "-:--";
 
-  const minPerKm = (1000 / mps) / 60;
+  const minPerKm = 1000 / mps / 60;
   let mins = Math.floor(minPerKm);
   let secs = Math.round((minPerKm - mins) * 60);
   if (secs === 60) {
@@ -154,12 +148,12 @@ export const formatRawPaceFromMps = (mps: number): string => {
     secs = 0;
   }
 
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
 };
 export function calculateSegmentStats(
   streamSet: Required<Pick<StreamSet, "time" | "distance">> & Pick<StreamSet, "heartrate">,
   startTime: number,
-  endTime: number
+  endTime: number,
 ) {
   const startIdx = streamSet.time.data.findIndex((t) => t >= startTime);
   let endIdx = streamSet.time.data.findIndex((t) => t >= endTime);
@@ -176,9 +170,7 @@ export function calculateSegmentStats(
 
   let avgHeartRate: number | null = null;
   if (hrSlice && hrSlice.length > 0) {
-    avgHeartRate = Math.round(
-      hrSlice.reduce((a, b) => a + b, 0) / hrSlice.length,
-    );
+    avgHeartRate = Math.round(hrSlice.reduce((a, b) => a + b, 0) / hrSlice.length);
   }
 
   return {
@@ -214,11 +206,11 @@ export const generateCompleteIntervalSet = (sets: z.infer<typeof workoutSet>[]) 
     for (let i = 0; i < set.set_reps; i++) {
       const completeSteps = set.steps.flatMap((step) => {
         return Array.from({ length: step.reps }, () => ({
-        work_type: step.work_type,
-        work_value: step.work_value,
-        recovery_value: step.recovery_value,
-        recovery_type: step.recovery_type,
-        target_pace: null,
+          work_type: step.work_type,
+          work_value: step.work_value,
+          recovery_value: step.recovery_value,
+          recovery_type: step.recovery_type,
+          target_pace: null,
         }));
       });
       expandedSets.push({

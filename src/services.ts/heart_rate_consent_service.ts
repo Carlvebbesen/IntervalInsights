@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { users } from "../schema";
-import { IGlobalBindings } from "../types/IRouters";
+import type { IGlobalBindings } from "../types/IRouters";
 
 export const userHasHeartRateConsent = async (
   db: IGlobalBindings["db"],

@@ -1,0 +1,19 @@
+pre-commit:
+  parallel: true
+  commands:
+    biome-format:
+      glob: "src/**/*.{ts,tsx}"
+      run: bunx biome format {staged_files}
+      fail_text: "Biome format check failed. Run `bunx biome format --write src/` to fix."
+    biome-check:
+      glob: "src/**/*.{ts,tsx}"
+      run: bunx biome check {staged_files}
+      fail_text: "Biome check failed. Run `bunx biome check --write src/` to fix."
+    test:
+      run: |
+        if [ -n "$(find src -type f \( -name '*.test.ts' -o -name '*.spec.ts' -o -name '*.test.tsx' -o -name '*.spec.tsx' \) 2>/dev/null | head -1)" ]; then
+          bun test
+        else
+          echo "No test files found — skipping."
+        fi
+      fail_text: "Tests failed. Fix failing tests before committing."
