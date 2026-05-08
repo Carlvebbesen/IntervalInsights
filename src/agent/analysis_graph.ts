@@ -114,7 +114,7 @@ async function classifyActivity(
       analyzedAt: new Date(),
       analysisStatus: "initial",
       draftAnalysisResult: initialResult,
-      analysisVersion: "v2.0",
+      analysisVersion: "v3.0",
     })
     .where(eq(activities.id, state.activityId));
 
@@ -140,11 +140,16 @@ async function markCompleted(
 }
 
 async function awaitUserInput(state: AnalysisState): Promise<Partial<AnalysisState>> {
+  const tag = `[awaitUserInput activity=${state.activityId}]`;
+  console.log(`${tag} entering interrupt (or resuming with payload)`);
   const userInput = interrupt({
     initialResult: state.initialResult,
     activityId: state.activityId,
   }) as { notes: string; sets: ExpandedIntervalSet[]; trainingType: string | null };
 
+  console.log(
+    `${tag} resumed with notes.len=${userInput?.notes?.length ?? 0} sets=${userInput?.sets?.length ?? 0} trainingType=${userInput?.trainingType ?? "null"}`,
+  );
   return {
     userNotes: userInput.notes ?? "",
     userSets: userInput.sets ?? [],
@@ -157,14 +162,19 @@ async function runCompleteAnalysis(
   config: RunnableConfig,
 ): Promise<Partial<AnalysisState>> {
   const { db, stravaAccessToken } = config.configurable as Configurable;
+  const tag = `[runCompleteAnalysis activity=${state.activityId}]`;
 
   const trainingType = state.confirmedTrainingType ?? state.initialResult?.training_type;
+  console.log(
+    `${tag} start trainingType=${trainingType} confirmedFromUser=${state.confirmedTrainingType ?? "null"} userSets=${state.userSets?.length ?? 0} userNotes.len=${state.userNotes?.length ?? 0}`,
+  );
   if (!trainingType) {
     throw new Error("runCompleteAnalysis called without a resolved trainingType");
   }
 
   // Types that don't need LLM segment breakdown — just mark completed with notes
   if (!needCompleteAnalysis(trainingType)) {
+    console.log(`${tag} trainingType=${trainingType} skips LLM segment breakdown`);
     await db
       .update(activities)
       .set({
@@ -181,12 +191,16 @@ async function runCompleteAnalysis(
   const streamKeys = processHeartRate
     ? (["time", "velocity_smooth", "heartrate", "distance", "moving"] as const)
     : (["time", "velocity_smooth", "distance", "moving"] as const);
+  console.log(`${tag} fetching streams + laps from Strava (hr=${processHeartRate})`);
   const streams = await stravaApiService.getActivityStreams(
     stravaAccessToken,
     state.stravaActivityId,
     [...streamKeys],
   );
   const laps = await stravaApiService.getActivityLaps(stravaAccessToken, state.stravaActivityId);
+  console.log(
+    `${tag} streams keys=[${streams ? Object.keys(streams).join(",") : "none"}] timePoints=${streams?.time?.data?.length ?? 0} laps=${laps?.length ?? 0}`,
+  );
 
   if (!streams || Object.keys(streams).length === 0) {
     throw new Error(`No streams returned for activity ${state.stravaActivityId}`);
@@ -197,6 +211,7 @@ async function runCompleteAnalysis(
     .set({ analysisStatus: "ongoing_completed" })
     .where(eq(activities.id, state.activityId));
 
+  console.log(`${tag} invoking complete analysis LLM`);
   const segmentPlan = await invokeWithRateLimitRetry(() =>
     invokeCompleteActivityAnalysisAgent(
       streams,
@@ -209,14 +224,20 @@ async function runCompleteAnalysis(
   );
 
   if (!segmentPlan) {
+    console.error(`${tag} LLM returned null — see "Failed to analyze activity" log above`);
     throw new Error("Complete analysis agent returned null");
   }
+  console.log(`${tag} LLM returned ${segmentPlan.segments.length} raw segments`);
 
   let segmentIndexCounter = 0;
+  let droppedByStats = 0;
   const computedSegments = segmentPlan.segments
     .map((seg) => {
       const stats = calculateSegmentStats(streams, seg.start_time, seg.end_time);
-      if (!stats) return null;
+      if (!stats) {
+        droppedByStats += 1;
+        return null;
+      }
       return {
         activityId: state.activityId,
         segmentIndex: segmentIndexCounter++,
@@ -233,6 +254,9 @@ async function runCompleteAnalysis(
     })
     .filter((s): s is NonNullable<typeof s> => s !== null);
 
+  console.log(
+    `${tag} computedSegments=${computedSegments.length} droppedByStats=${droppedByStats}`,
+  );
   return { computedSegments };
 }
 

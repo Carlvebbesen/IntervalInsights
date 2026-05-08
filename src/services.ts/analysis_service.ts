@@ -57,6 +57,9 @@ export const resumeAnalysis = async (
   sets: ExpandedIntervalSet[],
   trainingType: TrainingType | null,
 ): Promise<void> => {
+  console.log(
+    `[resumeAnalysis activity=${activityId}] starting resume notes.len=${notes.length} sets=${sets.length} trainingType=${trainingType ?? "null"}`,
+  );
   try {
     const graph = await buildAnalysisGraph();
     await graph.invoke(new Command({ resume: { notes, sets, trainingType } }), {
@@ -66,8 +69,13 @@ export const resumeAnalysis = async (
         stravaAccessToken,
       },
     });
+    console.log(`[resumeAnalysis activity=${activityId}] graph.invoke returned without throwing`);
   } catch (error) {
-    console.error(`Error in resumeAnalysis for activity ${activityId}:`, error);
+    const err = error as { message?: string; stack?: string; name?: string };
+    console.error(
+      `[resumeAnalysis activity=${activityId}] FAILED name=${err?.name} message=${err?.message}`,
+    );
+    if (err?.stack) console.error(err.stack);
     try {
       await db
         .update(activities)
