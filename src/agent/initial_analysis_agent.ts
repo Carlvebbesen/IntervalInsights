@@ -9,9 +9,10 @@ export const workoutStep = z.object({
   reps: z.number().describe("How many times this specific step is repeated within the set/series."),
   work_type: z.enum(["DISTANCE", "TIME"]),
   work_value: z.number().describe("The duration (seconds) or distance (meters)."),
-  recovery_type: z.enum(["DISTANCE", "TIME"]).optional(),
+  recovery_type: z.enum(["DISTANCE", "TIME"]).nullable().optional(),
   recovery_value: z
     .number()
+    .nullable()
     .optional()
     .describe("Rest after each rep in this step (seconds or meters)."),
 });
@@ -25,6 +26,7 @@ export const workoutSet = z.object({
   steps: z.array(workoutStep).describe("The individual work segments within this set."),
   set_recovery: z
     .number()
+    .nullable()
     .optional()
     .describe(
       "The rest Period between sets, could be TIME or DISTANCE value, could be same as between reps",
@@ -42,12 +44,14 @@ export const workoutAnalysisOutput = z.object({
     .describe("How certain the model is about this classification."),
   intervals_description: z
     .string()
+    .nullable()
     .optional()
     .describe(
       "If intervals are detected, describe them (e.g. '6x800m @ 3:45 pace with 90s rest'). Omit for steady runs.",
     ),
   structure: z
     .array(workoutSet)
+    .nullable()
     .optional()
     .describe(
       "A list of workout sets. 10x1000m is one set with one step. 3x(3km,2km,1km) is one set with three steps and 3 set_reps.",

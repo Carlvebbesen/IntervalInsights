@@ -10,6 +10,8 @@ import {
   ErrorSchema,
   GearStatsResponseSchema,
   IntervalSegmentSchema,
+  SplitMetricSchema,
+  StravaLapSchema,
 } from "../schemas/api_schemas";
 import { userHasHeartRateConsent } from "../services.ts/heart_rate_consent_service";
 import { stravaApiService } from "../services.ts/strava_api_service";
@@ -324,7 +326,7 @@ stravaActivitiesRouter.get(
         description: "Activity laps",
         content: {
           "application/json": {
-            schema: resolver(z.object({ laps: z.array(z.unknown()) })),
+            schema: resolver(z.object({ laps: z.array(StravaLapSchema) })),
           },
         },
       },
@@ -356,7 +358,7 @@ stravaActivitiesRouter.get(
         description: "Activity splits",
         content: {
           "application/json": {
-            schema: resolver(z.object({ splits_metric: z.array(z.unknown()) })),
+            schema: resolver(z.object({ splits_metric: z.array(SplitMetricSchema) })),
           },
         },
       },

@@ -7,6 +7,6 @@ export type ExpandedIntervalStep = Pick<
   target_pace: number | null;
 };
 export type ExpandedIntervalSet = {
-  set_recovery?: number;
+  set_recovery?: number | null;
   steps: ExpandedIntervalStep[];
 };

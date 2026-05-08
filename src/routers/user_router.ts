@@ -215,36 +215,54 @@ userRouter.patch(
   },
 );
 
-userRouter.delete("/data", async (c) => {
-  const userId = c.get("userId");
-  const clerkUserId = c.get("clerkUserId");
-  const db = c.env.db;
-
-  // Delete all activities (interval_segments cascade via ON DELETE CASCADE)
-  await db.delete(activities).where(eq(activities.userId, userId));
-
-  // Delete the user record
-  await db.delete(users).where(eq(users.id, userId));
-
-  // Revoke Strava access and clear Clerk metadata
-  const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
-  try {
-    const tokens = await getStravaAccessTokens(clerkUserId);
-    await fetch("https://www.strava.com/oauth/deauthorize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ access_token: tokens.access_token }),
-    });
-  } catch {
-    // Strava may not be linked — continue with cleanup
-  }
-
-  await clerkClient.users.updateUserMetadata(clerkUserId, {
-    privateMetadata: { strava: null },
-    publicMetadata: { strava_connected: false, userId: null, role: null },
-  });
-
-  return c.json({ success: true, message: "All user data deleted" });
+const DeleteAccountResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
 });
+
+userRouter.delete(
+  "/data",
+  describeRoute({
+    description:
+      "Permanently delete the authenticated user's account: removes all activities (interval segments cascade), the user row, revokes Strava OAuth, and clears Clerk metadata.",
+    responses: {
+      200: {
+        description: "All user data deleted",
+        content: { "application/json": { schema: resolver(DeleteAccountResponseSchema) } },
+      },
+    },
+  }),
+  async (c) => {
+    const userId = c.get("userId");
+    const clerkUserId = c.get("clerkUserId");
+    const db = c.env.db;
+
+    // Delete all activities (interval_segments cascade via ON DELETE CASCADE)
+    await db.delete(activities).where(eq(activities.userId, userId));
+
+    // Delete the user record
+    await db.delete(users).where(eq(users.id, userId));
+
+    // Revoke Strava access and clear Clerk metadata
+    const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+    try {
+      const tokens = await getStravaAccessTokens(clerkUserId);
+      await fetch("https://www.strava.com/oauth/deauthorize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access_token: tokens.access_token }),
+      });
+    } catch {
+      // Strava may not be linked — continue with cleanup
+    }
+
+    await clerkClient.users.updateUserMetadata(clerkUserId, {
+      privateMetadata: { strava: null },
+      publicMetadata: { strava_connected: false, userId: null, role: null },
+    });
+
+    return c.json({ success: true, message: "All user data deleted" });
+  },
+);
 
 export default userRouter;

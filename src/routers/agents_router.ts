@@ -6,7 +6,11 @@ import { workoutSet } from "../agent/initial_analysis_agent";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
 import { activities } from "../schema";
 import type { TrainingType } from "../schema/enums";
-import { ErrorSchema, PendingActivitySchema } from "../schemas/api_schemas";
+import {
+  ErrorSchema,
+  PendingActivitySchema,
+  ProposedPaceResponseSchema,
+} from "../schemas/api_schemas";
 import {
   getProposedPaceForStructure,
   resumeAnalysis,
@@ -44,6 +48,7 @@ agentsRouter.get(
         movingTime: activities.movingTime,
         description: activities.description,
         indoor: activities.indoor,
+        feeling: activities.feeling,
       })
       .from(activities)
       .where(
@@ -224,8 +229,11 @@ agentsRouter.post(
     description: "Get proposed paces for an interval structure",
     responses: {
       200: {
-        description: "Proposed paces",
-        content: { "application/json": { schema: resolver(z.unknown()) } },
+        description:
+          "Proposed paces — one ExpandedIntervalSet per workout set, in order. Empty array if no structure was provided.",
+        content: {
+          "application/json": { schema: resolver(ProposedPaceResponseSchema) },
+        },
       },
       500: {
         description: "Internal server error",
@@ -239,7 +247,7 @@ agentsRouter.post(
     const data = c.req.valid("json");
     const { structure } = data;
     if (!structure || structure.length === 0) {
-      return c.json({ proposed_paces: null });
+      return c.json([]);
     }
     try {
       const proposedPaces = await getProposedPaceForStructure(c.env.db, user, structure);

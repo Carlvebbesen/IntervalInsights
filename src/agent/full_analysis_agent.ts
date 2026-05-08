@@ -31,6 +31,7 @@ export const segmentPlanOutput = z.object({
       end_time: z.number().describe("End time in seconds"),
       set_group_index: z
         .number()
+        .nullable()
         .optional()
         .describe("1-based index. Use this to group sets. Omit if not applicable."),
       target_type: z.enum(targetTypeEnum.enumValues),
@@ -41,6 +42,7 @@ export const segmentPlanOutput = z.object({
         ),
       target_pace_string: z
         .string()
+        .nullable()
         .optional()
         .describe("The target pace for this segment. Format: 'M:SS'"),
     }),

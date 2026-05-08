@@ -1,6 +1,8 @@
 import { env } from "bun";
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { describeRoute, resolver, validator } from "hono-openapi";
+import z from "zod";
 import type { TStravaEnv } from "../../types/IRouters";
 
 function requireEnv(key: string): string {
@@ -15,69 +17,145 @@ const STRAVA_WEBHOOK_VERIFY_TOKEN = requireEnv("STRAVA_WEBHOOK_VERIFY_TOKEN");
 
 const stravaWebhookRouter = new Hono<TStravaEnv>();
 
-stravaWebhookRouter.get("/subscribe", async (c) => {
-  console.log("Setting up subscription...");
-  const CALLBACK_URL = `${env.APP_BASE_URL}api/strava/event`;
-  console.log(CALLBACK_URL);
-  const formData = new FormData();
-  formData.append("client_id", STRAVA_CLIENT_ID);
-  formData.append("client_secret", STRAVA_CLIENT_SECRET);
-  formData.append("callback_url", CALLBACK_URL);
-  formData.append("verify_token", STRAVA_WEBHOOK_VERIFY_TOKEN);
+// Strava returns various error/success shapes; document what we surface.
+const StravaWebhookCreateSubscriptionResponseSchema = z
+  .object({
+    id: z.number().optional(),
+    application_id: z.number().optional(),
+    callback_url: z.string().optional(),
+    created_at: z.string().optional(),
+    updated_at: z.string().optional(),
+  })
+  .passthrough();
 
-  const response = await fetch("https://www.strava.com/api/v3/push_subscriptions", {
-    method: "POST",
-    body: formData,
-  });
+const StravaWebhookSubscriptionItemSchema = z
+  .object({
+    id: z.number(),
+    application_id: z.number().optional(),
+    callback_url: z.string().optional(),
+    created_at: z.string().optional(),
+    updated_at: z.string().optional(),
+  })
+  .passthrough();
 
-  const data = await response.json();
+const SubscriptionListResponseSchema = z.array(StravaWebhookSubscriptionItemSchema);
 
-  if (response.ok) {
-    console.log("Subscription request sent successfully:", data);
-  } else {
-    console.error("Subscription request failed:", data);
-  }
-  return c.json(data, response.status as ContentfulStatusCode);
-});
+const SubscriptionDeleteSuccessSchema = z.object({ message: z.string() });
+const SubscriptionDeleteParamSchema = z.object({ id: z.string() });
 
-/**
- * View Subscription (GET)
- * Fetches the current webhook subscription details from Strava.
- */
-stravaWebhookRouter.get("/subscription", async (c) => {
-  const url = new URL("https://www.strava.com/api/v3/push_subscriptions");
-  url.searchParams.append("client_id", STRAVA_CLIENT_ID);
-  url.searchParams.append("client_secret", STRAVA_CLIENT_SECRET);
+stravaWebhookRouter.get(
+  "/subscribe",
+  describeRoute({
+    description:
+      "Create the Strava push subscription pointing back to /api/strava/event. Idempotent — Strava rejects duplicates with 400.",
+    responses: {
+      200: {
+        description: "Subscription created",
+        content: {
+          "application/json": {
+            schema: resolver(StravaWebhookCreateSubscriptionResponseSchema),
+          },
+        },
+      },
+      400: {
+        description: "Strava rejected the subscription request (e.g. duplicate)",
+        content: {
+          "application/json": {
+            schema: resolver(StravaWebhookCreateSubscriptionResponseSchema),
+          },
+        },
+      },
+    },
+  }),
+  async (c) => {
+    console.log("Setting up subscription...");
+    const CALLBACK_URL = `${env.APP_BASE_URL}api/strava/event`;
+    console.log(CALLBACK_URL);
+    const formData = new FormData();
+    formData.append("client_id", STRAVA_CLIENT_ID);
+    formData.append("client_secret", STRAVA_CLIENT_SECRET);
+    formData.append("callback_url", CALLBACK_URL);
+    formData.append("verify_token", STRAVA_WEBHOOK_VERIFY_TOKEN);
 
-  const response = await fetch(url.toString(), {
-    method: "GET",
-  });
+    const response = await fetch("https://www.strava.com/api/v3/push_subscriptions", {
+      method: "POST",
+      body: formData,
+    });
 
-  const data = await response.json();
-  return c.json(data, response.status as ContentfulStatusCode);
-});
+    const data = await response.json();
 
-/**
- * Delete Subscription (DELETE)
- * Deletes a specific subscription by its ID.
- * Usage: DELETE /strava/webhook/subscription/:id
- */
-stravaWebhookRouter.delete("/subscription/:id", async (c) => {
-  const id = c.req.param("id");
-  const url = new URL(`https://www.strava.com/api/v3/push_subscriptions/${id}`);
-  url.searchParams.append("client_id", STRAVA_CLIENT_ID);
-  url.searchParams.append("client_secret", STRAVA_CLIENT_SECRET);
+    if (response.ok) {
+      console.log("Subscription request sent successfully:", data);
+    } else {
+      console.error("Subscription request failed:", data);
+    }
+    return c.json(data, response.status as ContentfulStatusCode);
+  },
+);
 
-  const response = await fetch(url.toString(), {
-    method: "DELETE",
-  });
+stravaWebhookRouter.get(
+  "/subscription",
+  describeRoute({
+    description:
+      "List existing Strava push subscriptions for our application client. Useful for verifying the current subscription ID before deleting/recreating.",
+    responses: {
+      200: {
+        description: "Subscription list",
+        content: {
+          "application/json": { schema: resolver(SubscriptionListResponseSchema) },
+        },
+      },
+    },
+  }),
+  async (c) => {
+    const url = new URL("https://www.strava.com/api/v3/push_subscriptions");
+    url.searchParams.append("client_id", STRAVA_CLIENT_ID);
+    url.searchParams.append("client_secret", STRAVA_CLIENT_SECRET);
 
-  if (response.status === 204) {
-    return c.json({ message: "Subscription deleted successfully" }, 200);
-  }
+    const response = await fetch(url.toString(), {
+      method: "GET",
+    });
 
-  const errorData = await response.json();
-  return c.json(errorData, response.status as ContentfulStatusCode);
-});
+    const data = await response.json();
+    return c.json(data, response.status as ContentfulStatusCode);
+  },
+);
+
+stravaWebhookRouter.delete(
+  "/subscription/:id",
+  describeRoute({
+    description: "Delete a Strava push subscription by ID.",
+    responses: {
+      200: {
+        description: "Subscription deleted",
+        content: {
+          "application/json": { schema: resolver(SubscriptionDeleteSuccessSchema) },
+        },
+      },
+      404: {
+        description: "Strava reports the subscription does not exist",
+        content: { "application/json": { schema: resolver(z.unknown()) } },
+      },
+    },
+  }),
+  validator("param", SubscriptionDeleteParamSchema),
+  async (c) => {
+    const id = c.req.param("id");
+    const url = new URL(`https://www.strava.com/api/v3/push_subscriptions/${id}`);
+    url.searchParams.append("client_id", STRAVA_CLIENT_ID);
+    url.searchParams.append("client_secret", STRAVA_CLIENT_SECRET);
+
+    const response = await fetch(url.toString(), {
+      method: "DELETE",
+    });
+
+    if (response.status === 204) {
+      return c.json({ message: "Subscription deleted successfully" }, 200);
+    }
+
+    const errorData = await response.json();
+    return c.json(errorData, response.status as ContentfulStatusCode);
+  },
+);
 
 export default stravaWebhookRouter;
