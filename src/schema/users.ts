@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm";
-import { pgTable, text, timestamp, uuid, integer } from "drizzle-orm/pg-core";
+import { boolean, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { activities } from "./activities";
 import { userRoleEnum } from "./enums";
 
@@ -10,7 +10,12 @@ export const users = pgTable('users', {
   stravaId: text('strava_id').unique(),
   createdAt: timestamp('created_at').defaultNow(),
   role: userRoleEnum("role").default("guest"),
-  maxHeartRate: integer("max_heart_rate")
+  maxHeartRate: integer("max_heart_rate"),
+  processHeartRate: boolean("process_heart_rate").notNull().default(false),
+  privacyPolicyAcceptedAt: timestamp("privacy_policy_accepted_at"),
+  privacyPolicyVersion: text("privacy_policy_version"),
+  termsOfServiceAcceptedAt: timestamp("terms_of_service_accepted_at"),
+  termsOfServiceVersion: text("terms_of_service_version"),
 });
 
 export const usersRelations = relations(users, ({ many }) => ({

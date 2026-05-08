@@ -1,9 +1,11 @@
+import { sleep } from "bun";
 import { StravaError } from "../error";
 import { activities, getDbInsertActivity } from "../schema";
 import { IGlobalBindings } from "../types/IRouters";
 import { DetailedActivity, Gear, Lap, SummaryActivity } from "../types/strava/IDetailedActivity";
 import { StreamTypeMap } from "../types/strava/IStream";
 import { eq } from "drizzle-orm";
+import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 async function fetchStrava<T>(endpoint: string, accessToken: string, params?: Record<string, string>): Promise<T> {
   const url = new URL(`https://www.strava.com/api/v3${endpoint}`);
   if (params) {
@@ -63,19 +65,22 @@ export const stravaApiService = {
   ) {
     const BATCH_SIZE = 5;
     const results = [];
+    const triggers: Array<{ internalId: number; stravaActivityId: number }> = [];
+    const processHeartRate = await userHasHeartRateConsent(db, userId);
+
     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
       const batch = ids.slice(i, i + BATCH_SIZE);
       const batchPromises = batch.map(async (id) => {
         try {
           const activity = await this.getActivity(accessToken, id);
-          await db.insert(activities).values(getDbInsertActivity(activity, userId)).onConflictDoNothing();
+          await db.insert(activities).values(getDbInsertActivity(activity, userId, processHeartRate)).onConflictDoNothing();
           if (onActivitySynced) {
             const [row] = await db
               .select({ id: activities.id })
               .from(activities)
               .where(eq(activities.stravaActivityId, activity.id))
               .limit(1);
-            if (row) onActivitySynced(row.id, activity.id);
+            if (row) triggers.push({ internalId: row.id, stravaActivityId: activity.id });
           }
           return { id, status: "success" };
         } catch (error) {
@@ -87,6 +92,19 @@ export const stravaApiService = {
       const batchResults = await Promise.all(batchPromises);
       results.push(...batchResults);
     }
+
+    // Stagger LLM-triggering analyses to avoid bursting Gemini's RPM quota on
+    // large bulk imports. Fire-and-forget so the HTTP response returns promptly.
+    if (onActivitySynced && triggers.length > 0) {
+      const STAGGER_MS = 5000;
+      void (async () => {
+        for (let i = 0; i < triggers.length; i++) {
+          onActivitySynced(triggers[i].internalId, triggers[i].stravaActivityId);
+          if (i < triggers.length - 1) await sleep(STAGGER_MS);
+        }
+      })();
+    }
+
     return results;
   },
 };

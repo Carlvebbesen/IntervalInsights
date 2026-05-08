@@ -2,7 +2,7 @@ import { StreamSet } from "../types/strava/IStream";
 import { formatRawPaceFromMps, normalizeActivityStreams, prepareDataForLLM } from "../services.ts/utils";
 import { WorkoutAnalysisOutput } from "./initial_analysis_agent";
 import { Lap } from "../types/strava/IDetailedActivity";
-import { geminiFlashModel } from "./model";
+import { gptMiniModel } from "./model";
 import { targetTypeEnum, TrainingType, workoutPartEnum, WorkoutPartType } from "../schema";
 import { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import z from "zod";
@@ -66,7 +66,18 @@ const specificIntervalPaces = groups.flatMap((group, setIndex) => {
   }
 
   const buckets = prepareDataForLLM(normalized, 30);
-  
+  const hasHr = buckets.metadata.avgHeartRate !== null;
+  const tableHeader = hasHr
+    ? `| Time | Pace (min/km) | HR | Moving% |\n  |------|--------------|----|---------|`
+    : `| Time | Pace (min/km) | Moving% |\n  |------|--------------|---------|`;
+  const tableRows = buckets.buckets
+    .map((b) =>
+      hasHr
+        ? `| ${b.time} | ${b.pace} | ${b.avgHr ?? "-"} | ${b.isMoving} |`
+        : `| ${b.time} | ${b.pace} | ${b.isMoving} |`,
+    )
+    .join("\n");
+
   const prompt = `
 You are a Data Segmentation Agent.
 The trainingType, confirmed by the user is: ${trainingType}
@@ -106,9 +117,8 @@ INPUT DATA:
 ${laps.map((l, i) => `Lap ${i}: ${l.distance}m in ${l.elapsed_time}s avg speed: ${l.average_speed}`).join('\n')}
 
 2. **Sampled Data (30s Windows):**
-  | Time | Pace (min/km) | HR | Moving% |
-  |------|--------------|----|---------|
-  ${buckets.buckets.map(b => `| ${b.time} | ${b.pace} | ${b.avgHr} | ${b.isMoving} |`).join('\n')}
+  ${tableHeader}
+  ${tableRows}
 
 TASK:
 1. **Sequential Matching:** Match the identified Work segments to the "USER-SPECIFIED TARGET PACES" list in order. 
@@ -120,8 +130,8 @@ RETURN only the structured plan.
 `;
 
   try {
-    const result = await geminiFlashModel
-      .withStructuredOutput(segmentPlanOutput)
+    const result = await gptMiniModel
+      .withStructuredOutput<SegmentPlanOutput>(segmentPlanOutput)
       .invoke(prompt);
     return result;
   } catch (error) {

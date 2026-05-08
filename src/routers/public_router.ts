@@ -25,6 +25,28 @@ publicRouter.get("/health", (c) => {
 	console.log("Health triggered");
 	return c.json("i'm alive :D ", 200);
 });
+publicRouter.get("/privacy-policy", async (c) => {
+	const markdown = await Bun.file(
+		new URL("../privacy_policy.md", import.meta.url).pathname,
+	).text();
+	return new Response(markdown, {
+		headers: {
+			"Content-Type": "text/markdown; charset=utf-8",
+			"Cache-Control": "public, max-age=3600",
+		},
+	});
+});
+publicRouter.get("/terms-of-service", async (c) => {
+	const markdown = await Bun.file(
+		new URL("../terms_of_service.md", import.meta.url).pathname,
+	).text();
+	return new Response(markdown, {
+		headers: {
+			"Content-Type": "text/markdown; charset=utf-8",
+			"Cache-Control": "public, max-age=3600",
+		},
+	});
+});
 publicRouter.post("/strava/event", async (c) => {
 	const body = (await c.req.json()) as IStravaWebhookEvent;
 

@@ -65,6 +65,7 @@ export function prepareDataForLLM(
 ): LLMActivitySummary {
   const buckets = [];
   const hrValues = data.map((d) => d.heartrate).filter((h) => h > 0);
+  const hasHr = hrValues.length > 0;
   const startTime = data[0]?.time ?? 0;
   for (
     let t = 0;
@@ -89,12 +90,15 @@ export function prepareDataForLLM(
             .padStart(2, "0")}`
         : "Stopped";
 
+    const chunkHr = chunk.map((c) => c.heartrate).filter((h) => h > 0);
+
     buckets.push({
       time: `${t}s`,
       pace: pace,
-      avgHr: Math.round(
-        chunk.reduce((s, c) => s + c.heartrate, 0) / chunk.length
-      ),
+      avgHr:
+        chunkHr.length > 0
+          ? Math.round(chunkHr.reduce((s, h) => s + h, 0) / chunkHr.length)
+          : null,
       isMoving: (chunk.filter((c) => c.moving).length / chunk.length).toFixed(
         2
       ),
@@ -105,9 +109,11 @@ export function prepareDataForLLM(
     metadata: {
       totalDistance: data[data.length - 1].distance,
       totalTime: data.length,
-      avgHeartRate: hrValues.reduce((a, b) => a + b, 0) / hrValues.length,
+      avgHeartRate: hasHr
+        ? hrValues.reduce((a, b) => a + b, 0) / hrValues.length
+        : null,
       maxVelocity: Math.max(...data.map((d) => d.velocity)),
-      hrStandardDeviation: calculateSD(hrValues),
+      hrStandardDeviation: hasHr ? calculateSD(hrValues) : null,
     },
     buckets,
   };
@@ -152,7 +158,7 @@ export const formatRawPaceFromMps = (mps: number): string => {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
 export function calculateSegmentStats(
-  streamSet: Required<Pick<StreamSet, "time" | "distance" | "heartrate">>,
+  streamSet: Required<Pick<StreamSet, "time" | "distance">> & Pick<StreamSet, "heartrate">,
   startTime: number,
   endTime: number
 ) {
@@ -164,30 +170,39 @@ export function calculateSegmentStats(
 
   const distSlice = streamSet.distance.data.slice(startIdx, endIdx + 1);
   const timeSlice = streamSet.time.data.slice(startIdx, endIdx + 1);
-  const hrSlice = streamSet.heartrate.data.slice(startIdx, endIdx + 1);
+  const hrSlice = streamSet.heartrate?.data.slice(startIdx, endIdx + 1);
 
   const duration = timeSlice[timeSlice.length - 1] - timeSlice[0];
   const distance = distSlice[distSlice.length - 1] - distSlice[0];
 
   const avgSpeedMps = duration > 0 ? distance / duration : 0;
-  const sortedHr = [...hrSlice].sort((a, b) => a - b);
-  const mid = Math.floor(sortedHr.length / 2);
-  
-  const medianHr = sortedHr.length === 0 
-    ? 0 
-    : sortedHr.length % 2 !== 0
-      ? sortedHr[mid]
-      : (sortedHr[mid - 1] + sortedHr[mid]) / 2;
+
+  let avgHeartRate: number | null = null;
+  let maxHeartRate: number | null = null;
+  let medianHeartRate: number | null = null;
+
+  if (hrSlice && hrSlice.length > 0) {
+    const sortedHr = [...hrSlice].sort((a, b) => a - b);
+    const mid = Math.floor(sortedHr.length / 2);
+    const medianHr =
+      sortedHr.length % 2 !== 0
+        ? sortedHr[mid]
+        : (sortedHr[mid - 1] + sortedHr[mid]) / 2;
+
+    avgHeartRate = Math.round(
+      hrSlice.reduce((a, b) => a + b, 0) / hrSlice.length,
+    );
+    maxHeartRate = Math.max(...hrSlice);
+    medianHeartRate = Math.round(medianHr);
+  }
 
   return {
     actualDuration: duration,
     actualDistance: distance,
     actualPace: avgSpeedMps,
-    avgHeartRate: Math.round(
-      hrSlice.reduce((a, b) => a + b, 0) / hrSlice.length
-    ),
-    maxHeartRate: Math.max(...hrSlice),
-    medianHeartRate: Math.round(medianHr),
+    avgHeartRate,
+    maxHeartRate,
+    medianHeartRate,
     timeSeriesEndTime: streamSet.time.data[endIdx],
   };
 }

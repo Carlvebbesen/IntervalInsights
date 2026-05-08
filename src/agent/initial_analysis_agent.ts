@@ -2,7 +2,7 @@ import { z } from "zod";
 import { trainingTypeEnum } from "../schema";
 import { normalizeActivityStreams, prepareDataForLLM } from "../services.ts/utils";
 import { StreamSet } from "../types/strava/IStream";
-import { geminiFlashModel } from "./model";
+import { gptMiniModel } from "./model";
 export type WorkoutAnalysisOutput = z.infer<typeof workoutAnalysisOutput>;
 
 export const workoutStep = z.object({
@@ -70,11 +70,22 @@ export async function invokeActivityAnalysisAgent(
   );
   
   const summary = prepareDataForLLM(normalized, 30);
+  const hasHr = summary.metadata.avgHeartRate !== null;
+  const tableHeader = hasHr
+    ? `| Time | Pace (min/km) | HR | Moving% |\n  |------|--------------|----|---------|`
+    : `| Time | Pace (min/km) | Moving% |\n  |------|--------------|---------|`;
+  const tableRows = summary.buckets
+    .map((b) =>
+      hasHr
+        ? `| ${b.time} | ${b.pace} | ${b.avgHr ?? "-"} | ${b.isMoving} |`
+        : `| ${b.time} | ${b.pace} | ${b.isMoving} |`,
+    )
+    .join("\n");
   const prompt = `
   You are an expert running coach analyzing Strava activity data.
-  
+
   ### 1. PRIORITY & CONTEXT
-  - **Title/Description Priority:** You must prioritize the user's Title and Description over raw data IF the user explicitly names the workout (e.g., "10x400m", "Tempo Run", "Long Run"). 
+  - **Title/Description Priority:** You must prioritize the user's Title and Description over raw data IF the user explicitly names the workout (e.g., "10x400m", "Tempo Run", "Long Run").
   - **Ignore Generics:** If the title is generic (e.g., "Morning Run", "Lunch Run", "Run"), ignore it and rely 100% on the data stats.
   - **Fartlek Warning:** Do not default to "Fartlek" just because the data is noisy. Fartlek requires distinct, intentional surges in pace that don't fit a fixed grid. If it's just a steady run with bad GPS data, classify as EASY_RUN.
 
@@ -86,17 +97,16 @@ export async function invokeActivityAnalysisAgent(
   - **User Title:** "${title}"
   - **User Description:** "${description}"
   - Activity type: ${type}
-  
+
   **Aggregated Stats:**
   - Duration: ${(summary.metadata.totalTime / 60).toFixed(1)} minutes
   - Total Distance: ${(summary.metadata.totalDistance / 1000).toFixed(2)} km
-  - Avg HR: ${Math.round(summary.metadata.avgHeartRate)} bpm
+  ${hasHr ? `- Avg HR: ${Math.round(summary.metadata.avgHeartRate!)} bpm` : "- Heart-rate data not available for this user"}
   - Total Elevation gained: ${totalElevationGain}
-  
+
   **Sampled Data (30s Windows):**
-  | Time | Pace (min/km) | HR | Moving% |
-  |------|--------------|----|---------|
-  ${summary.buckets.map(b => `| ${b.time} | ${b.pace} | ${b.avgHr} | ${b.isMoving} |`).join('\n')}
+  ${tableHeader}
+  ${tableRows}
   
   ### 4. STRUCTURE EXTRACTION RULES (Hierarchical)
   You must populate the 'structure' array (an array of Sets) using these rules:
@@ -111,8 +121,8 @@ export async function invokeActivityAnalysisAgent(
   Analyze the data and classify the run according to the rules above.
 `;
   try {
-    const result = await geminiFlashModel
-      .withStructuredOutput(workoutAnalysisOutput)
+    const result = await gptMiniModel
+      .withStructuredOutput<WorkoutAnalysisOutput>(workoutAnalysisOutput)
       .invoke(
         prompt
       );

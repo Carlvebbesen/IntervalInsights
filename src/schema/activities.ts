@@ -83,8 +83,12 @@ export const activitiesRelations = relations(activities, ({ one, many }) => ({
 export type InsertActivity = InferInsertModel<typeof activities>;
 
 
-export function getDbInsertActivity(data: DetailedActivity, userId: string): InsertActivity{
-return {
+export function getDbInsertActivity(
+  data: DetailedActivity,
+  userId: string,
+  processHeartRate: boolean,
+): InsertActivity {
+  return {
     userId,
     stravaActivityId: data.id,
     title: data.name,
@@ -95,10 +99,10 @@ return {
     elapsedTime: data.elapsed_time,
     totalElevationGain: data.total_elevation_gain,
     averageSpeed: data.average_speed,
-    averageHeartRate: data.average_heartrate,
-    maxHeartRate: data.max_heartrate,
+    averageHeartRate: processHeartRate ? data.average_heartrate : null,
+    maxHeartRate: processHeartRate ? data.max_heartrate : null,
     startDateLocal: new Date(data.start_date_local),
-    hasHeartrate: data.has_heartrate,
+    hasHeartrate: processHeartRate ? data.has_heartrate : false,
     gearId: data.gear_id,
     deviceName: data.device_name,
     gearName: data?.gear?.name,

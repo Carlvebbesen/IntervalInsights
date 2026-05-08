@@ -24,6 +24,7 @@ import {
 	IntervalSegmentSchema,
 } from "../schemas/api_schemas";
 import { stravaApiService } from "../services.ts/strava_api_service";
+import { userHasHeartRateConsent } from "../services.ts/heart_rate_consent_service";
 import type { TGlobalEnv, TStravaEnv } from "../types/IRouters";
 
 const activitiesRouter = new Hono<TGlobalEnv>();
@@ -403,6 +404,13 @@ stravaActivitiesRouter.get(
 	validator("param", activityIdParamSchema),
 	async (c) => {
 		try {
+			const consent = await userHasHeartRateConsent(c.env.db, c.get("userId"));
+			if (!consent) {
+				return c.json(
+					{ error: "Heart-rate processing not enabled for this account" },
+					403,
+				);
+			}
 			const { id } = c.req.valid("param");
 			const streams = await stravaApiService.getActivityStreams(
 				c.get("stravaAccessToken"),

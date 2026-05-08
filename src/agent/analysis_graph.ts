@@ -3,12 +3,13 @@ import { sleep } from "bun";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import pg from "pg";
 import type { RunnableConfig } from "@langchain/core/runnables";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { AnalysisStateAnnotation, type AnalysisState } from "./graph_state";
 import { invokeActivityAnalysisAgent } from "./initial_analysis_agent";
 import { invokeCompleteActivityAnalysisAgent } from "./full_analysis_agent";
 import { stravaApiService } from "../services.ts/strava_api_service";
+import { userHasHeartRateConsent } from "../services.ts/heart_rate_consent_service";
 import {
   couldSkipCompleteAnalysis,
   needCompleteAnalysis,
@@ -64,10 +65,14 @@ async function classifyActivity(
   const { db, stravaAccessToken } = config.configurable as Configurable;
 
   const activity = await stravaApiService.getActivity(stravaAccessToken, state.stravaActivityId);
+  const processHeartRate = await userHasHeartRateConsent(db, state.userId);
+  const streamKeys = processHeartRate
+    ? (["time", "velocity_smooth", "heartrate", "distance", "moving"] as const)
+    : (["time", "velocity_smooth", "distance", "moving"] as const);
   const streams = await stravaApiService.getActivityStreams(
     stravaAccessToken,
     state.stravaActivityId,
-    ["time", "velocity_smooth", "heartrate", "distance", "moving"],
+    [...streamKeys],
   );
 
   if (!streams || Object.keys(streams).length === 0) {
@@ -166,10 +171,14 @@ async function runCompleteAnalysis(
     return { computedSegments: [] };
   }
 
+  const processHeartRate = await userHasHeartRateConsent(db, state.userId);
+  const streamKeys = processHeartRate
+    ? (["time", "velocity_smooth", "heartrate", "distance", "moving"] as const)
+    : (["time", "velocity_smooth", "distance", "moving"] as const);
   const streams = await stravaApiService.getActivityStreams(
     stravaAccessToken,
     state.stravaActivityId,
-    ["time", "velocity_smooth", "heartrate", "distance", "moving"],
+    [...streamKeys],
   );
   const laps = await stravaApiService.getActivityLaps(stravaAccessToken, state.stravaActivityId);
 
@@ -230,27 +239,39 @@ async function validateSignature(
 ): Promise<Partial<AnalysisState>> {
   const { db } = config.configurable as Configurable;
 
+  const trainingType = state.confirmedTrainingType ?? state.initialResult!.training_type;
   const components = mapSegmentsToComponents(state.computedSegments);
   const signature = generateIntervalSignature(components);
 
-  // Exact match first
+  // Exact match first — filter by trainingType so a TEMPO with the same component
+  // pattern can't merge with an INTERVAL structure
   const exact = await db
     .select()
     .from(intervalStructures)
-    .where(eq(intervalStructures.signature, signature))
+    .where(
+      and(
+        eq(intervalStructures.signature, signature),
+        eq(intervalStructures.trainingType, trainingType),
+      ),
+    )
     .limit(1);
 
   if (exact.length > 0) {
     return { signatureCheck: { useExisting: true, structureId: exact[0].id, signature } };
   }
 
-  // Jaccard similarity against this user's existing structures
+  // Jaccard similarity against this user's existing structures of the same training type
   const signatureParts = signature.split("-").sort();
   const candidates = await db
     .selectDistinct({ id: intervalStructures.id, signature: intervalStructures.signature })
     .from(intervalStructures)
     .innerJoin(activities, eq(activities.intervalStructureId, intervalStructures.id))
-    .where(eq(activities.userId, state.userId));
+    .where(
+      and(
+        eq(activities.userId, state.userId),
+        eq(intervalStructures.trainingType, trainingType),
+      ),
+    );
 
   let bestId: number | undefined;
   let bestScore = 0;
@@ -339,15 +360,26 @@ function routeAfterCompleteAnalysis(
 
 // ── Checkpointer singleton ────────────────────────────────────────────────────
 
-let _checkpointer: PostgresSaver | null = null;
+let _checkpointerPromise: Promise<PostgresSaver> | null = null;
 
-export async function getCheckpointer(): Promise<PostgresSaver> {
-  if (!_checkpointer) {
-    const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL! });
-    _checkpointer = new PostgresSaver(pool);
-    await _checkpointer.setup();
+export function getCheckpointer(): Promise<PostgresSaver> {
+  if (!_checkpointerPromise) {
+    _checkpointerPromise = (async () => {
+      const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL! });
+      const cp = new PostgresSaver(pool);
+      await cp.setup();
+      return cp;
+    })().catch((err) => {
+      _checkpointerPromise = null;
+      throw err;
+    });
   }
-  return _checkpointer;
+  return _checkpointerPromise;
+}
+
+export async function resetAnalysisThread(activityId: number): Promise<void> {
+  const checkpointer = await getCheckpointer();
+  await checkpointer.deleteThread(String(activityId));
 }
 
 // ── Graph ─────────────────────────────────────────────────────────────────────
@@ -373,13 +405,18 @@ const workflow = new StateGraph(AnalysisStateAnnotation)
   .addEdge("validateSignature", "persistResults")
   .addEdge("persistResults", END);
 
-let _compiledGraph: Awaited<ReturnType<typeof workflow.compile>> | null = null;
+let _compiledGraphPromise: Promise<ReturnType<typeof workflow.compile>> | null = null;
 
-export async function buildAnalysisGraph() {
-  if (!_compiledGraph) {
-    const checkpointer = await getCheckpointer();
-    _compiledGraph = workflow.compile({ checkpointer });
+export function buildAnalysisGraph(): Promise<ReturnType<typeof workflow.compile>> {
+  if (!_compiledGraphPromise) {
+    _compiledGraphPromise = (async () => {
+      const checkpointer = await getCheckpointer();
+      return workflow.compile({ checkpointer });
+    })().catch((err) => {
+      _compiledGraphPromise = null;
+      throw err;
+    });
   }
-  return _compiledGraph;
+  return _compiledGraphPromise;
 }
 

@@ -1,7 +1,7 @@
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import { ChatOpenAI } from "@langchain/openai";
 
-export const geminiFlashModel = new ChatGoogleGenerativeAI({
-	model: "gemini-2.5-flash",
+export const gptMiniModel = new ChatOpenAI({
+	model: "gpt-4o-mini",
 	temperature: 0,
 	maxRetries: 2,
 });

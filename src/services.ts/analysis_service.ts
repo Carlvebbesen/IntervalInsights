@@ -11,7 +11,7 @@ import { IGlobalBindings } from "../types/IRouters";
 import { generateCompleteIntervalSet } from "./utils";
 import z from "zod";
 import { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
-import { buildAnalysisGraph } from "../agent/analysis_graph";
+import { buildAnalysisGraph, resetAnalysisThread } from "../agent/analysis_graph";
 import { Command } from "@langchain/langgraph";
 import { TrainingType } from "../schema/enums";
 
@@ -96,6 +96,42 @@ export const startAnalysisByStravaId = async (
     console.error(`Activity with stravaId ${stravaActivityId} not found in DB`);
     return;
   }
+  await startAnalysis(db, stravaAccessToken, result.id, stravaActivityId, userId);
+};
+
+// Used by the Strava webhook on title/description updates. Skip if the graph is
+// mid-flight (user is providing input or an LLM call is in progress) — otherwise
+// the new invocation no-ops because LangGraph resumes from the existing checkpoint.
+// For settled states (completed/error/pending) we delete the prior thread so the
+// graph genuinely restarts from classifyActivity with the updated metadata.
+export const restartAnalysisByStravaId = async (
+  db: IGlobalBindings["db"],
+  stravaAccessToken: string,
+  stravaActivityId: number,
+  userId: string,
+): Promise<void> => {
+  const result = await db.query.activities.findFirst({
+    where: eq(activities.stravaActivityId, stravaActivityId),
+    columns: { id: true, analysisStatus: true },
+  });
+  if (!result) {
+    console.error(`Activity with stravaId ${stravaActivityId} not found in DB`);
+    return;
+  }
+
+  const inProgress: Array<typeof result.analysisStatus> = [
+    "ongoing_init",
+    "ongoing_completed",
+    "initial",
+  ];
+  if (inProgress.includes(result.analysisStatus)) {
+    console.log(
+      `Skipping restart for activity ${result.id} — analysis in progress (status=${result.analysisStatus})`,
+    );
+    return;
+  }
+
+  await resetAnalysisThread(result.id);
   await startAnalysis(db, stravaAccessToken, result.id, stravaActivityId, userId);
 };
 
