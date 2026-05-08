@@ -15,6 +15,7 @@ import {
 import type { WorkoutAnalysisOutput } from "../agent/initial_analysis_agent";
 import type { DetailedActivity } from "../types/strava/IDetailedActivity";
 import { analysisStatusEnum, trainingTypeEnum } from "./enums";
+import { activityEvents } from "./events";
 import { intervalSegments } from "./interval_segments";
 import { intervalStructures } from "./interval_structure";
 import { users } from "./users";
@@ -70,6 +71,7 @@ export const activitiesRelations = relations(activities, ({ one, many }) => ({
     references: [intervalStructures.id],
   }),
   intervals: many(intervalSegments),
+  activityEvents: many(activityEvents),
 }));
 
 export type InsertActivity = InferInsertModel<typeof activities>;

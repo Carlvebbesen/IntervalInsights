@@ -64,6 +64,20 @@ export const workoutPartEnum = pgEnum("workout_part", [
 
 export type WorkoutPartType = (typeof workoutPartEnum.enumValues)[number];
 
+export const eventTypeEnum = pgEnum("event_type", [
+  "INJURY",
+  "ILLNESS",
+  "MEDICAL_VISIT",
+  "PHYSIO_VISIT",
+  "OTHER",
+]);
+
+export type EventType = (typeof eventTypeEnum.enumValues)[number];
+
+export const eventStatusEnum = pgEnum("event_status", ["active", "resolved"]);
+
+export type EventStatus = (typeof eventStatusEnum.enumValues)[number];
+
 // ─── Sport Type Constants ─────────────────────────────────────────────────────
 
 /** All Strava sport types that count as "running" */

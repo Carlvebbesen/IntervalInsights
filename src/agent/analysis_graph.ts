@@ -2,20 +2,23 @@ import type { RunnableConfig } from "@langchain/core/runnables";
 import { END, interrupt, START, StateGraph } from "@langchain/langgraph";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { sleep } from "bun";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import type * as schema from "../schema";
 import {
   activities,
+  activityEvents,
   determineIntervalType,
+  events,
   generateIntervalSignature,
   generateStructureName,
+  type InsertEvent,
   intervalSegments,
   intervalStructures,
   mapSegmentsToComponents,
 } from "../schema";
-import type { TrainingType } from "../schema/enums";
+import type { EventType, TrainingType } from "../schema/enums";
 import { userHasHeartRateConsent } from "../services.ts/heart_rate_consent_service";
 import { stravaApiService } from "../services.ts/strava_api_service";
 import {
@@ -26,6 +29,7 @@ import {
   parsePaceStringToMetersPerSecond,
 } from "../services.ts/utils";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
+import { invokeEventDetectionAgent } from "./event_detection_agent";
 import { invokeCompleteActivityAnalysisAgent } from "./full_analysis_agent";
 import { type AnalysisState, AnalysisStateAnnotation } from "./graph_state";
 import { invokeActivityAnalysisAgent } from "./initial_analysis_agent";
@@ -114,7 +118,15 @@ async function classifyActivity(
     })
     .where(eq(activities.id, state.activityId));
 
-  return { initialResult, canSkipComplete, lapsMatchStructure, isIndoor };
+  return {
+    initialResult,
+    canSkipComplete,
+    lapsMatchStructure,
+    isIndoor,
+    activityTitle: activity.name ?? "",
+    activityDescription: activity.description ?? "",
+    activityStartDateLocal: new Date(activity.start_date_local),
+  };
 }
 
 async function markCompleted(
@@ -365,6 +377,140 @@ async function persistResults(
   return {};
 }
 
+const typeLocKey = (type: EventType, loc: string | null): string =>
+  `${type}|${(loc ?? "").toLowerCase().trim()}`;
+
+async function detectEvents(
+  state: AnalysisState,
+  config: RunnableConfig,
+): Promise<Partial<AnalysisState>> {
+  const { db } = config.configurable as Configurable;
+
+  const title = state.activityTitle;
+  const description = state.activityDescription;
+  const notes = state.userNotes;
+  if (!title && !description && !notes) return {};
+
+  const oneYearAgo = new Date();
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+
+  const [alreadyLinked, recent] = await Promise.all([
+    db
+      .select({
+        id: events.id,
+        eventType: events.eventType,
+        bodyLocation: events.bodyLocation,
+        description: events.description,
+        lastOccurrence: events.lastOccurrence,
+        status: events.status,
+      })
+      .from(activityEvents)
+      .innerJoin(events, eq(events.id, activityEvents.eventId))
+      .where(eq(activityEvents.activityId, state.activityId)),
+    db
+      .select()
+      .from(events)
+      .where(and(eq(events.userId, state.userId), gte(events.lastOccurrence, oneYearAgo))),
+  ]);
+
+  const alreadyLinkedIds = new Set(alreadyLinked.map((r) => r.id));
+  const alreadyLinkedTypeLoc = new Set(
+    alreadyLinked.map((r) => typeLocKey(r.eventType, r.bodyLocation)),
+  );
+  const recentById = new Map(recent.map((r) => [r.id, r]));
+
+  const result = await invokeWithRateLimitRetry(() =>
+    invokeEventDetectionAgent(
+      title,
+      description,
+      notes,
+      recent.map((r) => ({
+        id: r.id,
+        eventType: r.eventType,
+        bodyLocation: r.bodyLocation,
+        description: r.description,
+        lastOccurrence: r.lastOccurrence,
+        status: r.status,
+        alreadyLinkedToThisActivity: alreadyLinkedIds.has(r.id),
+      })),
+    ),
+  );
+  if (!result || result.events.length === 0) return {};
+
+  const seen = new Set<string>();
+  const deduped = result.events.filter((e) => {
+    const key =
+      e.linkedEventId !== null
+        ? `id:${e.linkedEventId}`
+        : `new:${typeLocKey(e.eventType, e.bodyLocation)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const activityStart = state.activityStartDateLocal ?? new Date();
+
+  await db.transaction(async (tx) => {
+    for (const e of deduped) {
+      let eventId: number;
+
+      if (e.linkedEventId !== null) {
+        const existing = recentById.get(e.linkedEventId);
+        // LLM hallucinated an id outside the candidate set — skip rather than
+        // silently fall through to creating a new event
+        if (!existing) continue;
+        if (alreadyLinkedIds.has(existing.id)) continue;
+
+        const updates: Partial<InsertEvent> = { updatedAt: new Date() };
+        if (activityStart > existing.lastOccurrence) {
+          updates.lastOccurrence = activityStart;
+        }
+        if (e.description && e.description !== existing.description) {
+          updates.description = e.description;
+        }
+        if (e.markResolved && existing.status !== "resolved") {
+          updates.status = "resolved";
+          updates.resolvedAt = activityStart;
+        }
+        await tx.update(events).set(updates).where(eq(events.id, existing.id));
+        eventId = existing.id;
+      } else {
+        // Final guard: LLM may not realise a new mention matches a condition
+        // already linked to this same activity — skip to avoid double-counting
+        const key = typeLocKey(e.eventType, e.bodyLocation);
+        if (alreadyLinkedTypeLoc.has(key)) continue;
+
+        const [created] = await tx
+          .insert(events)
+          .values({
+            userId: state.userId,
+            eventType: e.eventType,
+            bodyLocation: e.bodyLocation,
+            description: e.description,
+            startTime: activityStart,
+            lastOccurrence: activityStart,
+            status: e.markResolved ? "resolved" : "active",
+            resolvedAt: e.markResolved ? activityStart : null,
+          })
+          .returning({ id: events.id });
+        eventId = created.id;
+        alreadyLinkedTypeLoc.add(key);
+      }
+
+      alreadyLinkedIds.add(eventId);
+
+      await tx
+        .insert(activityEvents)
+        .values({ activityId: state.activityId, eventId })
+        .onConflictDoNothing();
+    }
+  });
+
+  return {};
+}
+
+// ── Routing ───────────────────────────────────────────────────────────────────
+
 function routeAfterClassification(state: AnalysisState): "markCompleted" | "awaitUserInput" {
   if (state.canSkipComplete || state.lapsMatchStructure) {
     return "markCompleted";
@@ -372,8 +518,8 @@ function routeAfterClassification(state: AnalysisState): "markCompleted" | "awai
   return "awaitUserInput";
 }
 
-function routeAfterCompleteAnalysis(state: AnalysisState): "validateSignature" | typeof END {
-  return state.computedSegments.length > 0 ? "validateSignature" : END;
+function routeAfterCompleteAnalysis(state: AnalysisState): "validateSignature" | "detectEvents" {
+  return state.computedSegments.length > 0 ? "validateSignature" : "detectEvents";
 }
 
 let _checkpointerPromise: Promise<PostgresSaver> | null = null;
@@ -407,6 +553,7 @@ const workflow = new StateGraph(AnalysisStateAnnotation)
   .addNode("runCompleteAnalysis", runCompleteAnalysis)
   .addNode("validateSignature", validateSignature)
   .addNode("persistResults", persistResults)
+  .addNode("detectEvents", detectEvents)
   .addEdge(START, "classifyActivity")
   .addConditionalEdges("classifyActivity", routeAfterClassification, [
     "markCompleted",
@@ -416,10 +563,11 @@ const workflow = new StateGraph(AnalysisStateAnnotation)
   .addEdge("awaitUserInput", "runCompleteAnalysis")
   .addConditionalEdges("runCompleteAnalysis", routeAfterCompleteAnalysis, [
     "validateSignature",
-    END,
+    "detectEvents",
   ])
   .addEdge("validateSignature", "persistResults")
-  .addEdge("persistResults", END);
+  .addEdge("persistResults", "detectEvents")
+  .addEdge("detectEvents", END);
 
 let _compiledGraphPromise: Promise<ReturnType<typeof workflow.compile>> | null = null;
 
