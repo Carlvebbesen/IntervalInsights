@@ -57,12 +57,7 @@ agentsRouter.get(
           inArray(activities.analysisStatus, ["initial", "pending", "error"]),
         ),
       );
-    const accessToken = c.get("stravaAccessToken");
-    for (const errorActivity of result.filter((activity) => activity.analysisStatus === "error")) {
-      startAnalysis(c.env.db, accessToken, errorActivity.id, errorActivity.stravaId, userId);
-    }
-    const pending = result.filter((activity) => activity.analysisStatus !== "error");
-    return c.json(pending, 200);
+    return c.json(result, 200);
   },
 );
 
@@ -111,7 +106,7 @@ agentsRouter.post(
       if (!accessToken) {
         return c.json({ error: "Access token missing from context" }, 401);
       }
-      resumeAnalysis(
+      await resumeAnalysis(
         c.env.db,
         accessToken,
         activityId,
@@ -203,7 +198,7 @@ agentsRouter.post(
       if (!accessToken) {
         return c.json({ error: "Access token missing" }, 400);
       }
-      resumeAnalysis(
+      await resumeAnalysis(
         c.env.db,
         accessToken,
         activityId,

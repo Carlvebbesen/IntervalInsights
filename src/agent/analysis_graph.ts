@@ -33,8 +33,6 @@ import { invokeActivityAnalysisAgent } from "./initial_analysis_agent";
 type Db = NodePgDatabase<typeof schema>;
 type Configurable = { db: Db; stravaAccessToken: string };
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 async function invokeWithRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
@@ -56,8 +54,6 @@ async function invokeWithRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
     return fn();
   }
 }
-
-// ── Nodes ─────────────────────────────────────────────────────────────────────
 
 async function classifyActivity(
   state: AnalysisState,
@@ -172,7 +168,6 @@ async function runCompleteAnalysis(
     throw new Error("runCompleteAnalysis called without a resolved trainingType");
   }
 
-  // Types that don't need LLM segment breakdown — just mark completed with notes
   if (!needCompleteAnalysis(trainingType)) {
     console.log(`${tag} trainingType=${trainingType} skips LLM segment breakdown`);
     await db
@@ -273,8 +268,6 @@ async function validateSignature(
   const components = mapSegmentsToComponents(state.computedSegments);
   const signature = generateIntervalSignature(components);
 
-  // Exact match first — filter by trainingType so a TEMPO with the same component
-  // pattern can't merge with an INTERVAL structure
   const exact = await db
     .select()
     .from(intervalStructures)
@@ -290,7 +283,6 @@ async function validateSignature(
     return { signatureCheck: { useExisting: true, structureId: exact[0].id, signature } };
   }
 
-  // Jaccard similarity against this user's existing structures of the same training type
   const signatureParts = signature.split("-").sort();
   const candidates = await db
     .selectDistinct({ id: intervalStructures.id, signature: intervalStructures.signature })
@@ -373,8 +365,6 @@ async function persistResults(
   return {};
 }
 
-// ── Routing ───────────────────────────────────────────────────────────────────
-
 function routeAfterClassification(state: AnalysisState): "markCompleted" | "awaitUserInput" {
   if (state.canSkipComplete || state.lapsMatchStructure) {
     return "markCompleted";
@@ -385,8 +375,6 @@ function routeAfterClassification(state: AnalysisState): "markCompleted" | "awai
 function routeAfterCompleteAnalysis(state: AnalysisState): "validateSignature" | typeof END {
   return state.computedSegments.length > 0 ? "validateSignature" : END;
 }
-
-// ── Checkpointer singleton ────────────────────────────────────────────────────
 
 let _checkpointerPromise: Promise<PostgresSaver> | null = null;
 
@@ -411,8 +399,6 @@ export async function resetAnalysisThread(activityId: number): Promise<void> {
   const checkpointer = await getCheckpointer();
   await checkpointer.deleteThread(String(activityId));
 }
-
-// ── Graph ─────────────────────────────────────────────────────────────────────
 
 const workflow = new StateGraph(AnalysisStateAnnotation)
   .addNode("classifyActivity", classifyActivity)

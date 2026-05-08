@@ -13,9 +13,7 @@ import {
 import type { TrainingType } from "../schema/enums";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
-import { generateCompleteIntervalSet } from "./utils";
-
-// ── LangGraph pipeline ────────────────────────────────────────────────────────
+import { generateCompleteIntervalSet, needCompleteAnalysis } from "./utils";
 
 export const startAnalysis = async (
   db: IGlobalBindings["db"],
@@ -57,24 +55,85 @@ export const resumeAnalysis = async (
   sets: ExpandedIntervalSet[],
   trainingType: TrainingType | null,
 ): Promise<void> => {
+  const tag = `[resumeAnalysis activity=${activityId}]`;
   console.log(
-    `[resumeAnalysis activity=${activityId}] starting resume notes.len=${notes.length} sets=${sets.length} trainingType=${trainingType ?? "null"}`,
+    `${tag} starting resume notes.len=${notes.length} sets=${sets.length} trainingType=${trainingType ?? "null"}`,
   );
+
+  const current = await db.query.activities.findFirst({
+    where: eq(activities.id, activityId),
+    columns: { trainingType: true, draftAnalysisResult: true, analysisStatus: true },
+  });
+  if (!current) {
+    throw new Error(`Activity ${activityId} not found`);
+  }
+  const draftType = (current.draftAnalysisResult as { training_type?: TrainingType } | null)
+    ?.training_type;
+  const finalTrainingType: TrainingType | null =
+    trainingType ?? current.trainingType ?? draftType ?? null;
+
+  if (!finalTrainingType) {
+    throw new Error(`Cannot resume activity ${activityId} — no training type resolved`);
+  }
+
+  if (!needCompleteAnalysis(finalTrainingType)) {
+    console.log(`${tag} fast-path: trainingType=${finalTrainingType} skips LLM segment breakdown`);
+    await db
+      .update(activities)
+      .set({
+        analysisStatus: "completed",
+        notes,
+        trainingType: finalTrainingType,
+        draftAnalysisResult: null,
+      })
+      .where(eq(activities.id, activityId));
+    try {
+      await resetAnalysisThread(activityId);
+    } catch (e) {
+      console.warn(`${tag} resetAnalysisThread (post fast-path) failed (non-fatal):`, e);
+    }
+    return;
+  }
+
+  console.log(`${tag} graph-path: invoking Command resume`);
   try {
     const graph = await buildAnalysisGraph();
-    await graph.invoke(new Command({ resume: { notes, sets, trainingType } }), {
+    const graphConfig = {
       configurable: {
         thread_id: String(activityId),
         db,
         stravaAccessToken,
       },
-    });
-    console.log(`[resumeAnalysis activity=${activityId}] graph.invoke returned without throwing`);
+    };
+
+    const before = await graph.getState(graphConfig);
+    const beforeInterrupts = before.tasks.reduce((sum, t) => sum + t.interrupts.length, 0);
+    const hasPendingWork = before.next.length > 0;
+    console.log(
+      `${tag} pre-invoke graph state: next=[${before.next.join(",")}] taskInterrupts=${beforeInterrupts}`,
+    );
+    if (!hasPendingWork && beforeInterrupts === 0) {
+      throw new Error(
+        `Cannot resume activity ${activityId} — thread has no pending interrupt (next=[], no tasks). The checkpoint may be missing or the thread already finished.`,
+      );
+    }
+
+    await graph.invoke(
+      new Command({ resume: { notes, sets, trainingType: finalTrainingType } }),
+      graphConfig,
+    );
+    console.log(`${tag} graph.invoke returned without throwing`);
+
+    const after = await graph.getState(graphConfig);
+    const afterInterrupts = after.tasks.reduce((sum, t) => sum + t.interrupts.length, 0);
+    if (afterInterrupts > 0) {
+      throw new Error(
+        `Graph resume did not progress activity ${activityId} — still paused at interrupt (next=[${after.next.join(",")}])`,
+      );
+    }
   } catch (error) {
     const err = error as { message?: string; stack?: string; name?: string };
-    console.error(
-      `[resumeAnalysis activity=${activityId}] FAILED name=${err?.name} message=${err?.message}`,
-    );
+    console.error(`${tag} FAILED name=${err?.name} message=${err?.message}`);
     if (err?.stack) console.error(err.stack);
     try {
       await db
@@ -84,6 +143,7 @@ export const resumeAnalysis = async (
     } catch (dbError) {
       console.error("Could not set error status in DB:", dbError);
     }
+    throw error;
   }
 };
 
@@ -104,11 +164,6 @@ export const startAnalysisByStravaId = async (
   await startAnalysis(db, stravaAccessToken, result.id, stravaActivityId, userId);
 };
 
-// Used by the Strava webhook on title/description updates. Skip if the graph is
-// mid-flight (user is providing input or an LLM call is in progress) — otherwise
-// the new invocation no-ops because LangGraph resumes from the existing checkpoint.
-// For settled states (completed/error/pending) we delete the prior thread so the
-// graph genuinely restarts from classifyActivity with the updated metadata.
 export const restartAnalysisByStravaId = async (
   db: IGlobalBindings["db"],
   stravaAccessToken: string,
@@ -139,8 +194,6 @@ export const restartAnalysisByStravaId = async (
   await resetAnalysisThread(result.id);
   await startAnalysis(db, stravaAccessToken, result.id, stravaActivityId, userId);
 };
-
-// ── Proposed-pace helper (unchanged) ─────────────────────────────────────────
 
 export const getProposedPaceForStructure = async (
   db: IGlobalBindings["db"],
@@ -214,7 +267,6 @@ function calculateAverages(
         relevantRow.targetType === targetType &&
         Math.abs(relevantRow.targetValue - targetVal) < 1
       ) {
-        // falls through to pace logic below
       } else {
         const matchingRows = sortedRows.filter(
           (row) => row.targetType === targetType && Math.abs(row.targetValue - targetVal) < 1,
