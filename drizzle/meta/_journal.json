@@ -29,6 +29,13 @@
       "when": 1778532321019,
       "tag": "0003_moaning_beast",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778540224019,
+      "tag": "0004_freezing_stryfe",
+      "breakpoints": true
     }
   ]
 }
