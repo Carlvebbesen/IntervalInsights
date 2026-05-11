@@ -73,6 +73,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/intervals/event": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Intervals.icu webhook delivery. Authenticated by matching the shared secret against INTERVALS_WEBHOOK_SECRET; processing is fire-and-forget. */
+    post: operations["postApiIntervalsEvent"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/activity": {
     parameters: {
       query?: never;
@@ -431,6 +448,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/dashboard/training-summary": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Current intervals.icu training-summary snapshot. Always returns an object discriminated by `status`: `ok` (data populated with latest wellness record — fitness model, sleep, recovery, body), `not_linked` (intervals.icu not connected), or `no_recent_data` (linked, but no wellness records in the past 7 days). All metrics in `data` are auto/device-sourced (no subjective fields). */
+    get: operations["getApiDashboardTrainingSummary"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/dashboard/week/{weekStart}": {
     parameters: {
       query?: never;
@@ -512,6 +546,54 @@ export interface paths {
     post?: never;
     /** @description Permanently delete the authenticated user's account: removes all activities (interval segments cascade), the user row, revokes Strava OAuth, and clears Clerk metadata. */
     delete: operations["deleteApiUserData"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/intervals/auth/exchange": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["postApiIntervalsAuthExchange"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/intervals/wellness": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getApiIntervalsWellness"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/intervals/fitness": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getApiIntervalsFitness"];
+    put?: never;
+    post?: never;
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -673,6 +755,62 @@ export interface operations {
         };
         content: {
           "text/markdown": string;
+        };
+      };
+    };
+  };
+  postApiIntervalsEvent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json":
+          | {
+              /** @enum {string} */
+              event:
+                | "ACTIVITY_UPLOADED"
+                | "ACTIVITY_UPDATED"
+                | "ACTIVITY_ANALYZED"
+                | "ACTIVITY_DELETED";
+              athlete_id: string;
+              activity_id: string;
+              secret: string;
+            }
+          | {
+              /** @constant */
+              event: "APP_SCOPE_CHANGED";
+              athlete_id: string;
+              secret: string;
+            };
+      };
+    };
+    responses: {
+      /** @description Event accepted for background processing */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            /** @enum {string} */
+            status: "ok" | "unauthorized";
+          };
+        };
+      };
+      /** @description Shared secret did not match */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            /** @enum {string} */
+            status: "ok" | "unauthorized";
+          };
         };
       };
     };
@@ -1657,8 +1795,8 @@ export interface operations {
           "application/json": {
             id: number;
             /** @enum {string} */
-            status: "created" | "skipped" | "error";
-            error?: string;
+            status: "success" | "failed";
+            error?: unknown;
           }[];
         };
       };
@@ -1862,6 +2000,14 @@ export interface operations {
               avgElevationPerRun: number | null;
               avgDistancePerRunKm: number | null;
             };
+            wellness: {
+              ctl: number | null;
+              atl: number | null;
+              tsb: number | null;
+              avgHrv: number | null;
+              avgSleepQuality: number | null;
+              restingHr: number | null;
+            } | null;
           };
         };
       };
@@ -1874,6 +2020,66 @@ export interface operations {
           "application/json": {
             error: string;
           };
+        };
+      };
+    };
+  };
+  getApiDashboardTrainingSummary: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Discriminated training-summary result */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json":
+            | {
+                /** @constant */
+                status: "ok";
+                data: {
+                  date: string;
+                  fitness: {
+                    ctl: number | null;
+                    atl: number | null;
+                    rampRate: number | null;
+                    ctlLoad: number | null;
+                    atlLoad: number | null;
+                  };
+                  sleep: {
+                    sleepSecs: number | null;
+                    sleepScore: number | null;
+                  };
+                  recovery: {
+                    restingHR: number | null;
+                    hrv: number | null;
+                    readiness: number | null;
+                    baevskySI: number | null;
+                    spO2: number | null;
+                    respiration: number | null;
+                  };
+                  body: {
+                    weight: number | null;
+                    vo2max: number | null;
+                  };
+                };
+              }
+            | {
+                /** @constant */
+                status: "not_linked";
+                data: null;
+              }
+            | {
+                /** @constant */
+                status: "no_recent_data";
+                data: null;
+              };
         };
       };
     };
@@ -2138,6 +2344,69 @@ export interface operations {
             message: string;
           };
         };
+      };
+    };
+  };
+  postApiIntervalsAuthExchange: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          code: string;
+        };
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  getApiIntervalsWellness: {
+    parameters: {
+      query: {
+        oldest: string;
+        newest: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  getApiIntervalsFitness: {
+    parameters: {
+      query: {
+        oldest: string;
+        newest: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

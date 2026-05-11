@@ -14,6 +14,7 @@ import {
   StravaLapSchema,
 } from "../schemas/api_schemas";
 import { userHasHeartRateConsent } from "../services.ts/heart_rate_consent_service";
+import { linkFromLocalActivity } from "../services.ts/intervals_link_service";
 import { stravaApiService } from "../services.ts/strava_api_service";
 import type { TGlobalEnv, TStravaEnv } from "../types/IRouters";
 
@@ -174,11 +175,28 @@ activitiesRouter.get(
       if (Number.isNaN(activityId)) {
         return c.json({ error: "Invalid activity ID" }, 400);
       }
-      const segments = await c.env.db
-        .select()
-        .from(intervalSegments)
-        .where(eq(intervalSegments.activityId, activityId))
-        .orderBy(asc(intervalSegments.segmentIndex));
+      const userId = c.get("userId");
+      const clerkId = c.get("clerkUserId");
+      const env = c.env;
+
+      const [activity, segments] = await Promise.all([
+        env.db.query.activities.findFirst({
+          where: (a, { eq, and }) => and(eq(a.id, activityId), eq(a.userId, userId)),
+          columns: { intervalsIcuId: true },
+        }),
+        env.db
+          .select()
+          .from(intervalSegments)
+          .where(eq(intervalSegments.activityId, activityId))
+          .orderBy(asc(intervalSegments.segmentIndex)),
+      ]);
+
+      if (activity && !activity.intervalsIcuId) {
+        linkFromLocalActivity(env, { id: userId, clerkId }, activityId).catch((err) =>
+          console.error("intervals.icu on-demand link failed:", err),
+        );
+      }
+
       return c.json({ intervalSegments: segments });
     } catch (error) {
       console.error("Error fetching activity:", error);

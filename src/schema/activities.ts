@@ -47,6 +47,8 @@ export const activities = pgTable(
     notes: text("notes"),
     createdAt: timestamp("created_at").defaultNow(),
     indoor: boolean("indoor").notNull(),
+    intervalsIcuId: text("intervals_icu_id"),
+    intervalsAnalyzed: boolean("intervals_analyzed").default(false),
   },
   (table) => {
     return [

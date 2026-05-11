@@ -7,9 +7,14 @@ import { INTERVAL_TRAINING_TYPES, OTHER_SPORT_TYPES, RUNNING_SPORT_TYPES } from 
 import {
   DashboardResponseSchema,
   ErrorSchema,
+  TrainingSummaryResponseSchema,
   WeekDetailResponseSchema,
 } from "../schemas/api_schemas";
-import { ellipticalTimeToMetres, isTimeBased } from "../services.ts/utils";
+import {
+  fetchTrainingSummary,
+  fetchWellnessSummary,
+} from "../services.ts/intervals_wellness_service";
+import { ellipticalTimeToMetres, isTimeBased, toISODate } from "../services.ts/utils";
 import type { TGlobalEnv } from "../types/IRouters";
 
 const dashboardRouter = new Hono<TGlobalEnv>();
@@ -187,7 +192,7 @@ dashboardRouter.get(
     for (let i = 8; i >= 0; i--) {
       const weekStart = new Date(startOfThisWeek);
       weekStart.setUTCDate(weekStart.getUTCDate() - 7 * i);
-      const dateStr = weekStart.toISOString().split("T")[0];
+      const dateStr = toISODate(weekStart);
       const runMatch = weeklyRunData.find((w) => w.weekStart === dateStr);
       const runKm = runMatch ? (Number(runMatch.totalDistance) || 0) / 1000 : 0;
 
@@ -244,6 +249,10 @@ dashboardRouter.get(
       ? (Number(longTermStats[0].avgDistancePerRun) || 0) / 1000
       : null;
 
+    const todayStr = toISODate(now);
+    const weekAgoStr = toISODate(sevenDaysAgo);
+    const wellness = await fetchWellnessSummary(c.get("clerkUserId"), weekAgoStr, todayStr);
+
     return c.json({
       summary: {
         thisWeekKm,
@@ -267,7 +276,28 @@ dashboardRouter.get(
         avgElevationPerRun,
         avgDistancePerRunKm,
       },
+      wellness,
     });
+  },
+);
+
+dashboardRouter.get(
+  "/training-summary",
+  describeRoute({
+    description:
+      "Current intervals.icu training-summary snapshot. Always returns an object discriminated by `status`: `ok` (data populated with latest wellness record — fitness model, sleep, recovery, body), `not_linked` (intervals.icu not connected), or `no_recent_data` (linked, but no wellness records in the past 7 days). All metrics in `data` are auto/device-sourced (no subjective fields).",
+    responses: {
+      200: {
+        description: "Discriminated training-summary result",
+        content: {
+          "application/json": { schema: resolver(TrainingSummaryResponseSchema) },
+        },
+      },
+    },
+  }),
+  async (c) => {
+    const summary = await fetchTrainingSummary(c.get("clerkUserId"));
+    return c.json(summary);
   },
 );
 

@@ -4,12 +4,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
 import type { TStravaEnv } from "../../types/IRouters";
-
-function requireEnv(key: string): string {
-  const value = env[key];
-  if (!value) throw new Error(`Missing required env var: ${key}`);
-  return value;
-}
+import { requireEnv } from "../../utils";
 
 const STRAVA_CLIENT_ID = requireEnv("STRAVA_CLIENT_ID");
 const STRAVA_CLIENT_SECRET = requireEnv("STRAVA_CLIENT_SECRET");

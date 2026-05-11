@@ -8,16 +8,13 @@ import z from "zod";
 import { users } from "../../schema/users";
 import { ErrorSchema } from "../../schemas/api_schemas";
 import type { TGlobalEnv } from "../../types/IRouters";
+import { requireEnv } from "../../utils";
 
 const stravaAuthRouter = new Hono<TGlobalEnv>();
 
 const REDIRECT_URI = "https://intervalinsights.cvebbesen.no/strava-callback";
 
-const STRAVA_CLIENT_ID = (() => {
-  const value = env.STRAVA_CLIENT_ID;
-  if (!value) throw new Error("Missing required env var: STRAVA_CLIENT_ID");
-  return value;
-})();
+const STRAVA_CLIENT_ID = requireEnv("STRAVA_CLIENT_ID");
 
 const StravaAuthUrlResponseSchema = z.object({
   url: z.string().url(),

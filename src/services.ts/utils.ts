@@ -200,6 +200,10 @@ export function isTimeBased(sportType: string): boolean {
   return TIME_BASED_SPORT_TYPES.includes(sportType);
 }
 
+export function toISODate(date: Date): string {
+  return date.toISOString().split("T")[0];
+}
+
 export const generateCompleteIntervalSet = (sets: z.infer<typeof workoutSet>[]) => {
   return sets.flatMap((set) => {
     const expandedSets = [];

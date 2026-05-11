@@ -3,9 +3,14 @@ import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
 import { ErrorSchema } from "../schemas/api_schemas";
+import { processIntervalsWebhook } from "../services.ts/process_intervals_event";
 import { processStravaWebhook } from "../services.ts/process_strava_event";
 import type { TPublicEnv } from "../types/IRouters";
+import type { IIntervalsWebhookEvent } from "../types/intervals/IIntervalsWebhookEvent";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
+import { requireEnv } from "../utils";
+
+const INTERVALS_WEBHOOK_SECRET = requireEnv("INTERVALS_WEBHOOK_SECRET");
 
 const publicRouter = new Hono<TPublicEnv>();
 
@@ -171,6 +176,68 @@ publicRouter.post(
     }
     processStravaWebhook(body, c.env).catch((err) =>
       console.error("Background processing failed:", err),
+    );
+    return c.json({ status: "ok" }, 200);
+  },
+);
+
+const IntervalsActivityEventSchema = z.object({
+  event: z.enum(["ACTIVITY_UPLOADED", "ACTIVITY_UPDATED", "ACTIVITY_ANALYZED", "ACTIVITY_DELETED"]),
+  athlete_id: z.string(),
+  activity_id: z.string(),
+  secret: z.string(),
+});
+
+const IntervalsScopeChangeEventSchema = z.object({
+  event: z.literal("APP_SCOPE_CHANGED"),
+  athlete_id: z.string(),
+  secret: z.string(),
+});
+
+const IntervalsWebhookEventSchema = z.discriminatedUnion("event", [
+  IntervalsActivityEventSchema,
+  IntervalsScopeChangeEventSchema,
+]);
+
+const IntervalsWebhookAckSchema = z.object({
+  status: z.enum(["ok", "unauthorized"]),
+});
+
+publicRouter.post(
+  "/intervals/event",
+  describeRoute({
+    description:
+      "Intervals.icu webhook delivery. Authenticated by matching the shared secret against INTERVALS_WEBHOOK_SECRET; processing is fire-and-forget.",
+    security: [],
+    responses: {
+      200: {
+        description: "Event accepted for background processing",
+        content: { "application/json": { schema: resolver(IntervalsWebhookAckSchema) } },
+      },
+      401: {
+        description: "Shared secret did not match",
+        content: { "application/json": { schema: resolver(IntervalsWebhookAckSchema) } },
+      },
+    },
+  }),
+  validator("json", IntervalsWebhookEventSchema),
+  async (c) => {
+    const body: IIntervalsWebhookEvent = c.req.valid("json");
+
+    const activitySuffix = "activity_id" in body ? `, activity: ${body.activity_id}` : "";
+    console.log(
+      `Intervals.icu event received: ${body.event} for athlete: ${body.athlete_id}${activitySuffix}`,
+    );
+
+    if (body.secret !== INTERVALS_WEBHOOK_SECRET) {
+      console.warn(
+        `Rejected intervals.icu webhook with bad secret (athlete: ${body.athlete_id}${activitySuffix})`,
+      );
+      return c.json({ status: "unauthorized" }, 401);
+    }
+
+    processIntervalsWebhook(body, c.env).catch((err) =>
+      console.error("Intervals.icu webhook processing failed:", err),
     );
     return c.json({ status: "ok" }, 200);
   },
