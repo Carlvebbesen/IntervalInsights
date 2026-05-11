@@ -4,4 +4,5 @@ export const gptMiniModel = new ChatOpenAI({
   model: "gpt-4o-mini",
   temperature: 0,
   maxRetries: 2,
+  timeout: 45_000,
 });
