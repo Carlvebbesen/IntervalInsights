@@ -22,6 +22,13 @@
       "when": 1778264709895,
       "tag": "0002_lush_grim_reaper",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778532321019,
+      "tag": "0003_moaning_beast",
+      "breakpoints": true
     }
   ]
 }

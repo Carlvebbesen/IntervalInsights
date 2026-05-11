@@ -10,6 +10,7 @@ import type {
 } from "../types/intervals/IIntervalsWellness";
 
 const INTERVALS_BASE_URL = "https://intervals.icu/api/v1";
+const INTERVALS_FETCH_TIMEOUT_MS = 8000;
 
 async function fetchIntervals<T>(
   endpoint: string,
@@ -23,12 +24,23 @@ async function fetchIntervals<T>(
     });
   }
 
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      signal: AbortSignal.timeout(INTERVALS_FETCH_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new IntervalsError(504, {
+        message: `intervals.icu timed out on ${endpoint}`,
+      });
+    }
+    throw err;
+  }
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ message: response.statusText }));

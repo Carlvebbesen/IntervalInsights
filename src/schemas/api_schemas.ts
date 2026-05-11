@@ -116,6 +116,39 @@ export const DashboardResponseSchema = z.object({
     .nullable(),
 });
 
+const TrainingSummaryDataSchema = z.object({
+  date: z.string(),
+  fitness: z.object({
+    ctl: z.number().nullable(),
+    atl: z.number().nullable(),
+    rampRate: z.number().nullable(),
+    ctlLoad: z.number().nullable(),
+    atlLoad: z.number().nullable(),
+  }),
+  sleep: z.object({
+    sleepSecs: z.number().nullable(),
+    sleepScore: z.number().nullable(),
+  }),
+  recovery: z.object({
+    restingHR: z.number().nullable(),
+    hrv: z.number().nullable(),
+    readiness: z.number().nullable(),
+    baevskySI: z.number().nullable(),
+    spO2: z.number().nullable(),
+    respiration: z.number().nullable(),
+  }),
+  body: z.object({
+    weight: z.number().nullable(),
+    vo2max: z.number().nullable(),
+  }),
+});
+
+export const TrainingSummaryResponseSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), data: TrainingSummaryDataSchema }),
+  z.object({ status: z.literal("not_linked"), data: z.null() }),
+  z.object({ status: z.literal("no_recent_data"), data: z.null() }),
+]);
+
 export const WeekDetailResponseSchema = z.object({
   weekStart: z.string(),
   running: z.object({

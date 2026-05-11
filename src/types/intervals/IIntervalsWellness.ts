@@ -1,25 +1,38 @@
 export interface IIntervalsWellness {
-  id: string; // ISO-8601 date (e.g. "2026-04-12")
-  fatigue: number | null;
-  motivation: number | null;
-  soreness: number | null;
-  sleep_duration: number | null;
-  sleep_quality: number | null;
-  rhr: number | null;
-  hrv: number | null;
-  weight: number | null;
-  notes: string | null;
-}
-
-export interface IIntervalsFitnessEvent {
   id: string;
-  start_date_local: string;
-  fitness: number | null; // CTL
-  fatigue: number | null; // ATL
-  form: number | null;    // TSB
   ctl: number | null;
   atl: number | null;
   rampRate: number | null;
+  ctlLoad: number | null;
+  atlLoad: number | null;
+  sleepSecs: number | null;
+  sleepScore: number | null;
+  sleepQuality: number | null;
+  restingHR: number | null;
+  hrv: number | null;
+  readiness: number | null;
+  baevskySI: number | null;
+  spO2: number | null;
+  respiration: number | null;
+  weight: number | null;
+  vo2max: number | null;
+}
+
+export interface IIntervalsFitnessEvent {
+  id: number;
+  start_date_local: string;
+  end_date_local: string | null;
+  name: string | null;
+  category: string | null;
+  type: string | null;
+  sub_type: string | null;
+  icu_ctl: number | null;
+  icu_atl: number | null;
+  icu_training_load: number | null;
+  icu_intensity: number | null;
+  icu_ftp: number | null;
+  moving_time: number | null;
+  distance: number | null;
 }
 
 export interface IIntervalsWellnessSummary {
@@ -30,3 +43,35 @@ export interface IIntervalsWellnessSummary {
   avgSleepQuality: number | null;
   restingHr: number | null;
 }
+
+export interface IIntervalsTrainingSummary {
+  date: string;
+  fitness: {
+    ctl: number | null;
+    atl: number | null;
+    rampRate: number | null;
+    ctlLoad: number | null;
+    atlLoad: number | null;
+  };
+  sleep: {
+    sleepSecs: number | null;
+    sleepScore: number | null;
+  };
+  recovery: {
+    restingHR: number | null;
+    hrv: number | null;
+    readiness: number | null;
+    baevskySI: number | null;
+    spO2: number | null;
+    respiration: number | null;
+  };
+  body: {
+    weight: number | null;
+    vo2max: number | null;
+  };
+}
+
+export type IIntervalsTrainingSummaryResult =
+  | { status: "ok"; data: IIntervalsTrainingSummary }
+  | { status: "not_linked"; data: null }
+  | { status: "no_recent_data"; data: null };

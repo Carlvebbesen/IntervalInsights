@@ -1,16 +1,24 @@
-export type IntervalsWebhookEventType =
-  | "ACTIVITY_CREATED"
+export type IntervalsActivityEventType =
+  | "ACTIVITY_UPLOADED"
   | "ACTIVITY_UPDATED"
   | "ACTIVITY_ANALYZED"
   | "ACTIVITY_DELETED";
 
-export interface IIntervalsWebhookEvent {
-  /** The type of event */
-  event: IntervalsWebhookEventType;
-  /** The Intervals.icu athlete ID */
+export type IntervalsWebhookEventType = IntervalsActivityEventType | "APP_SCOPE_CHANGED";
+
+export interface IIntervalsActivityWebhookEvent {
+  event: IntervalsActivityEventType;
   athlete_id: string;
-  /** The Intervals.icu activity ID (e.g. "i12345") */
   activity_id: string;
-  /** The shared secret for verification */
   secret: string;
 }
+
+export interface IIntervalsScopeChangeWebhookEvent {
+  event: "APP_SCOPE_CHANGED";
+  athlete_id: string;
+  secret: string;
+}
+
+export type IIntervalsWebhookEvent =
+  | IIntervalsActivityWebhookEvent
+  | IIntervalsScopeChangeWebhookEvent;
