@@ -11,7 +11,7 @@ import type { TGlobalEnv } from "../../types/IRouters";
 
 const stravaAuthRouter = new Hono<TGlobalEnv>();
 
-const REDIRECT_URI = "https://intervalinsights.cvebbesen.no";
+const REDIRECT_URI = "https://intervalinsights.cvebbesen.no/strava-callback";
 
 const STRAVA_CLIENT_ID = (() => {
   const value = env.STRAVA_CLIENT_ID;
@@ -56,7 +56,7 @@ stravaAuthRouter.get(
     });
 
     return c.json({
-      url: `https://www.strava.com/oauth/authorize?${params.toString()}`,
+      url: `https://www.strava.com/oauth/mobile/authorize?${params.toString()}`,
     });
   },
 );
