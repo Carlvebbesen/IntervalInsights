@@ -33,7 +33,7 @@ adminRouter.patch("/users/:id/role", zValidator("json", roleSchema), async (c) =
 
   // Invalidate Clerk public metadata cache so the new role takes effect on next token refresh
   await clerkClient.users.updateUserMetadata(updated.clerkId, {
-    publicMetadata: { userId: updated.id, role },
+    publicMetadata: { user_id: updated.id, role },
   });
 
   return c.json({ id: updated.id, role: updated.role });

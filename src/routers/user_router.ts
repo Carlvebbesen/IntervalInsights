@@ -258,7 +258,7 @@ userRouter.delete(
 
     await clerkClient.users.updateUserMetadata(clerkUserId, {
       privateMetadata: { strava: null },
-      publicMetadata: { strava_connected: false, userId: null, role: null },
+      publicMetadata: { strava_connected: false, user_id: null, role: null },
     });
 
     return c.json({ success: true, message: "All user data deleted" });

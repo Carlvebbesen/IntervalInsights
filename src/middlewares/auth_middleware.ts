@@ -15,11 +15,11 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
   }
 
   const metadata = auth.sessionClaims?.metadata as
-    | { userId?: string; role?: "guest" | "premium" | "admin" }
+    | { user_id?: string; role?: "guest" | "premium" | "admin" }
     | undefined;
-  if (metadata?.userId && metadata?.role) {
+  if (metadata?.user_id && metadata?.role) {
     c.set("clerkUserId", auth.userId);
-    c.set("userId", metadata.userId);
+    c.set("userId", metadata.user_id);
     c.set("role", metadata.role);
     return next();
   }
@@ -42,14 +42,16 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
     console.log(`Created new user record for Clerk User: ${auth.userId}`);
   }
 
-  clerkClient.users
-    .updateUserMetadata(auth.userId, {
+  try {
+    await clerkClient.users.updateUserMetadata(auth.userId, {
       publicMetadata: {
-        userId: dbUser.id,
+        user_id: dbUser.id,
         role: dbUser.role,
       },
-    })
-    .catch((err) => console.error("Failed to sync Clerk metadata", err));
+    });
+  } catch (err) {
+    console.error("Failed to sync Clerk metadata", err);
+  }
 
   c.set("clerkUserId", auth.userId);
   c.set("userId", dbUser.id);
