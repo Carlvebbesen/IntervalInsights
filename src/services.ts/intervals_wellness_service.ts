@@ -10,7 +10,7 @@ import { toISODate } from "./utils";
 export async function fetchWellnessSummary(
   clerkUserId: string,
   oldest: string,
-  newest: string
+  newest: string,
 ): Promise<IIntervalsWellnessSummary | null> {
   let accessToken: string;
   try {

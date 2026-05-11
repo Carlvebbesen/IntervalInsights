@@ -13,8 +13,8 @@ import activitiesRouter, { stravaActivitiesRouter } from "./routers/activities_r
 import adminRouter from "./routers/admin_router";
 import agentsRouter from "./routers/agents_router";
 import dashboardRouter from "./routers/dashboard_router";
-import intervalsEntryRouter from "./routers/intervals/intervals_entry_router";
 import intervalStructureRouter from "./routers/interval_structure_router";
+import intervalsEntryRouter from "./routers/intervals/intervals_entry_router";
 import publicRouter from "./routers/public_router";
 import stravaEntryRouter from "./routers/strava/strava_entry_router";
 import userRouter from "./routers/user_router";

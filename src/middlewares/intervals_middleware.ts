@@ -1,6 +1,6 @@
 import { createClerkClient } from "@clerk/backend";
-import { createMiddleware } from "hono/factory";
 import { env } from "bun";
+import { createMiddleware } from "hono/factory";
 import { IntervalsError } from "../error";
 import {
   INTERVALS_CLIENT_ID,
