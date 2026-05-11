@@ -1,9 +1,9 @@
 import { and, eq, gte, isNull, lte } from "drizzle-orm";
+import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import { activities } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsActivity } from "../types/intervals/IIntervalsActivity";
 import type { IIntervalsWebhookEvent } from "../types/intervals/IIntervalsWebhookEvent";
-import { getIntervalsApiKey } from "../middlewares/intervals_middleware";
 import { intervalsApiService } from "./intervals_api_service";
 
 // Fuzzy match tolerances for activities not linked to Strava
@@ -95,15 +95,15 @@ export async function processIntervalsWebhook(
     return;
   }
 
-  let apiKey: string;
+  let accessToken: string;
   try {
-    apiKey = await getIntervalsApiKey(user.clerkId);
+    accessToken = await getIntervalsAccessToken(user.clerkId);
   } catch {
-    console.log(`No Intervals.icu API key for user: ${user.clerkId}`);
+    console.log(`No Intervals.icu access token for user: ${user.clerkId}`);
     return;
   }
 
-  const intervalsActivity = await intervalsApiService.getActivity(apiKey, body.activity_id);
+  const intervalsActivity = await intervalsApiService.getActivity(accessToken, body.activity_id);
 
   const match = await findMatchingActivity(context, user.id, intervalsActivity);
 

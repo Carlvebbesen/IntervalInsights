@@ -1,4 +1,4 @@
-import { getIntervalsApiKey } from "../middlewares/intervals_middleware";
+import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import type { IIntervalsWellnessSummary } from "../types/intervals/IIntervalsWellness";
 import { intervalsApiService } from "./intervals_api_service";
 
@@ -7,42 +7,47 @@ export async function fetchWellnessSummary(
   oldest: string,
   newest: string
 ): Promise<IIntervalsWellnessSummary | null> {
-  let apiKey: string;
+  let accessToken: string;
   try {
-    apiKey = await getIntervalsApiKey(clerkUserId);
+    accessToken = await getIntervalsAccessToken(clerkUserId);
   } catch {
     return null;
   }
 
   try {
     const [wellnessData, fitnessData] = await Promise.all([
-      intervalsApiService.getWellness(apiKey, oldest, newest),
-      intervalsApiService.getFitnessModel(apiKey, oldest, newest),
+      intervalsApiService.getWellness(accessToken, oldest, newest),
+      intervalsApiService.getFitnessModel(accessToken, oldest, newest),
     ]);
 
-    const latestFitness = fitnessData.length > 0
-      ? fitnessData[fitnessData.length - 1]
-      : null;
+    const latestFitness = fitnessData.length > 0 ? fitnessData[fitnessData.length - 1] : null;
+    const latestWellness = wellnessData.length > 0 ? wellnessData[wellnessData.length - 1] : null;
 
-    const wellnessWithHrv = wellnessData.filter((w) => w.hrv != null);
-    const wellnessWithSleep = wellnessData.filter((w) => w.sleep_quality != null);
-    const latestWellness = wellnessData.length > 0
-      ? wellnessData[wellnessData.length - 1]
-      : null;
+    let hrvSum = 0;
+    let hrvCount = 0;
+    let sleepSum = 0;
+    let sleepCount = 0;
+    for (const w of wellnessData) {
+      if (w.hrv != null) {
+        hrvSum += w.hrv;
+        hrvCount++;
+      }
+      if (w.sleep_quality != null) {
+        sleepSum += w.sleep_quality;
+        sleepCount++;
+      }
+    }
 
     return {
       ctl: latestFitness?.ctl ?? null,
       atl: latestFitness?.atl ?? null,
       tsb: latestFitness?.form ?? null,
-      avgHrv: wellnessWithHrv.length > 0
-        ? wellnessWithHrv.reduce((sum, w) => sum + (w.hrv ?? 0), 0) / wellnessWithHrv.length
-        : null,
-      avgSleepQuality: wellnessWithSleep.length > 0
-        ? wellnessWithSleep.reduce((sum, w) => sum + (w.sleep_quality ?? 0), 0) / wellnessWithSleep.length
-        : null,
+      avgHrv: hrvCount > 0 ? hrvSum / hrvCount : null,
+      avgSleepQuality: sleepCount > 0 ? sleepSum / sleepCount : null,
       restingHr: latestWellness?.rhr ?? null,
     };
-  } catch {
+  } catch (err) {
+    console.error("Intervals.icu wellness fetch failed:", err);
     return null;
   }
 }

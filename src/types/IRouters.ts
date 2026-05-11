@@ -18,7 +18,7 @@ export interface IStravaVariables extends IGlobalVariables {
 
 // Extend the global variables for Intervals.icu-specific routes
 export interface IIntervalsVariables extends IGlobalVariables {
-  intervalsApiKey: string;
+  intervalsAccessToken: string;
 }
 
 // Helper types for the Hono Generics

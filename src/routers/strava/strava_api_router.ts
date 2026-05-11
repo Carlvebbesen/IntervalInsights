@@ -48,39 +48,50 @@ stravaApiRouter.get(
   async (c) => {
     const accessToken = c.get("stravaAccessToken");
     if (!accessToken) return c.json({ error: "Unauthorized" }, 401);
-    const stravaActivities = await stravaApiService.listAthleteActivities(
-      accessToken,
-      c.req.query(),
-    );
-
-    if (stravaActivities.length === 0) return c.json([]);
-    const oldestDate = new Date(
-      Math.min(...stravaActivities.map((a) => new Date(a.start_date).getTime())),
-    );
 
     const userId = c.get("userId");
     if (!userId) {
       console.log("no user found");
       return c.json({ error: "Unauthorized" }, 401);
     }
-    const existingInDb = await c.env.db
-      .select({ stravaActivityId: activities.stravaActivityId })
-      .from(activities)
-      .where(
-        and(
-          eq(activities.userId, userId),
-          gte(activities.startDateLocal, oldestDate),
-          inArray(
-            activities.stravaActivityId,
-            stravaActivities.map((a) => a.id),
-          ),
-        ),
+
+    const baseQuery = c.req.query();
+    const startPage = Number(baseQuery.page ?? "1");
+    const MAX_PAGES_TO_SKIP = 10;
+
+    for (let offset = 0; offset < MAX_PAGES_TO_SKIP; offset++) {
+      const stravaActivities = await stravaApiService.listAthleteActivities(accessToken, {
+        ...baseQuery,
+        page: String(startPage + offset),
+      });
+
+      if (stravaActivities.length === 0) return c.json([]);
+
+      const oldestDate = new Date(
+        Math.min(...stravaActivities.map((a) => new Date(a.start_date).getTime())),
       );
 
-    const syncedIds = new Set(existingInDb.map((a) => a.stravaActivityId));
-    const filtered = stravaActivities.filter((a) => !syncedIds.has(a.id));
+      const existingInDb = await c.env.db
+        .select({ stravaActivityId: activities.stravaActivityId })
+        .from(activities)
+        .where(
+          and(
+            eq(activities.userId, userId),
+            gte(activities.startDateLocal, oldestDate),
+            inArray(
+              activities.stravaActivityId,
+              stravaActivities.map((a) => a.id),
+            ),
+          ),
+        );
 
-    return c.json(filtered);
+      const syncedIds = new Set(existingInDb.map((a) => a.stravaActivityId));
+      const filtered = stravaActivities.filter((a) => !syncedIds.has(a.id));
+
+      if (filtered.length > 0) return c.json(filtered);
+    }
+
+    return c.json([]);
   },
 );
 

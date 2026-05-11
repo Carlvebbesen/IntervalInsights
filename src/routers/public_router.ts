@@ -7,7 +7,6 @@ import { processStravaWebhook } from "../services.ts/process_strava_event";
 import { processIntervalsWebhook } from "../services.ts/process_intervals_event";
 import type { TPublicEnv } from "../types/IRouters";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
-import type { IIntervalsWebhookEvent } from "../types/intervals/IIntervalsWebhookEvent";
 
 const publicRouter = new Hono<TPublicEnv>();
 
@@ -178,22 +177,52 @@ publicRouter.post(
   },
 );
 
-publicRouter.post("/intervals/event", async (c) => {
-  const body = (await c.req.json()) as IIntervalsWebhookEvent;
-
-  console.log(
-    `Intervals.icu event received: ${body.event} for athlete: ${body.athlete_id}, activity: ${body.activity_id}`,
-  );
-
-  if (body.secret !== env.INTERVALS_WEBHOOK_SECRET) {
-    return c.json({ status: "unauthorized" }, 401);
-  }
-
-  processIntervalsWebhook(body, c.env).catch((err) =>
-    console.error("Intervals.icu webhook processing failed:", err),
-  );
-  return c.json({ status: "ok" }, 200);
+const IntervalsWebhookEventSchema = z.object({
+  event: z.enum(["ACTIVITY_CREATED", "ACTIVITY_UPDATED", "ACTIVITY_ANALYZED", "ACTIVITY_DELETED"]),
+  athlete_id: z.string(),
+  activity_id: z.string(),
+  secret: z.string(),
 });
+
+const IntervalsWebhookAckSchema = z.object({
+  status: z.enum(["ok", "unauthorized"]),
+});
+
+publicRouter.post(
+  "/intervals/event",
+  describeRoute({
+    description:
+      "Intervals.icu webhook delivery. Authenticated by matching the shared secret against INTERVALS_WEBHOOK_SECRET; processing is fire-and-forget.",
+    security: [],
+    responses: {
+      200: {
+        description: "Event accepted for background processing",
+        content: { "application/json": { schema: resolver(IntervalsWebhookAckSchema) } },
+      },
+      401: {
+        description: "Shared secret did not match",
+        content: { "application/json": { schema: resolver(IntervalsWebhookAckSchema) } },
+      },
+    },
+  }),
+  validator("json", IntervalsWebhookEventSchema),
+  async (c) => {
+    const body = c.req.valid("json");
+
+    console.log(
+      `Intervals.icu event received: ${body.event} for athlete: ${body.athlete_id}, activity: ${body.activity_id}`,
+    );
+
+    if (body.secret !== env.INTERVALS_WEBHOOK_SECRET) {
+      return c.json({ status: "unauthorized" }, 401);
+    }
+
+    processIntervalsWebhook(body, c.env).catch((err) =>
+      console.error("Intervals.icu webhook processing failed:", err),
+    );
+    return c.json({ status: "ok" }, 200);
+  },
+);
 
 publicRouter.route("/", publicRouter);
 
