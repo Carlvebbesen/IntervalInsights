@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: May 08, 2026
+Last updated: May 12, 2026
 
 This Privacy Policy describes how Your information is collected, used and disclosed when You use the Service, and informs You of Your rights under the EU General Data Protection Regulation (GDPR) as implemented in Norway through the Personal Data Act (Personopplysningsloven).
 
@@ -129,6 +129,8 @@ We use the following Sub-processors. Each one processes only the data needed for
 | **Clerk, Inc.** (US) | Authentication, account management, secure storage of Strava OAuth tokens | Email, name, session data, OAuth tokens (in private metadata) | United States, with regional infrastructure |
 | **OpenAI, L.L.C.** (US) | AI inference (GPT-4o-mini) for activity analysis | Anonymized training streams and lap structures only | United States |
 | **Railway Corp.** (US) | Application hosting and managed PostgreSQL database, deployed in an EU region | All Personal Data stored by the Service | Data plane in the European Union; control plane operated from the United States |
+| **Grafana Labs** | Backend log aggregation and error monitoring (server side) | Application logs and runtime errors. No user identifiers, names, email addresses, or other directly identifying information are sent. | European Union (Grafana Cloud EU region) |
+| **Functional Software, Inc. ("Sentry")** | Front-end error monitoring (in-app crash and exception reporting) | Stack traces and runtime error details from the client application. No user identifiers, names, email addresses, or other directly identifying information are sent. | European Union (sentry.io EU region) |
 | **intervals.icu** *(optional)* | Advanced training analytics — only active if You opt in (see *Optional Integrations*) | Training data and heart-rate data exchanged when integration is enabled | See intervals.icu privacy policy |
 
 An updated list of Sub-processors can be requested by contacting Us.

@@ -2,7 +2,7 @@ import type { RunnableConfig } from "@langchain/core/runnables";
 import { END, interrupt, START, StateGraph } from "@langchain/langgraph";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { sleep } from "bun";
-import { and, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import type * as schema from "../schema";
@@ -10,15 +10,17 @@ import {
   activities,
   activityEvents,
   determineIntervalType,
+  eventAttributes,
   events,
   generateIntervalSignature,
   generateStructureName,
   type InsertEvent,
+  type InsertEventAttribute,
   intervalSegments,
   intervalStructures,
   mapSegmentsToComponents,
 } from "../schema";
-import type { EventType, TrainingType } from "../schema/enums";
+import type { AttributeValueType, EventType, TrainingType } from "../schema/enums";
 import { userHasHeartRateConsent } from "../services.ts/heart_rate_consent_service";
 import { stravaApiService } from "../services.ts/strava_api_service";
 import {
@@ -29,7 +31,11 @@ import {
   parsePaceStringToMetersPerSecond,
 } from "../services.ts/utils";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
-import { invokeEventDetectionAgent } from "./event_detection_agent";
+import {
+  type EventAttributeOutput,
+  invokeEventDetectionAgent,
+  type KnownAttributeKey,
+} from "./event_detection_agent";
 import { invokeCompleteActivityAnalysisAgent } from "./full_analysis_agent";
 import { type AnalysisState, AnalysisStateAnnotation } from "./graph_state";
 import { invokeActivityAnalysisAgent } from "./initial_analysis_agent";
@@ -377,8 +383,31 @@ async function persistResults(
   return {};
 }
 
-const typeLocKey = (type: EventType, loc: string | null): string =>
-  `${type}|${(loc ?? "").toLowerCase().trim()}`;
+const normalizeKey = (s: string | null | undefined): string => (s ?? "").toLowerCase().trim();
+
+const typeLocKey = (type: EventType, loc: string | null): string => `${type}|${normalizeKey(loc)}`;
+
+function attributeRowsFor(
+  eventId: number,
+  userId: string,
+  atts: EventAttributeOutput[],
+): InsertEventAttribute[] {
+  const seen = new Set<string>();
+  const rows: InsertEventAttribute[] = [];
+  for (const a of atts) {
+    const key = normalizeKey(a.key);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      eventId,
+      userId,
+      key,
+      valueType: a.type satisfies AttributeValueType,
+      value: a.value,
+    });
+  }
+  return rows;
+}
 
 async function detectEvents(
   state: AnalysisState,
@@ -394,7 +423,7 @@ async function detectEvents(
   const oneYearAgo = new Date();
   oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
 
-  const [alreadyLinked, recent] = await Promise.all([
+  const [alreadyLinked, recent, knownKeys] = await Promise.all([
     db
       .select({
         id: events.id,
@@ -411,6 +440,15 @@ async function detectEvents(
       .select()
       .from(events)
       .where(and(eq(events.userId, state.userId), gte(events.lastOccurrence, oneYearAgo))),
+    db
+      .selectDistinctOn([eventAttributes.key], {
+        key: eventAttributes.key,
+        valueType: eventAttributes.valueType,
+        sampleValue: eventAttributes.value,
+      })
+      .from(eventAttributes)
+      .where(eq(eventAttributes.userId, state.userId))
+      .orderBy(eventAttributes.key, desc(eventAttributes.createdAt)),
   ]);
 
   const alreadyLinkedIds = new Set(alreadyLinked.map((r) => r.id));
@@ -418,6 +456,12 @@ async function detectEvents(
     alreadyLinked.map((r) => typeLocKey(r.eventType, r.bodyLocation)),
   );
   const recentById = new Map(recent.map((r) => [r.id, r]));
+
+  const knownAttributeKeys: KnownAttributeKey[] = knownKeys.map((k) => ({
+    key: k.key,
+    valueType: k.valueType,
+    sampleValue: JSON.stringify(k.sampleValue),
+  }));
 
   const result = await invokeWithRateLimitRetry(() =>
     invokeEventDetectionAgent(
@@ -433,6 +477,7 @@ async function detectEvents(
         status: r.status,
         alreadyLinkedToThisActivity: alreadyLinkedIds.has(r.id),
       })),
+      knownAttributeKeys,
     ),
   );
   if (!result || result.events.length === 0) return {};
@@ -474,6 +519,20 @@ async function detectEvents(
         }
         await tx.update(events).set(updates).where(eq(events.id, existing.id));
         eventId = existing.id;
+
+        const attrRows = attributeRowsFor(eventId, state.userId, e.attributes ?? []);
+        if (attrRows.length > 0) {
+          await tx
+            .insert(eventAttributes)
+            .values(attrRows)
+            .onConflictDoUpdate({
+              target: [eventAttributes.eventId, eventAttributes.key],
+              set: {
+                valueType: sql`excluded.value_type`,
+                value: sql`excluded.value`,
+              },
+            });
+        }
       } else {
         // Final guard: LLM may not realise a new mention matches a condition
         // already linked to this same activity — skip to avoid double-counting
@@ -495,6 +554,11 @@ async function detectEvents(
           .returning({ id: events.id });
         eventId = created.id;
         alreadyLinkedTypeLoc.add(key);
+
+        const attrRows = attributeRowsFor(eventId, state.userId, e.attributes ?? []);
+        if (attrRows.length > 0) {
+          await tx.insert(eventAttributes).values(attrRows);
+        }
       }
 
       alreadyLinkedIds.add(eventId);

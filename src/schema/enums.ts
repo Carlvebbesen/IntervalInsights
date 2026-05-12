@@ -78,6 +78,17 @@ export const eventStatusEnum = pgEnum("event_status", ["active", "resolved"]);
 
 export type EventStatus = (typeof eventStatusEnum.enumValues)[number];
 
+export const attributeValueTypeEnum = pgEnum("attribute_value_type", [
+  "string",
+  "number",
+  "boolean",
+  "datetime",
+  "string_list",
+  "number_list",
+]);
+
+export type AttributeValueType = (typeof attributeValueTypeEnum.enumValues)[number];
+
 // ─── Sport Type Constants ─────────────────────────────────────────────────────
 
 /** All Strava sport types that count as "running" */
