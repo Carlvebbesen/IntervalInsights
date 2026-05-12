@@ -32,11 +32,6 @@ export function needCompleteAnalysis(trainingType: TrainingType): boolean {
   return trainingTypes.includes(trainingType);
 }
 
-export const couldSkipCompleteAnalysis = (result: WorkoutAnalysisOutput) => {
-  const steady: TrainingType[] = ["LONG", "EASY"];
-  return result.confidence_score > 0.94 && steady.includes(result.training_type);
-};
-
 export function lapsMatchIntervals(laps: Lap[], draft: WorkoutAnalysisOutput): boolean {
   if (!draft.structure || draft.structure.length === 0) return false;
   if (laps.length <= 1) return false;

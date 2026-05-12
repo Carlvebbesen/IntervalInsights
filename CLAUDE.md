@@ -51,13 +51,32 @@ Routers that need Strava API access must use `TStravaEnv` and apply `stravaMiddl
 - `interval_structures` — deduped workout shapes identified by a `signature` hash; activities with the same structure share a row
 - `users` — maps Clerk user IDs to internal UUIDs
 
-**Analysis pipeline** (`src/services.ts/analysis_service.ts`):
-1. **Initial analysis** (`triggerInitialAnalysis`) — fetches activity streams (velocity, HR, distance), calls `invokeActivityAnalysisAgent` (Gemini Flash via LangChain), classifies `trainingType` and drafts interval structure. If the type doesn't need a detailed breakdown (`couldSkipCompleteAnalysis`), it marks the activity `completed` immediately using `splits_metric` from Strava as segments.
-2. **Complete analysis** (`triggerCompleteAnalysis`) — called manually via `POST /api/agents/start-complete-analysis`. Fetches streams + laps, calls `invokeCompleteActivityAnalysisAgent`, and writes precise `interval_segments` with time-series stats.
+**Analysis pipeline** (`src/agent/analysis_graph.ts` — LangGraph with Postgres checkpointer):
+Every activity flows through a single graph, paused mid-way for user confirmation. Nodes:
+1. `fetchActivityContext` — Strava activity + streams (+ laps when outdoor). Sets `analysisStatus = 'ongoing_init'`.
+2. `maybeEnrichWithIntervalsIcu` — if the user has connected intervals.icu (`users.intervalsAthleteId != null`), polls up to 45s for both `activities.intervalsIcuId` and `intervalsAnalyzed`. When ready, fetches the predicted intervals + meta and attaches them to graph state.
+3. `runInitialAgent` — calls `invokeActivityAnalysisAgent` (GPT-4o-mini) with all context including the intervals.icu prediction block. Computes `lapsMatchStructure`. Persists everything into `draftAnalysisResult` JSON. Sets `analysisStatus = 'initial'`.
+4. `awaitUserInput` — `interrupt()` pauses the graph. Frontend submits training type, notes, sets, and optional `feeling` via `POST /api/agents/resume-analysis`.
+5. `runCompleteAnalysis` — for interval training types only, calls `invokeCompleteActivityAnalysisAgent` to produce per-segment data. Skipped for EASY/LONG/RECOVERY/RACE/OTHER. Sets `analysisStatus = 'ongoing_completed'`.
+6. `validateSignature` — exact + Jaccard 0.7 fuzzy match against the user's existing `interval_structures`.
+7. `persistResults` — writes `interval_segments` (if any), links activity to `intervalStructureId`, flips status to `completed`. Always runs even when no segments — single source of truth for completion.
+8. `detectEvents` — always runs at the tail. `invokeEventDetectionAgent` extracts injuries/illnesses from title/description/notes.
 
-`analysisStatus` lifecycle: `pending` → `ongoing_init` → `initial` → `ongoing_completed` → `completed` (or `error` at any step).
+`analysisStatus` lifecycle: `pending` → `ongoing_init` → `initial` (paused, awaiting user) → `ongoing_completed` → `completed`. Plus `error` and `skipped_inactive` terminal/recoverable states.
 
-**LLM:** GPT-4o-mini via `@langchain/openai`, zero temperature, defined in `src/agent/model.ts`. Zod schemas define structured outputs for both agents.
+**Inactivity gate** (`process_strava_event.ts`): reads `lastSignInAt` from Clerk. If user inactive > 90d, drops the Strava activity entirely. If 14–90d inactive, inserts with `analysisStatus = 'skipped_inactive'` (no LLM calls). `GET /api/agents/pending` re-queues these on next pending fetch.
+
+**Auto-retry for errors**: `error` activities with `analysisAttemptCount < 2` are retried automatically by `/pending`. After two failures the user must manually retry.
+
+**Idempotency**: `startAnalysis` and `restartAnalysisByStravaId` skip activities already in `{ongoing_init, ongoing_completed, initial, completed, skipped_inactive}`. GET endpoints NEVER trigger analysis.
+
+**Agents** (`src/agent/`):
+- `initial_analysis_agent.ts` — classify + draft structure, with optional intervals.icu prediction block.
+- `full_analysis_agent.ts` — per-segment time-series breakdown for interval types.
+- `event_detection_agent.ts` — extract health events.
+- `parse_intervals_agent.ts` — free-text → `workoutSet[]`. Powers `POST /api/agents/parse-intervals`.
+
+**LLM:** GPT-4o-mini via `@langchain/openai`, zero temperature, defined in `src/agent/model.ts`. `invokeWithRateLimitRetry` honours OpenAI's `Retry-After` header with exponential backoff. `ANALYSIS_VERSION` constant tags every analysed activity.
 
 **Strava API service** (`src/services.ts/strava_api_service.ts`): thin wrapper around Strava v3 REST API. All methods accept an `accessToken` — never stored on the service itself.
 

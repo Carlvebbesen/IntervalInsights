@@ -10,6 +10,28 @@ import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { stravaApiService } from "./strava_api_service";
 import { shouldAnalyze } from "./utils";
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const INACTIVITY_SKIP_DAYS = 14;
+const INACTIVITY_DROP_DAYS = 90;
+
+async function classifyUserActivity(clerkId: string): Promise<"active" | "skip" | "drop"> {
+  try {
+    const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+    const clerkUser = await clerkClient.users.getUser(clerkId);
+    const lastSignInMs = clerkUser.lastSignInAt;
+    if (lastSignInMs == null) {
+      return "active";
+    }
+    const daysSince = (Date.now() - lastSignInMs) / MS_PER_DAY;
+    if (daysSince > INACTIVITY_DROP_DAYS) return "drop";
+    if (daysSince > INACTIVITY_SKIP_DAYS) return "skip";
+    return "active";
+  } catch (err) {
+    console.warn("Failed to fetch Clerk user for inactivity check — defaulting to active", err);
+    return "active";
+  }
+}
+
 export async function processStravaWebhook(body: IStravaWebhookEvent, context: IGlobalBindings) {
   if (body.object_type === "athlete" && body.aspect_type === "update") {
     // Strava deauthorization event
@@ -62,14 +84,36 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
   }
   const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
   const activity = getDbInsertActivity(data, user.id, processHeartRate);
+
+  const activityClass = await classifyUserActivity(user.clerkId);
+
+  if (activityClass === "drop") {
+    console.log(
+      `Dropping Strava activity ${stravaActivityId} — user ${user.id} inactive > ${INACTIVITY_DROP_DAYS} days`,
+    );
+    return;
+  }
+
   if (body.aspect_type === "create") {
-    await context.db.insert(activities).values(activity).onConflictDoNothing();
-  } else if (body.aspect_type === "update") {
+    const payload =
+      activityClass === "skip"
+        ? { ...activity, analysisStatus: "skipped_inactive" as const }
+        : activity;
+    if (activityClass === "skip") {
+      console.log(
+        `Storing ${stravaActivityId} as skipped_inactive — user ${user.id} inactive > ${INACTIVITY_SKIP_DAYS} days`,
+      );
+    }
+    await context.db.insert(activities).values(payload).onConflictDoNothing();
+    return;
+  }
+
+  if (body.aspect_type === "update") {
     await context.db
       .update(activities)
       .set(activity)
       .where(eq(activities.stravaActivityId, stravaActivityId));
-    if (body.updates?.title || body.updates?.description) {
+    if (activityClass === "active" && (body.updates?.title || body.updates?.description)) {
       await restartAnalysisByStravaId(context.db, accessToken, stravaActivityId, user.id);
     }
   }

@@ -21,6 +21,7 @@ export const analysisStatusEnum = pgEnum("analysis_status_enum", [
   "ongoing_completed",
   "completed",
   "error",
+  "skipped_inactive",
 ]);
 
 export const intervalTypeEnum = pgEnum("interval_type", [
@@ -38,6 +39,26 @@ export const targetTypeEnum = pgEnum("target_type_enum", ["time", "distance", "c
 
 export type TargetTypeEnum = (typeof targetTypeEnum.enumValues)[number];
 export type TrainingType = (typeof trainingTypeEnum.enumValues)[number];
+export type AnalysisStatus = (typeof analysisStatusEnum.enumValues)[number];
+
+/** Statuses where the LangGraph thread is mid-flight or finished — never restart. */
+export const IN_FLIGHT_STATUSES: readonly AnalysisStatus[] = [
+  "ongoing_init",
+  "ongoing_completed",
+  "initial",
+];
+
+/** Statuses where `startAnalysis` must early-return (in-flight + already-done). */
+export const SKIP_START_STATUSES: ReadonlySet<AnalysisStatus> = new Set<AnalysisStatus>([
+  ...IN_FLIGHT_STATUSES,
+  "completed",
+]);
+
+/** Statuses where a Strava update webhook must NOT trigger a restart. */
+export const SKIP_RESTART_STATUSES: ReadonlySet<AnalysisStatus> = new Set<AnalysisStatus>([
+  ...IN_FLIGHT_STATUSES,
+  "skipped_inactive",
+]);
 
 /** Training types that count as interval / quality sessions */
 export const INTERVAL_TRAINING_TYPES = [
