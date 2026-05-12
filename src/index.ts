@@ -1,5 +1,10 @@
+// Side-effect import: must come first so the SDK initialises before any
+// instrumented module is loaded. Also ensures the compiled binary embeds it.
+import "./instrumentation";
 import { clerkMiddleware } from "@hono/clerk-auth";
+import { httpInstrumentationMiddleware } from "@hono/otel";
 import { swaggerUI } from "@hono/swagger-ui";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -58,6 +63,7 @@ app.get("/.well-known/apple-app-site-association", async (_c) => {
 });
 
 app.use("*", logger());
+app.use("/api/*", httpInstrumentationMiddleware({ captureRequestHeaders: ["user-agent"] }));
 app.use(
   "*",
   cors({
@@ -117,6 +123,10 @@ app.notFound((c) => {
   );
 });
 app.onError((err, c) => {
+  const span = trace.getActiveSpan();
+  span?.recordException(err);
+  span?.setStatus({ code: SpanStatusCode.ERROR, message: err.message });
+
   if (err instanceof StravaError) {
     return c.json(
       { error: "Strava API Error", details: err.details },
