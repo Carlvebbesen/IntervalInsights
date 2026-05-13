@@ -6,6 +6,7 @@ import {
 } from "../agent/event_detection_agent";
 import type { GraphDb } from "../agent/graph_state";
 import { invokeWithRateLimitRetry } from "../agent/model";
+import { logger } from "../logger";
 import {
   activityEvents,
   eventAttributes,
@@ -54,13 +55,18 @@ export async function detectAndPersistEvents(
   input: EventDetectionInput,
 ): Promise<void> {
   const { activityId, userId, title, description, notes, activityStartDateLocal } = input;
-  const tag = `[detectAndPersistEvents activity=${activityId}]`;
+  const log = logger.child({ fn: "detectAndPersistEvents", activityId });
   if (!title && !description && !notes) {
-    console.log(`${tag} skipped: no title/description/notes`);
+    log.info("skipped: no title/description/notes");
     return;
   }
-  console.log(
-    `${tag} input title="${title.slice(0, 60)}" description="${description.slice(0, 60)}" notes="${notes.slice(0, 120)}"`,
+  log.info(
+    {
+      title: title.slice(0, 60),
+      description: description.slice(0, 60),
+      notes: notes.slice(0, 120),
+    },
+    "input",
   );
 
   const oneYearAgo = new Date();
@@ -108,8 +114,13 @@ export async function detectAndPersistEvents(
     sampleValue: JSON.stringify(k.sampleValue),
   }));
 
-  console.log(
-    `${tag} context: alreadyLinked=${alreadyLinked.length} recentEvents=${recent.length} knownAttributeKeys=${knownAttributeKeys.length}`,
+  log.info(
+    {
+      alreadyLinked: alreadyLinked.length,
+      recentEvents: recent.length,
+      knownAttributeKeys: knownAttributeKeys.length,
+    },
+    "context",
   );
 
   const result = await invokeWithRateLimitRetry(() =>
@@ -129,8 +140,18 @@ export async function detectAndPersistEvents(
       knownAttributeKeys,
     ),
   );
-  console.log(
-    `${tag} LLM result: ${result === null ? "null" : `${result.events.length} event(s)`}${result && result.events.length > 0 ? ` -> ${result.events.map((e) => `${e.eventType}/${e.bodyLocation ?? "-"}${e.linkedEventId !== null ? `[link=${e.linkedEventId}]` : "[new]"}`).join(", ")}` : ""}`,
+  log.info(
+    {
+      events: result?.events.length ?? null,
+      summary:
+        result && result.events.length > 0
+          ? result.events.map(
+              (e) =>
+                `${e.eventType}/${e.bodyLocation ?? "-"}${e.linkedEventId !== null ? `[link=${e.linkedEventId}]` : "[new]"}`,
+            )
+          : undefined,
+    },
+    "LLM result",
   );
   if (!result || result.events.length === 0) return;
 
@@ -151,9 +172,7 @@ export async function detectAndPersistEvents(
       : activityStartDateLocal
         ? new Date(activityStartDateLocal)
         : new Date();
-  console.log(
-    `${tag} persisting ${deduped.length} unique event(s) (after dedup from ${result.events.length})`,
-  );
+  log.info({ unique: deduped.length, beforeDedup: result.events.length }, "persisting events");
 
   await db.transaction(async (tx) => {
     for (const e of deduped) {
@@ -162,8 +181,9 @@ export async function detectAndPersistEvents(
       const linkedEventId =
         e.linkedEventId !== null && recentById.has(e.linkedEventId) ? e.linkedEventId : null;
       if (e.linkedEventId !== null && linkedEventId === null) {
-        console.log(
-          `${tag} LLM returned linkedEventId=${e.linkedEventId} which doesn't exist in recentEvents — treating as new event`,
+        log.info(
+          { llmLinkedEventId: e.linkedEventId },
+          "LLM returned linkedEventId not in recentEvents — treating as new event",
         );
       }
 

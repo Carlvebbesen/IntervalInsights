@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import type { GraphDb } from "../agent/graph_state";
+import { logger } from "../logger";
 import {
   activities,
   determineIntervalType,
@@ -27,12 +28,10 @@ export async function findMatchingStructure(
   trainingType: TrainingType,
   userId: string,
 ): Promise<SignatureCheck> {
-  const tag = "[findMatchingStructure]";
+  const log = logger.child({ fn: "findMatchingStructure" });
   const components = mapSegmentsToComponents(segments);
   const signature = generateIntervalSignature(components);
-  console.log(
-    `${tag} signature=${signature} trainingType=${trainingType} workComponents=${components.length}`,
-  );
+  log.info({ signature, trainingType, workComponents: components.length }, "looking up structure");
 
   const exact = await db
     .select()
@@ -41,8 +40,14 @@ export async function findMatchingStructure(
     .limit(1);
 
   if (exact.length > 0) {
-    console.log(
-      `${tag} exact-match -> structureId=${exact[0].id} name="${exact[0].name}" (structure.trainingType=${exact[0].trainingType}, activity.trainingType=${trainingType})`,
+    log.info(
+      {
+        structureId: exact[0].id,
+        structureName: exact[0].name,
+        structureTrainingType: exact[0].trainingType,
+        activityTrainingType: trainingType,
+      },
+      "exact-match",
     );
     return { useExisting: true, structureId: exact[0].id, signature };
   }
@@ -69,12 +74,17 @@ export async function findMatchingStructure(
   }
 
   if (bestId !== undefined) {
-    console.log(
-      `${tag} fuzzy-match -> structureId=${bestId} jaccard=${bestScore.toFixed(2)} (≥${JACCARD_THRESHOLD})`,
+    log.info(
+      {
+        structureId: bestId,
+        jaccard: Number(bestScore.toFixed(2)),
+        threshold: JACCARD_THRESHOLD,
+      },
+      "fuzzy-match",
     );
     return { useExisting: true, structureId: bestId, signature };
   }
-  console.log(`${tag} no match — will create new structure`);
+  log.info("no match — will create new structure");
   return { useExisting: false, signature };
 }
 
@@ -103,13 +113,11 @@ export async function persistSegmentsAndStructure(
     persistSegments = true,
   } = params;
 
-  const tag = `[persistSegmentsAndStructure activity=${activityId}]`;
+  const log = logger.child({ fn: "persistSegmentsAndStructure", activityId });
   let structureId: number;
   if (check.useExisting && check.structureId !== undefined) {
     structureId = check.structureId;
-    console.log(
-      `${tag} reusing existing structureId=${structureId} (signature=${check.signature})`,
-    );
+    log.info({ structureId, signature: check.signature }, "reusing existing structureId");
   } else {
     const components = mapSegmentsToComponents(segments);
     const [newStructure] = await db
@@ -122,8 +130,9 @@ export async function persistSegmentsAndStructure(
       })
       .returning();
     structureId = newStructure.id;
-    console.log(
-      `${tag} created new structureId=${structureId} name="${newStructure.name}" signature=${check.signature}`,
+    log.info(
+      { structureId, structureName: newStructure.name, signature: check.signature },
+      "created new structure",
     );
   }
 
@@ -140,17 +149,27 @@ export async function persistSegmentsAndStructure(
         draftAnalysisResult: draftOverride ?? null,
       })
       .where(eq(activities.id, activityId));
-    console.log(
-      `${tag} activity linked to structureId=${structureId} draftOverride=${draftOverride ? `segmentsFromLaps=${draftOverride.segmentsFromLaps} acceptedSets=${draftOverride.acceptedSets?.length ?? 0}` : "null"}`,
+    log.info(
+      {
+        structureId,
+        draftOverride: draftOverride
+          ? {
+              segmentsFromLaps: draftOverride.segmentsFromLaps,
+              acceptedSets: draftOverride.acceptedSets?.length ?? 0,
+            }
+          : null,
+      },
+      "activity linked to structure",
     );
 
     await tx.delete(intervalSegments).where(eq(intervalSegments.activityId, activityId));
     if (persistSegments) {
       await tx.insert(intervalSegments).values(segments);
-      console.log(`${tag} inserted ${segments.length} segments`);
+      log.info({ count: segments.length }, "inserted segments");
     } else {
-      console.log(
-        `${tag} SKIPPED inserting ${segments.length} segments (clean-laps path — re-derive on read)`,
+      log.info(
+        { count: segments.length },
+        "SKIPPED inserting segments (clean-laps path — re-derive on read)",
       );
     }
   });

@@ -2,6 +2,7 @@ import { createClerkClient } from "@clerk/backend";
 import { getAuth } from "@hono/clerk-auth";
 import { trace } from "@opentelemetry/api";
 import { eq } from "drizzle-orm";
+import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
 import { users } from "../schema";
 import type { IGlobalVariables, TGlobalEnv } from "../types/IRouters";
@@ -13,6 +14,10 @@ const tagSpanWithUser = ({ userId, clerkUserId, role }: AuthIdentity) => {
   span?.setAttribute("user.id", userId);
   span?.setAttribute("clerk.user.id", clerkUserId);
   span?.setAttribute("user.role", role);
+};
+
+const attachIdentityLogger = (c: Context<TGlobalEnv>, identity: AuthIdentity) => {
+  c.set("logger", c.var.logger.child(identity));
 };
 
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
@@ -28,14 +33,20 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
     | { user_id?: string; role?: "guest" | "premium" | "admin" }
     | undefined;
   if (metadata?.user_id && metadata?.role) {
-    c.set("clerkUserId", auth.userId);
-    c.set("userId", metadata.user_id);
-    c.set("role", metadata.role);
-    tagSpanWithUser({ userId: metadata.user_id, clerkUserId: auth.userId, role: metadata.role });
+    const identity: AuthIdentity = {
+      userId: metadata.user_id,
+      clerkUserId: auth.userId,
+      role: metadata.role,
+    };
+    c.set("clerkUserId", identity.clerkUserId);
+    c.set("userId", identity.userId);
+    c.set("role", identity.role);
+    tagSpanWithUser(identity);
+    attachIdentityLogger(c, identity);
     return next();
   }
 
-  console.log(`Cache miss for user ${auth.userId}. Syncing with DB...`);
+  c.var.logger.info({ clerkUserId: auth.userId }, "Cache miss for user — syncing with DB");
 
   let dbUser = await c.env.db.query.users.findFirst({
     where: eq(users.clerkId, auth.userId),
@@ -50,7 +61,7 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
       .returning();
 
     dbUser = newUser;
-    console.log(`Created new user record for Clerk User: ${auth.userId}`);
+    c.var.logger.info({ clerkUserId: auth.userId }, "Created new user record");
   }
 
   try {
@@ -61,14 +72,16 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
       },
     });
   } catch (err) {
-    console.error("Failed to sync Clerk metadata", err);
+    c.var.logger.error({ err }, "Failed to sync Clerk metadata");
   }
 
   const role = dbUser.role ?? "guest";
-  c.set("clerkUserId", auth.userId);
-  c.set("userId", dbUser.id);
-  c.set("role", role);
-  tagSpanWithUser({ userId: dbUser.id, clerkUserId: auth.userId, role });
+  const identity: AuthIdentity = { userId: dbUser.id, clerkUserId: auth.userId, role };
+  c.set("clerkUserId", identity.clerkUserId);
+  c.set("userId", identity.userId);
+  c.set("role", identity.role);
+  tagSpanWithUser(identity);
+  attachIdentityLogger(c, identity);
 
   await next();
 });

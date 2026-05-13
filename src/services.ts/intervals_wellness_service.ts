@@ -1,4 +1,5 @@
 import { IntervalsError } from "../error";
+import { logger } from "../logger";
 import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import type {
   IIntervalsTrainingSummaryResult,
@@ -50,7 +51,7 @@ export async function fetchWellnessSummary(
       restingHr: latest?.restingHR ?? null,
     };
   } catch (err) {
-    console.error("Intervals.icu wellness fetch failed:", err);
+    logger.error({ err }, "Intervals.icu wellness fetch failed");
     return null;
   }
 }

@@ -1,4 +1,6 @@
 import { sql } from "drizzle-orm";
+import { runInBackground } from "../background";
+import { logger } from "../logger";
 import { activities } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import { restartAnalysisByStravaId } from "./analysis_service";
@@ -43,12 +45,20 @@ export async function requeueStaleActivities(
     .returning({ id: activities.id, stravaActivityId: activities.stravaActivityId });
 
   if (requeued.length > 0) {
-    console.log(`${tag} re-queued ${requeued.length} stale activities`);
+    logger.info({ userId, tag, count: requeued.length }, "re-queued stale activities");
   }
 
   for (const row of requeued) {
-    void restartAnalysisByStravaId(db, stravaAccessToken, row.stravaActivityId, userId).catch(
-      (err) => console.error(`${tag} restart failed for activity=${row.id}:`, err),
+    runInBackground(
+      "analysis.restart",
+      () => restartAnalysisByStravaId(db, stravaAccessToken, row.stravaActivityId, userId),
+      {
+        attributes: {
+          "activity.id": row.id,
+          "strava.activity_id": row.stravaActivityId,
+          "user.id": userId,
+        },
+      },
     );
   }
 }

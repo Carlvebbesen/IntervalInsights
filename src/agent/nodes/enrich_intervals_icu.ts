@@ -1,6 +1,7 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { sleep } from "bun";
 import { eq } from "drizzle-orm";
+import { logger } from "../../logger";
 import { getIntervalsAccessToken } from "../../middlewares/intervals_middleware";
 import { activities, type IntervalsIcuPrediction } from "../../schema";
 import { intervalsApiService } from "../../services.ts/intervals_api_service";
@@ -14,10 +15,10 @@ export async function maybeEnrichWithIntervalsIcu(
   config: RunnableConfig,
 ): Promise<Partial<AnalysisState>> {
   const { db, clerkUserId, intervalsAthleteId } = config.configurable as GraphConfigurable;
-  const tag = `[maybeEnrichWithIntervalsIcu activity=${state.activityId}]`;
+  const log = logger.child({ node: "maybeEnrichWithIntervalsIcu", activityId: state.activityId });
 
   if (!intervalsAthleteId) {
-    console.log(`${tag} user has not connected intervals.icu — skipping`);
+    log.info("user has not connected intervals.icu — skipping");
     return {};
   }
 
@@ -37,12 +38,12 @@ export async function maybeEnrichWithIntervalsIcu(
       break;
     }
     if (i === POLL_TICKS) break;
-    console.log(`${tag} tick ${i + 1}/${POLL_TICKS} waiting for intervals.icu link`);
+    log.info({ tick: i + 1, of: POLL_TICKS }, "waiting for intervals.icu link");
     await sleep(POLL_INTERVAL_MS);
   }
 
   if (!intervalsIcuId) {
-    console.log(`${tag} no intervals.icu link after poll — proceeding without it`);
+    log.info("no intervals.icu link after poll — proceeding without it");
     return {};
   }
 
@@ -57,12 +58,13 @@ export async function maybeEnrichWithIntervalsIcu(
       subType: intervalsMeta.sub_type ?? null,
       intervals: intervals ?? [],
     };
-    console.log(
-      `${tag} attached intervals.icu prediction subType=${prediction.subType} intervals=${prediction.intervals?.length ?? 0}`,
+    log.info(
+      { subType: prediction.subType, intervals: prediction.intervals?.length ?? 0 },
+      "attached intervals.icu prediction",
     );
     return { intervalsIcuPrediction: prediction };
-  } catch (error) {
-    console.warn(`${tag} failed to fetch intervals.icu data — proceeding without it`, error);
+  } catch (err) {
+    log.warn({ err }, "failed to fetch intervals.icu data — proceeding without it");
     return {};
   }
 }

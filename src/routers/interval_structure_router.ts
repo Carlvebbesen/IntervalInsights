@@ -37,8 +37,8 @@ intervalStructureRouter.get(
         .where(eq(activities.userId, userId));
 
       return c.json(result);
-    } catch (error) {
-      console.error("Error fetching interval structures:", error);
+    } catch (err) {
+      c.var.logger.error({ err }, "Error fetching interval structures");
       return c.json({ error: "Internal Server Error" }, 500);
     }
   },

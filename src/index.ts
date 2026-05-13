@@ -3,16 +3,18 @@
 import "./instrumentation";
 import { clerkMiddleware } from "@hono/clerk-auth";
 import { httpInstrumentationMiddleware } from "@hono/otel";
+import { structuredLogger } from "@hono/structured-logger";
 import { swaggerUI } from "@hono/swagger-ui";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { logger } from "hono/logger";
+import { requestId } from "hono/request-id";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { openAPIRouteHandler } from "hono-openapi";
 import { Pool } from "pg";
 import { IntervalsError, StravaError } from "./error";
+import { logger } from "./logger";
 import { authGuard } from "./middlewares/auth_middleware";
 import activitiesRouter, { stravaActivitiesRouter } from "./routers/activities_router";
 import adminRouter from "./routers/admin_router";
@@ -62,7 +64,13 @@ app.get("/.well-known/apple-app-site-association", async (_c) => {
   });
 });
 
-app.use("*", logger());
+app.use("*", requestId());
+app.use(
+  "*",
+  structuredLogger({
+    createLogger: (c) => logger.child({ requestId: c.var.requestId }),
+  }),
+);
 app.use("/api/*", httpInstrumentationMiddleware({ captureRequestHeaders: ["user-agent"] }));
 app.use(
   "*",
@@ -139,7 +147,7 @@ app.onError((err, c) => {
       err.status as ContentfulStatusCode,
     );
   }
-  console.error("Internal Error:", err);
+  c.var.logger.error({ err }, "Internal Error");
   return c.json({ error: "Internal Server Error" }, 500);
 });
 

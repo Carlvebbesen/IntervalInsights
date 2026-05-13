@@ -104,8 +104,8 @@ agentsRouter.post(
       }
       startAnalysis(c.env.db, accessToken, activityId, stravaActivityId, userId);
       return c.json({ success: true }, 200);
-    } catch (error) {
-      console.error("Error starting analysis:", error);
+    } catch (err) {
+      c.var.logger.error({ err }, "Error starting analysis");
       return c.json({ error: "Internal Server Error" }, 500);
     }
   },
@@ -143,8 +143,16 @@ agentsRouter.post(
     try {
       const { activityId, notes, sets, trainingType, feeling } = c.req.valid("json");
       const accessToken = c.get("stravaAccessToken");
-      console.log(
-        `[/resume-analysis activity=${activityId}] payload sets=${sets?.length ?? 0} (steps=${sets?.reduce((s, set) => s + set.steps.length, 0) ?? 0}) notes.len=${notes.length} trainingType=${trainingType ?? "null"} feeling=${feeling ?? "null"}`,
+      c.var.logger.info(
+        {
+          activityId,
+          setCount: sets?.length ?? 0,
+          stepCount: sets?.reduce((s, set) => s + set.steps.length, 0) ?? 0,
+          notesLen: notes.length,
+          trainingType,
+          feeling,
+        },
+        "resume-analysis payload",
       );
       if (!accessToken) {
         return c.json({ error: "Access token missing" }, 400);
@@ -159,8 +167,8 @@ agentsRouter.post(
         feeling ?? null,
       );
       return c.json({ success: true }, 200);
-    } catch (error) {
-      console.error("Error resuming analysis:", error);
+    } catch (err) {
+      c.var.logger.error({ err }, "Error resuming analysis");
       return c.json({ error: "Internal Server Error" }, 500);
     }
   },
@@ -195,12 +203,13 @@ agentsRouter.post(
     const accessToken = c.get("stravaAccessToken");
     const data = c.req.valid("json");
     const { structure, activityId } = data;
-    const tag = `[/proposed-pace activity=${activityId ?? "none"}]`;
-    console.log(
-      `${tag} request: structureSets=${structure?.length ?? 0} hasAccessToken=${!!accessToken}`,
+    const log = c.var.logger.child({ route: "proposed-pace", activityId });
+    log.info(
+      { structureSets: structure?.length ?? 0, hasAccessToken: !!accessToken },
+      "proposed-pace request",
     );
     if (!structure || structure.length === 0) {
-      console.log(`${tag} empty structure — returning []`);
+      log.info("empty structure — returning []");
       return c.json([]);
     }
     try {
@@ -209,8 +218,13 @@ agentsRouter.post(
           where: and(eq(activities.id, activityId), eq(activities.userId, user)),
           columns: { indoor: true, stravaActivityId: true },
         });
-        console.log(
-          `${tag} activity lookup: found=${!!activity} indoor=${activity?.indoor ?? "n/a"} stravaId=${activity?.stravaActivityId ?? "n/a"}`,
+        log.info(
+          {
+            found: !!activity,
+            indoor: activity?.indoor,
+            stravaId: activity?.stravaActivityId,
+          },
+          "activity lookup",
         );
         if (activity && !activity.indoor && accessToken) {
           try {
@@ -218,23 +232,28 @@ agentsRouter.post(
               accessToken,
               activity.stravaActivityId,
             );
-            console.log(`${tag} fetched ${laps.length} laps from Strava`);
+            log.info({ lapCount: laps.length }, "fetched laps from Strava");
             const fromLaps = getProposedPaceFromLaps(laps, structure);
             if (fromLaps) {
-              console.log(`${tag} returning pace from laps`);
+              log.info("returning pace from laps");
               return c.json(fromLaps);
             }
-            console.log(`${tag} lap-derivation returned null — falling back to history`);
+            log.info("lap-derivation returned null — falling back to history");
           } catch (lapErr) {
-            console.error(`${tag} Strava laps fetch failed — falling back to history:`, lapErr);
+            log.error({ err: lapErr }, "Strava laps fetch failed — falling back to history");
           }
         } else {
-          console.log(
-            `${tag} skipping lap-derivation (indoor=${activity?.indoor} hasActivity=${!!activity} hasToken=${!!accessToken}) — using history`,
+          log.info(
+            {
+              indoor: activity?.indoor,
+              hasActivity: !!activity,
+              hasToken: !!accessToken,
+            },
+            "skipping lap-derivation — using history",
           );
         }
       } else {
-        console.log(`${tag} no activityId provided — using history`);
+        log.info("no activityId provided — using history");
       }
       const proposedPaces = await getProposedPaceForStructure(
         c.env.db,
@@ -242,10 +261,10 @@ agentsRouter.post(
         c.get("clerkUserId"),
         structure,
       );
-      console.log(`${tag} returning pace from history (sets=${proposedPaces.length})`);
+      log.info({ sets: proposedPaces.length }, "returning pace from history");
       return c.json(proposedPaces);
-    } catch (error) {
-      console.error(`${tag} Error calculating proposed pace:`, error);
+    } catch (err) {
+      log.error({ err }, "Error calculating proposed pace");
       return c.json({ error: "Failed to calculate pace" }, 500);
     }
   },
@@ -294,8 +313,8 @@ agentsRouter.post(
         parsed.sets,
       );
       return c.json(proposed, 200);
-    } catch (error) {
-      console.error("Error parsing intervals:", error);
+    } catch (err) {
+      c.var.logger.error({ err }, "Error parsing intervals");
       return c.json({ error: "Failed to parse intervals" }, 500);
     }
   },

@@ -1,6 +1,7 @@
 import { sleep } from "bun";
 import { eq } from "drizzle-orm";
 import { StravaError } from "../error";
+import { logger } from "../logger";
 import { activities, getDbInsertActivity } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type {
@@ -23,7 +24,7 @@ async function fetchStrava<T>(
       if (value) url.searchParams.append(key, value);
     });
   }
-  console.log(url.toString());
+  logger.debug({ url: url.toString() }, "Strava API call");
   const response = await fetch(url.toString(), {
     method: "GET",
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -105,9 +106,9 @@ export const stravaApiService = {
             if (row) triggers.push({ internalId: row.id, stravaActivityId: activity.id });
           }
           return { id, status: "success" };
-        } catch (error) {
-          console.error(`Failed to sync activity ${id}:`, error);
-          return { id, status: "failed", error };
+        } catch (err) {
+          logger.error({ err, stravaActivityId: id }, "Failed to sync activity");
+          return { id, status: "failed", error: err };
         }
       });
 
