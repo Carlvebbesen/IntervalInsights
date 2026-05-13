@@ -1,9 +1,19 @@
 import { createClerkClient } from "@clerk/backend";
 import { getAuth } from "@hono/clerk-auth";
+import { trace } from "@opentelemetry/api";
 import { eq } from "drizzle-orm";
 import { createMiddleware } from "hono/factory";
 import { users } from "../schema";
-import type { TGlobalEnv } from "../types/IRouters";
+import type { IGlobalVariables, TGlobalEnv } from "../types/IRouters";
+
+type AuthIdentity = Pick<IGlobalVariables, "userId" | "clerkUserId" | "role">;
+
+const tagSpanWithUser = ({ userId, clerkUserId, role }: AuthIdentity) => {
+  const span = trace.getActiveSpan();
+  span?.setAttribute("user.id", userId);
+  span?.setAttribute("clerk.user.id", clerkUserId);
+  span?.setAttribute("user.role", role);
+};
 
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -21,6 +31,7 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
     c.set("clerkUserId", auth.userId);
     c.set("userId", metadata.user_id);
     c.set("role", metadata.role);
+    tagSpanWithUser({ userId: metadata.user_id, clerkUserId: auth.userId, role: metadata.role });
     return next();
   }
 
@@ -53,9 +64,11 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
     console.error("Failed to sync Clerk metadata", err);
   }
 
+  const role = dbUser.role ?? "guest";
   c.set("clerkUserId", auth.userId);
   c.set("userId", dbUser.id);
-  c.set("role", dbUser.role ?? "guest");
+  c.set("role", role);
+  tagSpanWithUser({ userId: dbUser.id, clerkUserId: auth.userId, role });
 
   await next();
 });

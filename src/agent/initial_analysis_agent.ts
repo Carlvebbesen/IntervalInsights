@@ -2,7 +2,7 @@ import { z } from "zod";
 import { trainingTypeEnum } from "../schema";
 import { normalizeActivityStreams, prepareDataForLLM } from "../services.ts/utils";
 import type { StreamSet } from "../types/strava/IStream";
-import { gptMiniModel } from "./model";
+import { invokeStructured } from "./model";
 export type WorkoutAnalysisOutput = z.infer<typeof workoutAnalysisOutput>;
 
 export const workoutStep = z.object({
@@ -138,13 +138,5 @@ export async function invokeActivityAnalysisAgent(
   ### 5. TASK
   Analyze the data and classify the run according to the rules above.
 `;
-  try {
-    const result = await gptMiniModel
-      .withStructuredOutput<WorkoutAnalysisOutput>(workoutAnalysisOutput)
-      .invoke(prompt);
-    return result;
-  } catch (error) {
-    console.error("Failed to analyze activity:", error);
-    return null;
-  }
+  return invokeStructured(workoutAnalysisOutput, prompt, "analyze activity");
 }

@@ -30,6 +30,18 @@ export const AnalysisStateAnnotation = Annotation.Root({
     reducer: overwrite,
     default: () => false,
   }),
+  activityTitle: Annotation<string>({
+    reducer: overwrite,
+    default: () => "",
+  }),
+  activityDescription: Annotation<string>({
+    reducer: overwrite,
+    default: () => "",
+  }),
+  activityStartDateLocal: Annotation<Date | null>({
+    reducer: overwrite,
+    default: () => null,
+  }),
 
   // Set on graph resume (from user input via interrupt)
   userNotes: Annotation<string>({

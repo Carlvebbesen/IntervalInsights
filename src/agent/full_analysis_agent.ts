@@ -14,7 +14,7 @@ import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { Lap } from "../types/strava/IDetailedActivity";
 import type { StreamSet } from "../types/strava/IStream";
 import type { WorkoutAnalysisOutput } from "./initial_analysis_agent";
-import { gptMiniModel } from "./model";
+import { invokeStructured } from "./model";
 export type SegmentPlanOutput = z.infer<typeof segmentPlanOutput>;
 
 type ValidWorkoutPart = Exclude<WorkoutPartType, "JOGGING">;
@@ -144,13 +144,5 @@ TASK:
 RETURN only the structured plan.
 `;
 
-  try {
-    const result = await gptMiniModel
-      .withStructuredOutput<SegmentPlanOutput>(segmentPlanOutput)
-      .invoke(prompt);
-    return result;
-  } catch (error) {
-    console.error("Failed to analyze activity:", error);
-    return null;
-  }
+  return invokeStructured(segmentPlanOutput, prompt, "analyze activity");
 }
