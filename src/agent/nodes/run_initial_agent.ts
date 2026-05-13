@@ -53,8 +53,14 @@ export async function runInitialAgent(
     })
     .where(eq(activities.id, state.activityId));
 
+  const structureSummary = (initialResult.structure ?? [])
+    .map(
+      (s) =>
+        `${s.set_reps}×[${s.steps.map((st) => `${st.reps}×${st.work_value}${st.work_type === "DISTANCE" ? "m" : "s"}`).join("+")}]`,
+    )
+    .join(" | ");
   console.log(
-    `${tag} initialResult.training_type=${initialResult.training_type} lapsMatchStructure=${lapsMatchStructure}`,
+    `${tag} initialResult.training_type=${initialResult.training_type} confidence=${initialResult.confidence_score.toFixed(2)} lapsMatchStructure=${lapsMatchStructure} structure=${structureSummary || "none"}`,
   );
 
   return { initialResult, lapsMatchStructure };

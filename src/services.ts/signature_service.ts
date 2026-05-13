@@ -10,6 +10,7 @@ import {
   intervalStructures,
   mapSegmentsToComponents,
 } from "../schema";
+import type { DraftAnalysisResult } from "../schema/activities";
 import type { TrainingType } from "../schema/enums";
 
 export type SignatureCheck = {
@@ -26,21 +27,23 @@ export async function findMatchingStructure(
   trainingType: TrainingType,
   userId: string,
 ): Promise<SignatureCheck> {
+  const tag = "[findMatchingStructure]";
   const components = mapSegmentsToComponents(segments);
   const signature = generateIntervalSignature(components);
+  console.log(
+    `${tag} signature=${signature} trainingType=${trainingType} workComponents=${components.length}`,
+  );
 
   const exact = await db
     .select()
     .from(intervalStructures)
-    .where(
-      and(
-        eq(intervalStructures.signature, signature),
-        eq(intervalStructures.trainingType, trainingType),
-      ),
-    )
+    .where(eq(intervalStructures.signature, signature))
     .limit(1);
 
   if (exact.length > 0) {
+    console.log(
+      `${tag} exact-match -> structureId=${exact[0].id} name="${exact[0].name}" (structure.trainingType=${exact[0].trainingType}, activity.trainingType=${trainingType})`,
+    );
     return { useExisting: true, structureId: exact[0].id, signature };
   }
 
@@ -66,8 +69,12 @@ export async function findMatchingStructure(
   }
 
   if (bestId !== undefined) {
+    console.log(
+      `${tag} fuzzy-match -> structureId=${bestId} jaccard=${bestScore.toFixed(2)} (≥${JACCARD_THRESHOLD})`,
+    );
     return { useExisting: true, structureId: bestId, signature };
   }
+  console.log(`${tag} no match — will create new structure`);
   return { useExisting: false, signature };
 }
 
@@ -81,13 +88,28 @@ export async function persistSegmentsAndStructure(
     check: SignatureCheck;
     userNotes: string;
     feeling: number | null;
+    draftOverride?: DraftAnalysisResult | null;
+    persistSegments?: boolean;
   },
 ): Promise<void> {
-  const { activityId, trainingType, segments, check, userNotes, feeling } = params;
+  const {
+    activityId,
+    trainingType,
+    segments,
+    check,
+    userNotes,
+    feeling,
+    draftOverride,
+    persistSegments = true,
+  } = params;
 
+  const tag = `[persistSegmentsAndStructure activity=${activityId}]`;
   let structureId: number;
   if (check.useExisting && check.structureId !== undefined) {
     structureId = check.structureId;
+    console.log(
+      `${tag} reusing existing structureId=${structureId} (signature=${check.signature})`,
+    );
   } else {
     const components = mapSegmentsToComponents(segments);
     const [newStructure] = await db
@@ -100,6 +122,9 @@ export async function persistSegmentsAndStructure(
       })
       .returning();
     structureId = newStructure.id;
+    console.log(
+      `${tag} created new structureId=${structureId} name="${newStructure.name}" signature=${check.signature}`,
+    );
   }
 
   await db.transaction(async (tx) => {
@@ -112,12 +137,22 @@ export async function persistSegmentsAndStructure(
         analyzedAt: new Date(),
         notes: userNotes,
         feeling: feeling ?? undefined,
-        draftAnalysisResult: null,
+        draftAnalysisResult: draftOverride ?? null,
       })
       .where(eq(activities.id, activityId));
+    console.log(
+      `${tag} activity linked to structureId=${structureId} draftOverride=${draftOverride ? `segmentsFromLaps=${draftOverride.segmentsFromLaps} acceptedSets=${draftOverride.acceptedSets?.length ?? 0}` : "null"}`,
+    );
 
     await tx.delete(intervalSegments).where(eq(intervalSegments.activityId, activityId));
-    await tx.insert(intervalSegments).values(segments);
+    if (persistSegments) {
+      await tx.insert(intervalSegments).values(segments);
+      console.log(`${tag} inserted ${segments.length} segments`);
+    } else {
+      console.log(
+        `${tag} SKIPPED inserting ${segments.length} segments (clean-laps path — re-derive on read)`,
+      );
+    }
   });
 }
 

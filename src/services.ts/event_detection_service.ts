@@ -54,7 +54,14 @@ export async function detectAndPersistEvents(
   input: EventDetectionInput,
 ): Promise<void> {
   const { activityId, userId, title, description, notes, activityStartDateLocal } = input;
-  if (!title && !description && !notes) return;
+  const tag = `[detectAndPersistEvents activity=${activityId}]`;
+  if (!title && !description && !notes) {
+    console.log(`${tag} skipped: no title/description/notes`);
+    return;
+  }
+  console.log(
+    `${tag} input title="${title.slice(0, 60)}" description="${description.slice(0, 60)}" notes="${notes.slice(0, 120)}"`,
+  );
 
   const oneYearAgo = new Date();
   oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
@@ -101,6 +108,10 @@ export async function detectAndPersistEvents(
     sampleValue: JSON.stringify(k.sampleValue),
   }));
 
+  console.log(
+    `${tag} context: alreadyLinked=${alreadyLinked.length} recentEvents=${recent.length} knownAttributeKeys=${knownAttributeKeys.length}`,
+  );
+
   const result = await invokeWithRateLimitRetry(() =>
     invokeEventDetectionAgent(
       title,
@@ -118,27 +129,46 @@ export async function detectAndPersistEvents(
       knownAttributeKeys,
     ),
   );
+  console.log(
+    `${tag} LLM result: ${result === null ? "null" : `${result.events.length} event(s)`}${result && result.events.length > 0 ? ` -> ${result.events.map((e) => `${e.eventType}/${e.bodyLocation ?? "-"}${e.linkedEventId !== null ? `[link=${e.linkedEventId}]` : "[new]"}`).join(", ")}` : ""}`,
+  );
   if (!result || result.events.length === 0) return;
 
   const seen = new Set<string>();
   const deduped = result.events.filter((e) => {
-    const key =
-      e.linkedEventId !== null
-        ? `id:${e.linkedEventId}`
-        : `new:${typeLocKey(e.eventType, e.bodyLocation)}`;
+    const validLink = e.linkedEventId !== null && recentById.has(e.linkedEventId);
+    const key = validLink
+      ? `id:${e.linkedEventId}`
+      : `new:${typeLocKey(e.eventType, e.bodyLocation)}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 
-  const activityStart = activityStartDateLocal ?? new Date();
+  const activityStart =
+    activityStartDateLocal instanceof Date
+      ? activityStartDateLocal
+      : activityStartDateLocal
+        ? new Date(activityStartDateLocal)
+        : new Date();
+  console.log(
+    `${tag} persisting ${deduped.length} unique event(s) (after dedup from ${result.events.length})`,
+  );
 
   await db.transaction(async (tx) => {
     for (const e of deduped) {
       let eventId: number;
 
-      if (e.linkedEventId !== null) {
-        const existing = recentById.get(e.linkedEventId);
+      const linkedEventId =
+        e.linkedEventId !== null && recentById.has(e.linkedEventId) ? e.linkedEventId : null;
+      if (e.linkedEventId !== null && linkedEventId === null) {
+        console.log(
+          `${tag} LLM returned linkedEventId=${e.linkedEventId} which doesn't exist in recentEvents — treating as new event`,
+        );
+      }
+
+      if (linkedEventId !== null) {
+        const existing = recentById.get(linkedEventId);
         if (!existing) continue;
         if (alreadyLinkedIds.has(existing.id)) continue;
 

@@ -6,7 +6,11 @@ export async function detectEvents(
   state: AnalysisState,
   config: RunnableConfig,
 ): Promise<Partial<AnalysisState>> {
+  const tag = `[detectEvents activity=${state.activityId}]`;
   const { db } = config.configurable as GraphConfigurable;
+  console.log(
+    `${tag} entering: title.len=${state.activityTitle.length} description.len=${state.activityDescription.length} userNotes.len=${state.userNotes.length}`,
+  );
   await detectAndPersistEvents(db, {
     activityId: state.activityId,
     userId: state.userId,
@@ -15,5 +19,6 @@ export async function detectEvents(
     notes: state.userNotes,
     activityStartDateLocal: state.activityStartDateLocal,
   });
+  console.log(`${tag} finished`);
   return {};
 }

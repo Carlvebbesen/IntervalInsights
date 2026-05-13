@@ -9,13 +9,14 @@ import { activities } from "../schema";
 import { type TrainingType, trainingTypeEnum } from "../schema/enums";
 import {
   ErrorSchema,
+  ExpandedIntervalSetSchema,
   PendingActivitySchema,
   ProposedPaceResponseSchema,
 } from "../schemas/api_schemas";
 import { resumeAnalysis, startAnalysis } from "../services.ts/analysis_service";
-import { getProposedPaceForStructure } from "../services.ts/pace_service";
+import { getProposedPaceForStructure, getProposedPaceFromLaps } from "../services.ts/pace_service";
 import { requeueStaleActivities } from "../services.ts/requeue_service";
-import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
+import { stravaApiService } from "../services.ts/strava_api_service";
 import type { TStravaEnv } from "../types/IRouters";
 
 const agentsRouter = new Hono<TStravaEnv>();
@@ -113,7 +114,7 @@ agentsRouter.post(
 const resumeAnalysisSchema = z.object({
   activityId: z.number(),
   notes: z.string(),
-  sets: z.array(z.unknown()).optional(),
+  sets: z.array(ExpandedIntervalSetSchema).optional(),
   trainingType: z.string().nullable().optional(),
   feeling: z.number().int().min(1).max(5).nullable().optional(),
 });
@@ -142,6 +143,9 @@ agentsRouter.post(
     try {
       const { activityId, notes, sets, trainingType, feeling } = c.req.valid("json");
       const accessToken = c.get("stravaAccessToken");
+      console.log(
+        `[/resume-analysis activity=${activityId}] payload sets=${sets?.length ?? 0} (steps=${sets?.reduce((s, set) => s + set.steps.length, 0) ?? 0}) notes.len=${notes.length} trainingType=${trainingType ?? "null"} feeling=${feeling ?? "null"}`,
+      );
       if (!accessToken) {
         return c.json({ error: "Access token missing" }, 400);
       }
@@ -150,7 +154,7 @@ agentsRouter.post(
         accessToken,
         activityId,
         notes ?? "",
-        (sets ?? []) as ExpandedIntervalSet[],
+        sets ?? [],
         (trainingType as TrainingType | null) ?? null,
         feeling ?? null,
       );
@@ -164,6 +168,7 @@ agentsRouter.post(
 
 const paceRequestSchema = z.object({
   structure: z.array(workoutSet),
+  activityId: z.number().optional(),
 });
 
 agentsRouter.post(
@@ -187,16 +192,60 @@ agentsRouter.post(
   validator("json", paceRequestSchema),
   async (c) => {
     const user = c.get("userId");
+    const accessToken = c.get("stravaAccessToken");
     const data = c.req.valid("json");
-    const { structure } = data;
+    const { structure, activityId } = data;
+    const tag = `[/proposed-pace activity=${activityId ?? "none"}]`;
+    console.log(
+      `${tag} request: structureSets=${structure?.length ?? 0} hasAccessToken=${!!accessToken}`,
+    );
     if (!structure || structure.length === 0) {
+      console.log(`${tag} empty structure — returning []`);
       return c.json([]);
     }
     try {
-      const proposedPaces = await getProposedPaceForStructure(c.env.db, user, structure);
+      if (activityId) {
+        const activity = await c.env.db.query.activities.findFirst({
+          where: and(eq(activities.id, activityId), eq(activities.userId, user)),
+          columns: { indoor: true, stravaActivityId: true },
+        });
+        console.log(
+          `${tag} activity lookup: found=${!!activity} indoor=${activity?.indoor ?? "n/a"} stravaId=${activity?.stravaActivityId ?? "n/a"}`,
+        );
+        if (activity && !activity.indoor && accessToken) {
+          try {
+            const laps = await stravaApiService.getActivityLaps(
+              accessToken,
+              activity.stravaActivityId,
+            );
+            console.log(`${tag} fetched ${laps.length} laps from Strava`);
+            const fromLaps = getProposedPaceFromLaps(laps, structure);
+            if (fromLaps) {
+              console.log(`${tag} returning pace from laps`);
+              return c.json(fromLaps);
+            }
+            console.log(`${tag} lap-derivation returned null — falling back to history`);
+          } catch (lapErr) {
+            console.error(`${tag} Strava laps fetch failed — falling back to history:`, lapErr);
+          }
+        } else {
+          console.log(
+            `${tag} skipping lap-derivation (indoor=${activity?.indoor} hasActivity=${!!activity} hasToken=${!!accessToken}) — using history`,
+          );
+        }
+      } else {
+        console.log(`${tag} no activityId provided — using history`);
+      }
+      const proposedPaces = await getProposedPaceForStructure(
+        c.env.db,
+        user,
+        c.get("clerkUserId"),
+        structure,
+      );
+      console.log(`${tag} returning pace from history (sets=${proposedPaces.length})`);
       return c.json(proposedPaces);
     } catch (error) {
-      console.error("Error calculating proposed pace:", error);
+      console.error(`${tag} Error calculating proposed pace:`, error);
       return c.json({ error: "Failed to calculate pace" }, 500);
     }
   },
@@ -238,7 +287,12 @@ agentsRouter.post(
       if (!parsed || parsed.sets.length === 0) {
         return c.json([], 200);
       }
-      const proposed = await getProposedPaceForStructure(c.env.db, userId, parsed.sets);
+      const proposed = await getProposedPaceForStructure(
+        c.env.db,
+        userId,
+        c.get("clerkUserId"),
+        parsed.sets,
+      );
       return c.json(proposed, 200);
     } catch (error) {
       console.error("Error parsing intervals:", error);

@@ -13,6 +13,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type { WorkoutAnalysisOutput } from "../agent/initial_analysis_agent";
+import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
 import type { DetailedActivity } from "../types/strava/IDetailedActivity";
 import { analysisStatusEnum, type TrainingType, trainingTypeEnum } from "./enums";
@@ -30,6 +31,8 @@ export type IntervalsIcuPrediction = {
 export type DraftAnalysisResult = WorkoutAnalysisOutput & {
   lapsMatchStructure?: boolean;
   intervalsIcuPrediction?: IntervalsIcuPrediction | null;
+  acceptedSets?: ExpandedIntervalSet[];
+  segmentsFromLaps?: boolean;
 };
 
 export const activities = pgTable(

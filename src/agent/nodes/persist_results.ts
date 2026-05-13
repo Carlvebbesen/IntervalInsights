@@ -1,4 +1,5 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
+import type { DraftAnalysisResult } from "../../schema/activities";
 import {
   completeWithoutSegments,
   persistSegmentsAndStructure,
@@ -28,6 +29,22 @@ export async function persistResults(
     return {};
   }
 
+  let draftOverride: DraftAnalysisResult | null = null;
+  if (state.segmentsFromLaps && state.initialResult) {
+    draftOverride = {
+      ...state.initialResult,
+      acceptedSets: state.userSets,
+      segmentsFromLaps: true,
+    };
+    console.log(
+      `${tag} preparing draftOverride: acceptedSets=${state.userSets.length} segmentsFromLaps=true (segments will NOT be persisted)`,
+    );
+  } else {
+    console.log(
+      `${tag} normal LLM path: persisting segments to DB, draftAnalysisResult will be nulled`,
+    );
+  }
+
   await persistSegmentsAndStructure(db, {
     activityId: state.activityId,
     userId: state.userId,
@@ -36,7 +53,11 @@ export async function persistResults(
     check: state.signatureCheck,
     userNotes: state.userNotes,
     feeling: state.feeling,
+    persistSegments: !state.segmentsFromLaps,
+    draftOverride,
   });
-  console.log(`${tag} wrote ${state.computedSegments.length} segments, status=completed`);
+  console.log(
+    `${tag} ${state.segmentsFromLaps ? "skipped" : "wrote"} ${state.computedSegments.length} segments (segmentsFromLaps=${state.segmentsFromLaps}), status=completed`,
+  );
   return {};
 }

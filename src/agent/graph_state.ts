@@ -57,6 +57,7 @@ export const AnalysisStateAnnotation = Annotation.Root({
     reducer: overwrite,
     default: () => [],
   }),
+  segmentsFromLaps: Annotation<boolean>({ reducer: overwrite, default: () => false }),
 
   signatureCheck: Annotation<{
     useExisting: boolean;

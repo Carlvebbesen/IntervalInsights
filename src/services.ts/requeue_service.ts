@@ -1,16 +1,18 @@
 import { sql } from "drizzle-orm";
 import { activities } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
-import { startAnalysis } from "./analysis_service";
+import { restartAnalysisByStravaId } from "./analysis_service";
 
 const REQUEUE_BATCH_LIMIT = 100;
 const ERROR_RETRY_CAP = 2;
+const ORPHAN_TIMEOUT_MINUTES = 10;
 
 export async function requeueStaleActivities(
   db: IGlobalBindings["db"],
   userId: string,
   stravaAccessToken: string,
 ): Promise<void> {
+  const tag = `[requeueStaleActivities user=${userId}]`;
   const requeued = await db
     .update(activities)
     .set({
@@ -24,13 +26,29 @@ export async function requeueStaleActivities(
           AND (
             analysis_status = 'skipped_inactive'
             OR (analysis_status = 'error' AND analysis_attempt_count < ${ERROR_RETRY_CAP})
+            OR (
+              analysis_status IN ('pending', 'ongoing_init')
+              AND created_at < NOW() - INTERVAL '${sql.raw(String(ORPHAN_TIMEOUT_MINUTES))} minutes'
+              AND analysis_attempt_count < ${ERROR_RETRY_CAP}
+            )
+            OR (
+              analysis_status = 'ongoing_completed'
+              AND COALESCE(analyzed_at, created_at) < NOW() - INTERVAL '${sql.raw(String(ORPHAN_TIMEOUT_MINUTES))} minutes'
+              AND analysis_attempt_count < ${ERROR_RETRY_CAP}
+            )
           )
         LIMIT ${REQUEUE_BATCH_LIMIT}
       )`,
     )
     .returning({ id: activities.id, stravaActivityId: activities.stravaActivityId });
 
+  if (requeued.length > 0) {
+    console.log(`${tag} re-queued ${requeued.length} stale activities`);
+  }
+
   for (const row of requeued) {
-    void startAnalysis(db, stravaAccessToken, row.id, row.stravaActivityId, userId);
+    void restartAnalysisByStravaId(db, stravaAccessToken, row.stravaActivityId, userId).catch(
+      (err) => console.error(`${tag} restart failed for activity=${row.id}:`, err),
+    );
   }
 }

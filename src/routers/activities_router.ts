@@ -1,9 +1,9 @@
-import { and, asc, count, desc, eq, gte, ilike, inArray, isNotNull, lte, or } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, inArray, isNotNull, lte, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
-import { activities, intervalSegments, intervalStructures, trainingTypeEnum } from "../schema";
+import { activities, intervalStructures, trainingTypeEnum } from "../schema";
 import {
   ActivityListResponseSchema,
   ActivitySchema,
@@ -15,6 +15,7 @@ import {
 } from "../schemas/api_schemas";
 import { userHasHeartRateConsent } from "../services.ts/heart_rate_consent_service";
 import { linkFromLocalActivity } from "../services.ts/intervals_link_service";
+import { getSegmentsForActivity } from "../services.ts/lap_derivation_service";
 import { stravaApiService } from "../services.ts/strava_api_service";
 import type { TGlobalEnv, TStravaEnv } from "../types/IRouters";
 
@@ -184,11 +185,7 @@ activitiesRouter.get(
           where: (a, { eq, and }) => and(eq(a.id, activityId), eq(a.userId, userId)),
           columns: { intervalsIcuId: true },
         }),
-        env.db
-          .select()
-          .from(intervalSegments)
-          .where(eq(intervalSegments.activityId, activityId))
-          .orderBy(asc(intervalSegments.segmentIndex)),
+        getSegmentsForActivity(env.db, clerkId, activityId),
       ]);
 
       if (activity && !activity.intervalsIcuId) {

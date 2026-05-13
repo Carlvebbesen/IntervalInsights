@@ -3,6 +3,10 @@ import { eq } from "drizzle-orm";
 import { activities } from "../../schema";
 import { INTERVAL_TRAINING_TYPES } from "../../schema/enums";
 import {
+  buildSegmentsFromLaps,
+  structureShapeMatches,
+} from "../../services.ts/lap_derivation_service";
+import {
   calculateSegmentStats,
   needCompleteAnalysis,
   parsePaceStringToMetersPerSecond,
@@ -50,6 +54,35 @@ export async function runCompleteAnalysis(
     .set({ analysisStatus: "ongoing_completed" })
     .where(eq(activities.id, state.activityId));
 
+  if (!state.streams.time || !state.streams.distance) {
+    throw new Error(`${tag} streams missing time or distance — cannot compute segment stats`);
+  }
+  const statsStreams = state.streams as Required<Pick<StreamSet, "time" | "distance">> &
+    Pick<StreamSet, "heartrate">;
+
+  const shapeUnchanged = structureShapeMatches(state.initialResult?.structure, state.userSets);
+  if (shapeUnchanged && !state.isIndoor && state.laps.length > 0) {
+    console.log(`${tag} structure unchanged + outdoor — attempting lap-derived segments`);
+    const fromLaps = buildSegmentsFromLaps(
+      state.activityId,
+      state.laps,
+      state.userSets,
+      statsStreams,
+      tag,
+    );
+    if (fromLaps) {
+      console.log(
+        `${tag} lap-derived segments=${fromLaps.length} — skipping LLM and segment persistence`,
+      );
+      return { computedSegments: fromLaps, segmentsFromLaps: true };
+    }
+    console.log(`${tag} lap-derivation failed — falling back to LLM`);
+  } else {
+    console.log(
+      `${tag} skipping lap-derived path (shapeUnchanged=${shapeUnchanged} indoor=${state.isIndoor} laps=${state.laps.length})`,
+    );
+  }
+
   console.log(`${tag} invoking complete analysis LLM`);
   const segmentPlan = await invokeWithRateLimitRetry(() =>
     invokeCompleteActivityAnalysisAgent(
@@ -66,12 +99,6 @@ export async function runCompleteAnalysis(
     throw new Error("Complete analysis agent returned null");
   }
   console.log(`${tag} LLM returned ${segmentPlan.segments.length} raw segments`);
-
-  if (!state.streams.time || !state.streams.distance) {
-    throw new Error(`${tag} streams missing time or distance — cannot compute segment stats`);
-  }
-  const statsStreams = state.streams as Required<Pick<StreamSet, "time" | "distance">> &
-    Pick<StreamSet, "heartrate">;
 
   let segmentIndexCounter = 0;
   let droppedByStats = 0;
