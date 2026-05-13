@@ -134,11 +134,12 @@ TASK:
 1. **Set Grouping:** Use 'set_group_index' (1-based) to group segments in the same Set (e.g., all 10 intervals in Set 1 get set_group_index: 1).
 2. **Sequential Matching:** Match the identified "WORK" segments to the USER-SPECIFIED TARGET PACES list in chronological order.
 3. **Pace Assignment:** For each "WORK" segment, set 'target_pace_string' exactly as provided (e.g., "3:45"). If no user paces were given, omit it.
-4. **Segment Types:**
+4. **Segment Types (use these enum values EXACTLY):**
    - "WARMUP" for the initial steady period.
-   - "WORK" for the intervals.
-   - "REST" for recovery periods between intervals.
-   - "COOLDOWN" for the final steady period.
+   - "INTERVALS" for each work interval (this is the value for what is sometimes called "WORK"). MUST be used for every work rep.
+   - "REST" for short recovery periods between reps within a set.
+   - "ACTIVE_REST" for the longer recovery between sets (only if the structure has multiple sets).
+   - "COOL_DOWN" for the final steady period (note the underscore — NOT "COOLDOWN").
 5. **Output Format:** Return the segments with correct start/end times, target types, and target paces.
 
 RETURN only the structured plan.

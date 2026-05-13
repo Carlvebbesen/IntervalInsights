@@ -21,7 +21,7 @@ export const eventDetectionOutput = z.object({
         .number()
         .nullable()
         .describe(
-          "The id of an existing event from `recentEvents` that this mention refers to. Null when introducing a new event.",
+          "The id of an existing event from `recentEvents` that this mention refers to. MUST be exactly null (NOT 0, NOT -1, NOT a placeholder integer) when introducing a new event. Only set when an entry in `recentEvents` has the matching id.",
         ),
       eventType: z.enum(eventTypeEnum.enumValues).describe("The category of the event."),
       bodyLocation: z
@@ -30,7 +30,11 @@ export const eventDetectionOutput = z.object({
         .describe(
           "Body location for an injury (e.g. 'right knee', 'left achilles'). Null for ILLNESS / MEDICAL_VISIT / PHYSIO_VISIT / OTHER unless a specific body part is the subject.",
         ),
-      description: z.string().describe("A 1–2 sentence narrative summarising the condition."),
+      description: z
+        .string()
+        .describe(
+          "A 1–2 sentence narrative summarising the condition. MUST be written in the SAME language the user wrote the title/description/notes in (e.g. Norwegian text -> Norwegian description). Do NOT translate the description to English.",
+        ),
       markResolved: z
         .boolean()
         .describe(
@@ -91,6 +95,11 @@ export async function invokeEventDetectionAgent(
 You are extracting health events from a single Strava activity.
 
 A health event is one of: an injury, an illness, a medical/doctor visit, a physiotherapy visit, or another physical-state issue worth tracking. The activity's title, description and the user's notes are below.
+
+### Language
+The text may be written in any language — commonly English or Norwegian. Treat clear pain/injury/illness mentions identically regardless of language.
+- **\`bodyLocation\`**: always English (e.g. "venstre hofte" -> "left hip", "høyre kne" -> "right knee", "korsrygg" -> "lower back", "akilles" -> "achilles"). This field is used for filtering and must be consistent across users.
+- **\`description\`**: always in the SAME language the user wrote in. If notes are Norwegian, write the description in Norwegian. If English, write in English. The user reads this back later — keep it in their voice.
 
 ### What to detect (be selective)
 - Detect ONLY explicit mentions. Do NOT infer from generic phrases like "tough run", "tired", "felt slow", "long day".

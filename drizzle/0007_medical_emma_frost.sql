@@ -1,0 +1,1 @@
+CREATE INDEX "user_status_idx" ON "activities" USING btree ("user_id","analysis_status");

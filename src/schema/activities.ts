@@ -13,12 +13,27 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type { WorkoutAnalysisOutput } from "../agent/initial_analysis_agent";
+import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
+import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
 import type { DetailedActivity } from "../types/strava/IDetailedActivity";
-import { analysisStatusEnum, trainingTypeEnum } from "./enums";
+import { analysisStatusEnum, type TrainingType, trainingTypeEnum } from "./enums";
 import { activityEvents } from "./events";
 import { intervalSegments } from "./interval_segments";
 import { intervalStructures } from "./interval_structure";
 import { users } from "./users";
+
+export type IntervalsIcuPrediction = {
+  trainingType?: TrainingType;
+  subType?: string | null;
+  intervals?: IIntervalsInterval[];
+};
+
+export type DraftAnalysisResult = WorkoutAnalysisOutput & {
+  lapsMatchStructure?: boolean;
+  intervalsIcuPrediction?: IntervalsIcuPrediction | null;
+  acceptedSets?: ExpandedIntervalSet[];
+  segmentsFromLaps?: boolean;
+};
 
 export const activities = pgTable(
   "activities",
@@ -31,7 +46,8 @@ export const activities = pgTable(
     intervalStructureId: integer("interval_structure_id").references(() => intervalStructures.id),
     analyzedAt: timestamp("analyzed_at"),
     analysisStatus: analysisStatusEnum("analysis_status").default("pending"),
-    draftAnalysisResult: json("draft_analysis_result").$type<WorkoutAnalysisOutput>(),
+    analysisAttemptCount: integer("analysis_attempt_count").notNull().default(0),
+    draftAnalysisResult: json("draft_analysis_result").$type<DraftAnalysisResult>(),
     analysisVersion: text("analysis_version").default("v1.0"),
     stravaActivityId: bigint("strava_activity_id", { mode: "number" }).unique().notNull(),
     gearId: text("gear_id"),
@@ -54,6 +70,7 @@ export const activities = pgTable(
   (table) => {
     return [
       index("user_idx").on(table.userId),
+      index("user_status_idx").on(table.userId, table.analysisStatus),
       index("date_idx").on(table.startDateLocal),
       index("type_idx").on(table.trainingType),
       index("interval_structure_idx").on(table.intervalStructureId),

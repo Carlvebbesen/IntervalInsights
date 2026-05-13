@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { trainingTypeEnum } from "../schema";
+import type { IntervalsIcuPrediction } from "../schema/activities";
 import { normalizeActivityStreams, prepareDataForLLM } from "../services.ts/utils";
 import type { StreamSet } from "../types/strava/IStream";
 import { invokeStructured } from "./model";
@@ -72,12 +73,32 @@ const CLASSIFICATION_RULES = `
 - **RACE**: Sustained maximal effort for the distance.
 `;
 
+function formatIntervalsIcuBlock(prediction: IntervalsIcuPrediction | null | undefined): string {
+  if (!prediction) return "";
+  const rows = (prediction.intervals ?? [])
+    .map((i, idx) => {
+      const pace = i.avg_pace != null ? `${i.avg_pace.toFixed(2)} m/s` : "-";
+      const hr = i.avg_hr != null ? `${Math.round(i.avg_hr)} bpm` : "-";
+      const load = i.training_load != null ? `${i.training_load.toFixed(1)}` : "-";
+      return `| ${idx + 1} | ${i.type} | ${i.distance}m | ${i.moving_time}s | ${pace} | ${hr} | ${load} |`;
+    })
+    .join("\n");
+  const typeHint = prediction.trainingType
+    ? `intervals.icu suggests training type: **${prediction.trainingType}**${prediction.subType ? ` (sub: ${prediction.subType})` : ""}.`
+    : "";
+  const tableBlock = rows
+    ? `\n| # | Type | Distance | Time | Avg pace | Avg HR | Load |\n|---|------|----------|------|----------|--------|------|\n${rows}`
+    : "";
+  return `\n  ### INTERVALS.ICU PREDICTION (treat as a strong hint, not ground truth)\n  ${typeHint}${tableBlock}\n`;
+}
+
 export async function invokeActivityAnalysisAgent(
   streams: StreamSet,
   title: string,
   description: string,
   totalElevationGain: number,
   type: string,
+  intervalsIcuPrediction?: IntervalsIcuPrediction | null,
 ): Promise<WorkoutAnalysisOutput | null> {
   const normalized = normalizeActivityStreams(
     streams?.time?.data ?? [],
@@ -99,6 +120,7 @@ export async function invokeActivityAnalysisAgent(
         : `| ${b.time} | ${b.pace} | ${b.isMoving} |`,
     )
     .join("\n");
+  const intervalsIcuBlock = formatIntervalsIcuBlock(intervalsIcuPrediction);
   const prompt = `
   You are an expert running coach analyzing Strava activity data.
 
@@ -125,7 +147,7 @@ export async function invokeActivityAnalysisAgent(
   **Sampled Data (30s Windows):**
   ${tableHeader}
   ${tableRows}
-  
+${intervalsIcuBlock}
   ### 4. STRUCTURE EXTRACTION RULES (Hierarchical)
   You must populate the 'structure' array (an array of Sets) using these rules:
   

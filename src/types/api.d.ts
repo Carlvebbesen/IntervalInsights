@@ -233,27 +233,10 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** @description Get activities pending analysis */
+    /** @description Get activities pending analysis (re-queues skipped_inactive and error rows). */
     get: operations["getApiAgentsPending"];
     put?: never;
     post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/agents/start-complete-analysis": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** @description Resume the complete analysis for an activity (alias for /resume-analysis) */
-    post: operations["postApiAgentsStartCompleteAnalysis"];
     delete?: never;
     options?: never;
     head?: never;
@@ -305,6 +288,23 @@ export interface paths {
     put?: never;
     /** @description Get proposed paces for an interval structure */
     post: operations["postApiAgentsProposedPace"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/agents/parse-intervals": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Parse a free-text workout description (e.g. '6x800m @ 3:45 with 90s rest') into ExpandedIntervalSet[] with proposed paces filled. */
+    post: operations["postApiAgentsParseIntervals"];
     delete?: never;
     options?: never;
     head?: never;
@@ -889,6 +889,7 @@ export interface operations {
                 | "ongoing_completed"
                 | "completed"
                 | "error"
+                | "skipped_inactive"
                 | null;
               draftAnalysisResult?: null;
               analysisVersion: string | null;
@@ -1067,6 +1068,7 @@ export interface operations {
               | "ongoing_completed"
               | "completed"
               | "error"
+              | "skipped_inactive"
               | null;
             draftAnalysisResult?: null;
             analysisVersion: string | null;
@@ -1380,6 +1382,7 @@ export interface operations {
               | "ongoing_completed"
               | "completed"
               | "error"
+              | "skipped_inactive"
               | null;
             draftAnalysisResult?: null;
             title: string;
@@ -1390,71 +1393,6 @@ export interface operations {
             indoor: boolean;
             feeling: number | null;
           }[];
-        };
-      };
-    };
-  };
-  postApiAgentsStartCompleteAnalysis: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": {
-          activityId: number;
-          stravaId: number;
-          notes: string;
-          sets?: unknown[];
-        };
-      };
-    };
-    responses: {
-      /** @description Analysis started */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": {
-            success: boolean;
-            message: string;
-          };
-        };
-      };
-      /** @description Bad request */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": {
-            error: string;
-          };
-        };
-      };
-      /** @description Unauthorized */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": {
-            error: string;
-          };
-        };
-      };
-      /** @description Internal server error */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": {
-            error: string;
-          };
         };
       };
     };
@@ -1522,8 +1460,20 @@ export interface operations {
         "application/json": {
           activityId: number;
           notes: string;
-          sets?: unknown[];
+          sets?: {
+            set_recovery?: number | null;
+            steps: {
+              /** @enum {string} */
+              work_type: "DISTANCE" | "TIME";
+              work_value: number;
+              /** @enum {string|null} */
+              recovery_type?: "DISTANCE" | "TIME" | null;
+              recovery_value?: number | null;
+              target_pace: number | null;
+            }[];
+          }[];
           trainingType?: string | null;
+          feeling?: number | null;
         };
       };
     };
@@ -1586,6 +1536,7 @@ export interface operations {
             }[];
             set_recovery?: number | null;
           }[];
+          activityId?: number;
         };
       };
     };
@@ -1608,6 +1559,80 @@ export interface operations {
               target_pace: number | null;
             }[];
           }[];
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  postApiAgentsParseIntervals: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          text: string;
+          /** @enum {string|null} */
+          trainingType?:
+            | "LONG"
+            | "EASY"
+            | "RECOVERY"
+            | "SHORT_INTERVALS"
+            | "HILL_SPRINTS"
+            | "LONG_INTERVALS"
+            | "SPRINTS"
+            | "FARTLEK"
+            | "PROGRESSIVE_LONG"
+            | "RACE"
+            | "TEMPO"
+            | "OTHER"
+            | null;
+        };
+      };
+    };
+    responses: {
+      /** @description Parsed interval sets with proposed paces. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            set_recovery?: number | null;
+            steps: {
+              /** @enum {string} */
+              work_type: "DISTANCE" | "TIME";
+              work_value: number;
+              /** @enum {string|null} */
+              recovery_type?: "DISTANCE" | "TIME" | null;
+              recovery_value?: number | null;
+              target_pace: number | null;
+            }[];
+          }[];
+        };
+      };
+      /** @description Bad request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
         };
       };
       /** @description Internal server error */
