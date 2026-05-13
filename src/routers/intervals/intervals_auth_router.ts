@@ -58,7 +58,7 @@ intervalsAuthRouter.post("/exchange", validator("json", ExchangeBodySchema), asy
     const errorBody = await tokenResponse
       .json()
       .catch(() => ({ message: tokenResponse.statusText }));
-    console.error("Intervals.icu token exchange failed:", errorBody);
+    c.var.logger.error({ errorBody }, "Intervals.icu token exchange failed");
     throw new IntervalsError(401, "Failed to exchange code with Intervals.icu");
   }
 
@@ -90,9 +90,7 @@ intervalsAuthRouter.post("/exchange", validator("json", ExchangeBodySchema), asy
     .set({ intervalsAthleteId: athlete.id })
     .where(eq(users.clerkId, clerkUserId));
 
-  console.log(
-    `Linked Intervals.icu account for Clerk User: ${clerkUserId}, athlete: ${athlete.id}`,
-  );
+  c.var.logger.info({ clerkUserId, athleteId: athlete.id }, "Linked Intervals.icu account");
 
   return c.json({
     success: true,
@@ -103,7 +101,7 @@ intervalsAuthRouter.post("/exchange", validator("json", ExchangeBodySchema), asy
 intervalsAuthRouter.post("/disconnect", async (c) => {
   const clerkUserId = c.get("clerkUserId");
   await disconnectIntervals(c.env, clerkUserId);
-  console.log(`Disconnected Intervals.icu for Clerk User: ${clerkUserId}`);
+  c.var.logger.info({ clerkUserId }, "Disconnected Intervals.icu");
 
   return c.json({
     success: true,

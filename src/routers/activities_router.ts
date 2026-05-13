@@ -2,6 +2,7 @@ import { and, count, desc, eq, gte, ilike, inArray, isNotNull, lte, or } from "d
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
+import { runInBackground } from "../background";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
 import { activities, intervalStructures, trainingTypeEnum } from "../schema";
 import {
@@ -144,8 +145,8 @@ activitiesRouter.post(
           },
         },
       });
-    } catch (error) {
-      console.error("Error fetching activities:", error);
+    } catch (err) {
+      c.var.logger.error({ err }, "Error fetching activities");
       return c.json({ error: "Internal Server Error" }, 500);
     }
   },
@@ -189,14 +190,19 @@ activitiesRouter.get(
       ]);
 
       if (activity && !activity.intervalsIcuId) {
-        linkFromLocalActivity(env, { id: userId, clerkId }, activityId).catch((err) =>
-          console.error("intervals.icu on-demand link failed:", err),
+        runInBackground(
+          "intervals.linkFromLocalActivity",
+          () => linkFromLocalActivity(env, { id: userId, clerkId }, activityId),
+          {
+            attributes: { "activity.id": activityId, "user.id": userId },
+            logger: c.var.logger,
+          },
         );
       }
 
       return c.json({ intervalSegments: segments });
-    } catch (error) {
-      console.error("Error fetching activity:", error);
+    } catch (err) {
+      c.var.logger.error({ err }, "Error fetching activity");
       return c.json({ error: "Internal Server Error" }, 500);
     }
   },
@@ -286,8 +292,8 @@ stravaActivitiesRouter.get(
         });
 
       return c.json({ stats });
-    } catch (error) {
-      console.error("Error fetching gear stats:", error);
+    } catch (err) {
+      c.var.logger.error({ err }, "Error fetching gear stats");
       return c.json({ error: "Internal Server Error" }, 500);
     }
   },
@@ -325,8 +331,8 @@ stravaActivitiesRouter.get(
         gearIds.map((id) => stravaApiService.getGear(c.get("stravaAccessToken"), id)),
       );
       return c.json({ gear });
-    } catch (error) {
-      console.error("Error fetching gear:", error);
+    } catch (err) {
+      c.var.logger.error({ err }, "Error fetching gear");
       return c.json({ error: "Internal Server Error" }, 500);
     }
   },
@@ -357,8 +363,8 @@ stravaActivitiesRouter.get(
       const { id } = c.req.valid("param");
       const laps = await stravaApiService.getActivityLaps(c.get("stravaAccessToken"), id);
       return c.json({ laps });
-    } catch (error) {
-      console.error("Error fetching laps:", error);
+    } catch (err) {
+      c.var.logger.error({ err }, "Error fetching laps");
       return c.json({ error: "Internal Server Error" }, 500);
     }
   },
@@ -389,8 +395,8 @@ stravaActivitiesRouter.get(
       const { id } = c.req.valid("param");
       const activity = await stravaApiService.getActivity(c.get("stravaAccessToken"), id);
       return c.json({ splits_metric: activity.splits_metric ?? [] });
-    } catch (error) {
-      console.error("Error fetching splits:", error);
+    } catch (err) {
+      c.var.logger.error({ err }, "Error fetching splits");
       return c.json({ error: "Internal Server Error" }, 500);
     }
   },
@@ -425,8 +431,8 @@ stravaActivitiesRouter.get(
         "distance",
       ]);
       return c.json(streams);
-    } catch (error) {
-      console.error("Error fetching heartrate stream:", error);
+    } catch (err) {
+      c.var.logger.error({ err }, "Error fetching heartrate stream");
       return c.json({ error: "Internal Server Error" }, 500);
     }
   },

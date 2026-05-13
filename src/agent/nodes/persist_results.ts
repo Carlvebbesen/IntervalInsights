@@ -1,4 +1,5 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
+import { logger } from "../../logger";
 import type { DraftAnalysisResult } from "../../schema/activities";
 import {
   completeWithoutSegments,
@@ -11,7 +12,7 @@ export async function persistResults(
   config: RunnableConfig,
 ): Promise<Partial<AnalysisState>> {
   const { db } = config.configurable as GraphConfigurable;
-  const tag = `[persistResults activity=${state.activityId}]`;
+  const log = logger.child({ node: "persistResults", activityId: state.activityId });
 
   const trainingType = state.confirmedTrainingType ?? state.initialResult?.training_type;
   if (!trainingType) {
@@ -25,7 +26,7 @@ export async function persistResults(
       userNotes: state.userNotes,
       feeling: state.feeling,
     });
-    console.log(`${tag} no segments — wrote status=completed`);
+    log.info("no segments — wrote status=completed");
     return {};
   }
 
@@ -36,13 +37,12 @@ export async function persistResults(
       acceptedSets: state.userSets,
       segmentsFromLaps: true,
     };
-    console.log(
-      `${tag} preparing draftOverride: acceptedSets=${state.userSets.length} segmentsFromLaps=true (segments will NOT be persisted)`,
+    log.info(
+      { acceptedSets: state.userSets.length },
+      "preparing draftOverride: segmentsFromLaps=true (segments will NOT be persisted)",
     );
   } else {
-    console.log(
-      `${tag} normal LLM path: persisting segments to DB, draftAnalysisResult will be nulled`,
-    );
+    log.info("normal LLM path: persisting segments to DB, draftAnalysisResult will be nulled");
   }
 
   await persistSegmentsAndStructure(db, {
@@ -56,8 +56,13 @@ export async function persistResults(
     persistSegments: !state.segmentsFromLaps,
     draftOverride,
   });
-  console.log(
-    `${tag} ${state.segmentsFromLaps ? "skipped" : "wrote"} ${state.computedSegments.length} segments (segmentsFromLaps=${state.segmentsFromLaps}), status=completed`,
+  log.info(
+    {
+      segments: state.computedSegments.length,
+      segmentsFromLaps: state.segmentsFromLaps,
+      action: state.segmentsFromLaps ? "skipped" : "wrote",
+    },
+    "persisted segments, status=completed",
   );
   return {};
 }

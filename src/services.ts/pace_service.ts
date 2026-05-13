@@ -1,6 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import type z from "zod";
 import type { workoutSet } from "../agent/initial_analysis_agent";
+import { logger } from "../logger";
 import {
   activities,
   generateIntervalSignature,
@@ -33,7 +34,7 @@ export const getProposedPaceForStructure = async (
   clerkUserId: string,
   sets: z.infer<typeof workoutSet>[],
 ): Promise<ExpandedIntervalSet[]> => {
-  const tag = "[getProposedPaceForStructure]";
+  const log = logger.child({ fn: "getProposedPaceForStructure" });
   const components = mapSetsToIntervalComponent(sets);
   const signature = generateIntervalSignature(components);
   const completeIntervalSet = generateCompleteIntervalSet(sets);
@@ -49,7 +50,7 @@ export const getProposedPaceForStructure = async (
     .orderBy(desc(activities.startDateLocal))
     .limit(MAX_HISTORY_ACTIVITIES);
 
-  console.log(`${tag} signature=${signature} matchingActivities=${matchingActivities.length}`);
+  log.info({ signature, matchingActivities: matchingActivities.length }, "signature lookup");
 
   const history: HistoryRow[] = [];
   for (const a of matchingActivities) {
@@ -69,12 +70,17 @@ export const getProposedPaceForStructure = async (
       });
       if (history.length >= HISTORY_LIMIT) break;
     }
-    console.log(
-      `${tag} activity=${a.activityId} (${a.date.toISOString().split("T")[0]}) contributed ${history.length - before} INTERVALS rows`,
+    log.info(
+      {
+        activityId: a.activityId,
+        date: a.date.toISOString().split("T")[0],
+        contributed: history.length - before,
+      },
+      "activity contributed INTERVALS rows",
     );
   }
 
-  console.log(`${tag} collected ${history.length} history rows total`);
+  log.info({ rows: history.length }, "collected history rows total");
   if (history.length === 0) return completeIntervalSet;
   return interpolatePaces(history, completeIntervalSet);
 };
@@ -139,26 +145,39 @@ export function getProposedPaceFromLaps(
   laps: Lap[],
   sets: z.infer<typeof workoutSet>[],
 ): ExpandedIntervalSet[] | null {
+  const log = logger.child({ fn: "getProposedPaceFromLaps" });
   const tag = "[getProposedPaceFromLaps]";
   const expanded = generateCompleteIntervalSet(sets);
-  console.log(
-    `${tag} laps=${laps.length} expectedWorkSteps=${expanded.reduce((s, x) => s + x.steps.length, 0)} structureSets=${sets.length}`,
+  log.info(
+    {
+      laps: laps.length,
+      expectedWorkSteps: expanded.reduce((s, x) => s + x.steps.length, 0),
+      structureSets: sets.length,
+    },
+    "starting",
   );
-  console.log(
-    `${tag} laps detail: ${laps
-      .map(
-        (l, i) =>
-          `#${i} dist=${l.distance}m time=${l.moving_time}s speed=${l.average_speed.toFixed(2)}m/s`,
-      )
-      .join(" | ")}`,
+  log.debug(
+    {
+      laps: laps.map((l, i) => ({
+        i,
+        distance: l.distance,
+        movingTime: l.moving_time,
+        speed: Number(l.average_speed.toFixed(2)),
+      })),
+    },
+    "laps detail",
   );
 
   const matchedLapIdx = matchLapsToExpandedSteps(laps, expanded, tag);
   if (!matchedLapIdx) return null;
 
   const matchedPaces = matchedLapIdx.map((i) => laps[i].average_speed);
-  console.log(
-    `${tag} matched ${matchedPaces.length} steps, paces (m/s): [${matchedPaces.map((p) => p.toFixed(2)).join(", ")}]`,
+  log.info(
+    {
+      steps: matchedPaces.length,
+      pacesMps: matchedPaces.map((p) => Number(p.toFixed(2))),
+    },
+    "matched steps with paces",
   );
 
   const sumLapsBetween = (
@@ -197,16 +216,23 @@ export function getProposedPaceFromLaps(
           const useDistance = recovery_type === "DISTANCE";
           recovery_value = useDistance ? Math.round(gap.distance) : Math.round(gap.movingTime);
           if (!recovery_type) recovery_type = "TIME";
-          console.log(
-            `${tag} step #${globalStep} rest: ${gap.count} lap(s) -> ${recovery_value}${useDistance ? "m" : "s"}`,
+          log.info(
+            {
+              step: globalStep,
+              gapLaps: gap.count,
+              recovery_value,
+              unit: useDistance ? "m" : "s",
+            },
+            "step rest derived",
           );
         }
       } else if (isLastStepInSet && !isLastSet && nextLapIdx !== undefined) {
         const gap = sumLapsBetween(currentLapIdx, nextLapIdx);
         if (gap.count > 0) {
           derivedSetRecovery = Math.round(gap.movingTime);
-          console.log(
-            `${tag} set #${setIdx} set_recovery: ${gap.count} lap(s) -> ${derivedSetRecovery}s`,
+          log.info(
+            { setIdx, gapLaps: gap.count, set_recovery: derivedSetRecovery },
+            "set_recovery derived",
           );
         }
       }

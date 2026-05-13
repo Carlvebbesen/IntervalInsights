@@ -2,6 +2,7 @@ import { createClerkClient } from "@clerk/backend";
 import { env } from "bun";
 import { and, eq, gte, isNull, lte } from "drizzle-orm";
 import { IntervalsError } from "../error";
+import { logger } from "../logger";
 import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import { activities, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
@@ -129,7 +130,7 @@ export async function linkFromLocalActivity(
   try {
     candidates = await intervalsApiService.listActivities(accessToken, oldest, newest);
   } catch (err) {
-    console.error("intervals.icu listActivities failed:", err);
+    logger.error({ err }, "intervals.icu listActivities failed");
     return null;
   }
 

@@ -1,5 +1,6 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { eq } from "drizzle-orm";
+import { logger } from "../../logger";
 import { activities } from "../../schema";
 import { userHasHeartRateConsent } from "../../services.ts/heart_rate_consent_service";
 import { stravaApiService } from "../../services.ts/strava_api_service";
@@ -10,7 +11,7 @@ export async function fetchActivityContext(
   config: RunnableConfig,
 ): Promise<Partial<AnalysisState>> {
   const { db, stravaAccessToken } = config.configurable as GraphConfigurable;
-  const tag = `[fetchActivityContext activity=${state.activityId}]`;
+  const log = logger.child({ node: "fetchActivityContext", activityId: state.activityId });
 
   const [_, activity, processHeartRate] = await Promise.all([
     db
@@ -37,8 +38,9 @@ export async function fetchActivityContext(
     throw new Error(`No streams returned for activity ${state.stravaActivityId}`);
   }
 
-  console.log(
-    `${tag} streams=${Object.keys(streams).length} laps=${laps.length} indoor=${isIndoor}`,
+  log.info(
+    { streams: Object.keys(streams).length, laps: laps.length, indoor: isIndoor },
+    "fetched activity context",
   );
 
   return {

@@ -1,4 +1,5 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
+import { logger } from "../../logger";
 import { detectAndPersistEvents } from "../../services.ts/event_detection_service";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";
 
@@ -6,10 +7,15 @@ export async function detectEvents(
   state: AnalysisState,
   config: RunnableConfig,
 ): Promise<Partial<AnalysisState>> {
-  const tag = `[detectEvents activity=${state.activityId}]`;
+  const log = logger.child({ node: "detectEvents", activityId: state.activityId });
   const { db } = config.configurable as GraphConfigurable;
-  console.log(
-    `${tag} entering: title.len=${state.activityTitle.length} description.len=${state.activityDescription.length} userNotes.len=${state.userNotes.length}`,
+  log.info(
+    {
+      titleLen: state.activityTitle.length,
+      descriptionLen: state.activityDescription.length,
+      userNotesLen: state.userNotes.length,
+    },
+    "entering",
   );
   await detectAndPersistEvents(db, {
     activityId: state.activityId,
@@ -19,6 +25,6 @@ export async function detectEvents(
     notes: state.userNotes,
     activityStartDateLocal: state.activityStartDateLocal,
   });
-  console.log(`${tag} finished`);
+  log.info("finished");
   return {};
 }

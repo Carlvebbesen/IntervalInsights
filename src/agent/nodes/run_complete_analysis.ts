@@ -1,5 +1,6 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { eq } from "drizzle-orm";
+import { logger } from "../../logger";
 import { activities } from "../../schema";
 import { INTERVAL_TRAINING_TYPES } from "../../schema/enums";
 import {
@@ -20,7 +21,7 @@ export async function runCompleteAnalysis(
   state: AnalysisState,
   config: RunnableConfig,
 ): Promise<Partial<AnalysisState>> {
-  const tag = `[runCompleteAnalysis activity=${state.activityId}]`;
+  const log = logger.child({ node: "runCompleteAnalysis", activityId: state.activityId });
   const { db } = config.configurable as GraphConfigurable;
 
   const trainingType = state.confirmedTrainingType ?? state.initialResult?.training_type;
@@ -29,7 +30,7 @@ export async function runCompleteAnalysis(
   }
 
   if (!needCompleteAnalysis(trainingType)) {
-    console.log(`${tag} trainingType=${trainingType} skips LLM segment breakdown`);
+    log.info({ trainingType }, "trainingType skips LLM segment breakdown");
     return { computedSegments: [] };
   }
 
@@ -40,13 +41,15 @@ export async function runCompleteAnalysis(
       set.steps.some((step) => step.target_pace == null || Number(step.target_pace) === 0),
     )
   ) {
-    console.warn(
-      `${tag} indoor + interval training type but at least one work step has no target_pace — GPS pace from streams will be unreliable. Persisting whatever the user provided.`,
+    log.warn(
+      "indoor + interval training type but at least one work step has no target_pace — GPS pace from streams will be unreliable. Persisting whatever the user provided.",
     );
   }
 
   if (!state.streams) {
-    throw new Error(`${tag} called without streams in state`);
+    throw new Error(
+      `[runCompleteAnalysis activity=${state.activityId}] called without streams in state`,
+    );
   }
 
   await db
@@ -55,35 +58,39 @@ export async function runCompleteAnalysis(
     .where(eq(activities.id, state.activityId));
 
   if (!state.streams.time || !state.streams.distance) {
-    throw new Error(`${tag} streams missing time or distance — cannot compute segment stats`);
+    throw new Error(
+      `[runCompleteAnalysis activity=${state.activityId}] streams missing time or distance — cannot compute segment stats`,
+    );
   }
   const statsStreams = state.streams as Required<Pick<StreamSet, "time" | "distance">> &
     Pick<StreamSet, "heartrate">;
 
   const shapeUnchanged = structureShapeMatches(state.initialResult?.structure, state.userSets);
   if (shapeUnchanged && !state.isIndoor && state.laps.length > 0) {
-    console.log(`${tag} structure unchanged + outdoor — attempting lap-derived segments`);
+    log.info("structure unchanged + outdoor — attempting lap-derived segments");
     const fromLaps = buildSegmentsFromLaps(
       state.activityId,
       state.laps,
       state.userSets,
       statsStreams,
-      tag,
+      `[runCompleteAnalysis activity=${state.activityId}]`,
     );
     if (fromLaps) {
-      console.log(
-        `${tag} lap-derived segments=${fromLaps.length} — skipping LLM and segment persistence`,
+      log.info(
+        { segments: fromLaps.length },
+        "lap-derived segments — skipping LLM and segment persistence",
       );
       return { computedSegments: fromLaps, segmentsFromLaps: true };
     }
-    console.log(`${tag} lap-derivation failed — falling back to LLM`);
+    log.info("lap-derivation failed — falling back to LLM");
   } else {
-    console.log(
-      `${tag} skipping lap-derived path (shapeUnchanged=${shapeUnchanged} indoor=${state.isIndoor} laps=${state.laps.length})`,
+    log.info(
+      { shapeUnchanged, indoor: state.isIndoor, laps: state.laps.length },
+      "skipping lap-derived path",
     );
   }
 
-  console.log(`${tag} invoking complete analysis LLM`);
+  log.info("invoking complete analysis LLM");
   const segmentPlan = await invokeWithRateLimitRetry(() =>
     invokeCompleteActivityAnalysisAgent(
       state.streams as NonNullable<typeof state.streams>,
@@ -98,7 +105,7 @@ export async function runCompleteAnalysis(
   if (!segmentPlan) {
     throw new Error("Complete analysis agent returned null");
   }
-  console.log(`${tag} LLM returned ${segmentPlan.segments.length} raw segments`);
+  log.info({ rawSegments: segmentPlan.segments.length }, "LLM returned segments");
 
   let segmentIndexCounter = 0;
   let droppedByStats = 0;
@@ -125,8 +132,6 @@ export async function runCompleteAnalysis(
     })
     .filter((s): s is NonNullable<typeof s> => s !== null);
 
-  console.log(
-    `${tag} computedSegments=${computedSegments.length} droppedByStats=${droppedByStats}`,
-  );
+  log.info({ computedSegments: computedSegments.length, droppedByStats }, "computed segments");
   return { computedSegments };
 }

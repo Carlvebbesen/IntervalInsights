@@ -1,5 +1,6 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { eq } from "drizzle-orm";
+import { logger } from "../../logger";
 import { activities, type DraftAnalysisResult } from "../../schema";
 import { lapsMatchIntervals, needCompleteAnalysis } from "../../services.ts/utils";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";
@@ -11,10 +12,12 @@ export async function runInitialAgent(
   config: RunnableConfig,
 ): Promise<Partial<AnalysisState>> {
   const { db } = config.configurable as GraphConfigurable;
-  const tag = `[runInitialAgent activity=${state.activityId}]`;
+  const log = logger.child({ node: "runInitialAgent", activityId: state.activityId });
 
   if (!state.streams) {
-    throw new Error(`${tag} called without streams in state`);
+    throw new Error(
+      `[runInitialAgent activity=${state.activityId}] called without streams in state`,
+    );
   }
 
   const initialResult = await invokeWithRateLimitRetry(() =>
@@ -59,8 +62,14 @@ export async function runInitialAgent(
         `${s.set_reps}×[${s.steps.map((st) => `${st.reps}×${st.work_value}${st.work_type === "DISTANCE" ? "m" : "s"}`).join("+")}]`,
     )
     .join(" | ");
-  console.log(
-    `${tag} initialResult.training_type=${initialResult.training_type} confidence=${initialResult.confidence_score.toFixed(2)} lapsMatchStructure=${lapsMatchStructure} structure=${structureSummary || "none"}`,
+  log.info(
+    {
+      trainingType: initialResult.training_type,
+      confidence: Number(initialResult.confidence_score.toFixed(2)),
+      lapsMatchStructure,
+      structure: structureSummary || null,
+    },
+    "initialResult ready",
   );
 
   return { initialResult, lapsMatchStructure };

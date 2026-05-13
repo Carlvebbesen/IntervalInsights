@@ -51,7 +51,7 @@ stravaApiRouter.get(
 
     const userId = c.get("userId");
     if (!userId) {
-      console.log("no user found");
+      c.var.logger.warn("no user found");
       return c.json({ error: "Unauthorized" }, 401);
     }
 

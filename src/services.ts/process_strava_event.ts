@@ -1,6 +1,7 @@
 import { createClerkClient } from "@clerk/backend";
 import { env } from "bun";
 import { eq } from "drizzle-orm";
+import { logger } from "../logger";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import { activities, getDbInsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
@@ -27,7 +28,7 @@ async function classifyUserActivity(clerkId: string): Promise<"active" | "skip" 
     if (daysSince > INACTIVITY_SKIP_DAYS) return "skip";
     return "active";
   } catch (err) {
-    console.warn("Failed to fetch Clerk user for inactivity check — defaulting to active", err);
+    logger.warn({ err }, "Failed to fetch Clerk user for inactivity check — defaulting to active");
     return "active";
   }
 }
@@ -53,7 +54,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
       publicMetadata: { strava_connected: false },
     });
 
-    console.log(`Processed deauthorization for Strava athlete ${body.owner_id}`);
+    logger.info({ athleteId: body.owner_id }, "Processed Strava deauthorization");
     return;
   }
 
@@ -69,18 +70,22 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
     where: (u, { eq }) => eq(u.stravaId, body.owner_id.toString()),
   });
   if (!user) {
-    console.log("No user found for strava event");
+    logger.info({ ownerId: body.owner_id }, "No user found for strava event");
     return;
   }
   const accessToken = (await getStravaAccessTokens(user.clerkId)).access_token;
   if (!accessToken) {
-    console.log("no access token");
+    logger.info({ clerkUserId: user.clerkId }, "no access token");
     return;
   }
 
   const data = await stravaApiService.getActivity(accessToken, stravaActivityId);
   if (!shouldAnalyze(data.sport_type)) {
-    return console.log(`Does not analyze that sportType:${data.sport_type} with id: ${data.id}`);
+    logger.info(
+      { sportType: data.sport_type, stravaActivityId: data.id },
+      "Does not analyze that sportType",
+    );
+    return;
   }
   const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
   const activity = getDbInsertActivity(data, user.id, processHeartRate);
@@ -88,8 +93,9 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
   const activityClass = await classifyUserActivity(user.clerkId);
 
   if (activityClass === "drop") {
-    console.log(
-      `Dropping Strava activity ${stravaActivityId} — user ${user.id} inactive > ${INACTIVITY_DROP_DAYS} days`,
+    logger.info(
+      { stravaActivityId, userId: user.id, inactiveDays: INACTIVITY_DROP_DAYS },
+      "Dropping Strava activity — user inactive",
     );
     return;
   }
@@ -100,8 +106,9 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
         ? { ...activity, analysisStatus: "skipped_inactive" as const }
         : activity;
     if (activityClass === "skip") {
-      console.log(
-        `Storing ${stravaActivityId} as skipped_inactive — user ${user.id} inactive > ${INACTIVITY_SKIP_DAYS} days`,
+      logger.info(
+        { stravaActivityId, userId: user.id, inactiveDays: INACTIVITY_SKIP_DAYS },
+        "Storing as skipped_inactive — user inactive",
       );
     }
     await context.db.insert(activities).values(payload).onConflictDoNothing();

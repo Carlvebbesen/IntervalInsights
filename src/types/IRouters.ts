@@ -1,4 +1,5 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { Logger } from "../logger";
 import type * as schema from "../schema";
 export interface IGlobalBindings {
   db: NodePgDatabase<typeof schema>;
@@ -8,6 +9,8 @@ export interface IGlobalVariables {
   clerkUserId: string;
   userId: string;
   role: "guest" | "premium" | "admin";
+  requestId: string;
+  logger: Logger;
 }
 
 // Extend the global variables for Strava-specific routes
@@ -24,6 +27,9 @@ export interface IIntervalsVariables extends IGlobalVariables {
 // Helper types for the Hono Generics
 
 export type TGlobalEnv = { Bindings: IGlobalBindings; Variables: IGlobalVariables };
-export type TPublicEnv = { Bindings: IGlobalBindings; Variables: Record<string, never> };
+export type TPublicEnv = {
+  Bindings: IGlobalBindings;
+  Variables: { requestId: string; logger: Logger };
+};
 export type TStravaEnv = { Bindings: IGlobalBindings; Variables: IStravaVariables };
 export type TIntervalsEnv = { Bindings: IGlobalBindings; Variables: IIntervalsVariables };

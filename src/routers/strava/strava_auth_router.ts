@@ -108,7 +108,7 @@ stravaAuthRouter.post(
       const tokenData = await tokenResponse.json();
 
       if (!tokenResponse.ok) {
-        console.error("Strava Error:", tokenData);
+        c.var.logger.error({ tokenData }, "Strava token exchange failed");
         return c.json({ error: "Failed to exchange token with Strava" }, 401);
       }
       const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
@@ -133,24 +133,24 @@ stravaAuthRouter.post(
       if (existingUser) {
         if (!existingUser.stravaId) {
           await c.env.db.update(users).set({ stravaId }).where(eq(users.clerkId, auth.userId));
-          console.log(`Updated Strava ID for existing user: ${auth.userId}`);
+          c.var.logger.info({ clerkUserId: auth.userId }, "Updated Strava ID for existing user");
         }
       } else {
         await c.env.db.insert(users).values({
           clerkId: auth.userId,
           stravaId,
         });
-        console.log(`Created new user record for Clerk User: ${auth.userId}`);
+        c.var.logger.info({ clerkUserId: auth.userId }, "Created new user record");
       }
 
-      console.log(`Linked Strava account for Clerk User: ${auth.userId}`);
+      c.var.logger.info({ clerkUserId: auth.userId }, "Linked Strava account");
 
       return c.json({
         success: true,
         message: "Strava connected successfully.",
       });
-    } catch (error) {
-      console.error(error);
+    } catch (err) {
+      c.var.logger.error({ err }, "Strava exchange failed");
       return c.json({ error: "Internal Server Error" }, 500);
     }
   },

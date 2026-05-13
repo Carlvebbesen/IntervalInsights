@@ -63,9 +63,8 @@ stravaWebhookRouter.get(
     },
   }),
   async (c) => {
-    console.log("Setting up subscription...");
     const CALLBACK_URL = `${env.APP_BASE_URL}api/strava/event`;
-    console.log(CALLBACK_URL);
+    c.var.logger.info({ callbackUrl: CALLBACK_URL }, "Setting up Strava subscription");
     const formData = new FormData();
     formData.append("client_id", STRAVA_CLIENT_ID);
     formData.append("client_secret", STRAVA_CLIENT_SECRET);
@@ -80,9 +79,9 @@ stravaWebhookRouter.get(
     const data = await response.json();
 
     if (response.ok) {
-      console.log("Subscription request sent successfully:", data);
+      c.var.logger.info({ data }, "Subscription request sent successfully");
     } else {
-      console.error("Subscription request failed:", data);
+      c.var.logger.error({ data }, "Subscription request failed");
     }
     return c.json(data, response.status as ContentfulStatusCode);
   },

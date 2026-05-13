@@ -1,6 +1,7 @@
 import { Command } from "@langchain/langgraph";
 import { eq } from "drizzle-orm";
 import { buildAnalysisGraph, resetAnalysisThread } from "../agent/analysis_graph";
+import { logger } from "../logger";
 import { activities, users } from "../schema";
 import { SKIP_RESTART_STATUSES, SKIP_START_STATUSES, type TrainingType } from "../schema/enums";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
@@ -25,19 +26,19 @@ export const startAnalysis = async (
   stravaActivityId: number,
   userId: string,
 ): Promise<void> => {
-  const tag = `[startAnalysis activity=${activityId}]`;
+  const log = logger.child({ fn: "startAnalysis", activityId });
   const current = await db.query.activities.findFirst({
     where: eq(activities.id, activityId),
     columns: { analysisStatus: true },
   });
   if (current?.analysisStatus && SKIP_START_STATUSES.has(current.analysisStatus)) {
-    console.log(`${tag} skipping — already in status=${current.analysisStatus}`);
+    log.info({ status: current.analysisStatus }, "skipping — already in this status");
     return;
   }
 
   const userCtx = await getUserContext(db, userId);
   if (!userCtx) {
-    console.error(`${tag} user ${userId} not found — aborting`);
+    log.error({ userId }, "user not found — aborting");
     return;
   }
 
@@ -55,15 +56,15 @@ export const startAnalysis = async (
         },
       },
     );
-  } catch (error) {
-    console.error(`Error in startAnalysis for activity ${activityId}:`, error);
+  } catch (err) {
+    log.error({ err }, "Error in startAnalysis");
     try {
       await db
         .update(activities)
         .set({ analysisStatus: "error" })
         .where(eq(activities.id, activityId));
-    } catch (dbError) {
-      console.error("Could not set error status in DB:", dbError);
+    } catch (dbErr) {
+      log.error({ err: dbErr }, "Could not set error status in DB");
     }
   }
 };
@@ -77,10 +78,8 @@ export const resumeAnalysis = async (
   trainingType: TrainingType | null,
   feeling: number | null,
 ): Promise<void> => {
-  const tag = `[resumeAnalysis activity=${activityId}]`;
-  console.log(
-    `${tag} starting resume notes.len=${notes.length} sets=${sets.length} trainingType=${trainingType ?? "null"} feeling=${feeling ?? "null"}`,
-  );
+  const log = logger.child({ fn: "resumeAnalysis", activityId });
+  log.info({ notesLen: notes.length, sets: sets.length, trainingType, feeling }, "starting resume");
 
   const current = await db.query.activities.findFirst({
     where: eq(activities.id, activityId),
@@ -108,7 +107,7 @@ export const resumeAnalysis = async (
     throw new Error(`User for activity ${activityId} not found`);
   }
 
-  console.log(`${tag} graph-path: invoking Command resume`);
+  log.info("graph-path: invoking Command resume");
   try {
     const graph = await buildAnalysisGraph();
     const graphConfig = {
@@ -124,9 +123,7 @@ export const resumeAnalysis = async (
     const before = await graph.getState(graphConfig);
     const beforeInterrupts = before.tasks.reduce((sum, t) => sum + t.interrupts.length, 0);
     const hasPendingWork = before.next.length > 0;
-    console.log(
-      `${tag} pre-invoke graph state: next=[${before.next.join(",")}] taskInterrupts=${beforeInterrupts}`,
-    );
+    log.info({ next: before.next, taskInterrupts: beforeInterrupts }, "pre-invoke graph state");
     if (!hasPendingWork && beforeInterrupts === 0) {
       throw new Error(
         `Cannot resume activity ${activityId} — thread has no pending interrupt (next=[], no tasks). The checkpoint may be missing or the thread already finished.`,
@@ -137,7 +134,7 @@ export const resumeAnalysis = async (
       new Command({ resume: { notes, sets, trainingType: finalTrainingType, feeling } }),
       graphConfig,
     );
-    console.log(`${tag} graph.invoke returned without throwing`);
+    log.info("graph.invoke returned without throwing");
 
     const after = await graph.getState(graphConfig);
     const afterInterrupts = after.tasks.reduce((sum, t) => sum + t.interrupts.length, 0);
@@ -146,19 +143,17 @@ export const resumeAnalysis = async (
         `Graph resume did not progress activity ${activityId} — still paused at interrupt (next=[${after.next.join(",")}])`,
       );
     }
-  } catch (error) {
-    const err = error as { message?: string; stack?: string; name?: string };
-    console.error(`${tag} FAILED name=${err?.name} message=${err?.message}`);
-    if (err?.stack) console.error(err.stack);
+  } catch (err) {
+    log.error({ err }, "FAILED");
     try {
       await db
         .update(activities)
         .set({ analysisStatus: "error" })
         .where(eq(activities.id, activityId));
-    } catch (dbError) {
-      console.error("Could not set error status in DB:", dbError);
+    } catch (dbErr) {
+      log.error({ err: dbErr }, "Could not set error status in DB");
     }
-    throw error;
+    throw err;
   }
 };
 
@@ -173,7 +168,7 @@ export const startAnalysisByStravaId = async (
     columns: { id: true },
   });
   if (!result) {
-    console.error(`Activity with stravaId ${stravaActivityId} not found in DB`);
+    logger.error({ stravaActivityId }, "Activity not found in DB");
     return;
   }
   await startAnalysis(db, stravaAccessToken, result.id, stravaActivityId, userId);
@@ -190,13 +185,14 @@ export const restartAnalysisByStravaId = async (
     columns: { id: true, analysisStatus: true },
   });
   if (!result) {
-    console.error(`Activity with stravaId ${stravaActivityId} not found in DB`);
+    logger.error({ stravaActivityId }, "Activity not found in DB");
     return;
   }
 
   if (result.analysisStatus && SKIP_RESTART_STATUSES.has(result.analysisStatus)) {
-    console.log(
-      `Skipping restart for activity ${result.id} — analysis in progress (status=${result.analysisStatus})`,
+    logger.info(
+      { activityId: result.id, status: result.analysisStatus },
+      "Skipping restart — analysis in progress",
     );
     return;
   }

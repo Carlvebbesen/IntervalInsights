@@ -2,6 +2,7 @@ import { env } from "bun";
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
+import { runInBackground } from "../background";
 import { ErrorSchema } from "../schemas/api_schemas";
 import { processIntervalsWebhook } from "../services.ts/process_intervals_event";
 import { processStravaWebhook } from "../services.ts/process_strava_event";
@@ -59,18 +60,18 @@ publicRouter.get(
   }),
   validator("query", StravaHandshakeQuerySchema),
   (c) => {
-    console.log("Strava handshake triggered");
     const mode = c.req.query("hub.mode");
     const token = c.req.query("hub.verify_token");
     const challenge = c.req.query("hub.challenge");
     const expectedToken = env.STRAVA_WEBHOOK_VERIFY_TOKEN;
-    console.log(
-      `Handshake - mode: ${mode}, token match: ${token === expectedToken}, challenge: ${challenge}`,
+    c.var.logger.info(
+      { mode, tokenMatch: token === expectedToken, challenge },
+      "Strava handshake triggered",
     );
     if (mode === "subscribe" && token === expectedToken) {
       return c.json({ "hub.challenge": challenge }, 200);
     }
-    console.error("Verification failed: Token mismatch or invalid mode");
+    c.var.logger.error("Strava handshake verification failed: token mismatch or invalid mode");
     return c.json({ error: "Verification failed" }, 403);
   },
 );
@@ -88,7 +89,7 @@ publicRouter.get(
     },
   }),
   (c) => {
-    console.log("Health triggered");
+    c.var.logger.debug("Health triggered");
     return c.json("i'm alive :D ", 200);
   },
 );
@@ -168,15 +169,25 @@ publicRouter.post(
   async (c) => {
     const body = (await c.req.json()) as IStravaWebhookEvent;
 
-    console.log(
-      `Strava event receivied: Type: ${body.aspect_type}, eventId: ${body.object_id} for athlete: ${body.owner_id}`,
+    c.var.logger.info(
+      {
+        aspectType: body.aspect_type,
+        eventId: body.object_id,
+        athleteId: body.owner_id,
+      },
+      "Strava event received",
     );
     if (body.subscription_id?.toString() !== env.STRAVA_SUBSCRIPTION_ID) {
       return c.json({ status: "unauthorized" }, 401);
     }
-    processStravaWebhook(body, c.env).catch((err) =>
-      console.error("Background processing failed:", err),
-    );
+    runInBackground("strava.webhook.process", () => processStravaWebhook(body, c.env), {
+      attributes: {
+        "strava.aspect_type": body.aspect_type,
+        "strava.object_id": body.object_id,
+        "strava.owner_id": body.owner_id,
+      },
+      logger: c.var.logger,
+    });
     return c.json({ status: "ok" }, 200);
   },
 );
@@ -223,22 +234,29 @@ publicRouter.post(
   validator("json", IntervalsWebhookEventSchema),
   async (c) => {
     const body: IIntervalsWebhookEvent = c.req.valid("json");
+    const activityId = "activity_id" in body ? body.activity_id : undefined;
 
-    const activitySuffix = "activity_id" in body ? `, activity: ${body.activity_id}` : "";
-    console.log(
-      `Intervals.icu event received: ${body.event} for athlete: ${body.athlete_id}${activitySuffix}`,
+    c.var.logger.info(
+      { event: body.event, athleteId: body.athlete_id, activityId },
+      "Intervals.icu event received",
     );
 
     if (body.secret !== INTERVALS_WEBHOOK_SECRET) {
-      console.warn(
-        `Rejected intervals.icu webhook with bad secret (athlete: ${body.athlete_id}${activitySuffix})`,
+      c.var.logger.warn(
+        { athleteId: body.athlete_id, activityId },
+        "Rejected intervals.icu webhook with bad secret",
       );
       return c.json({ status: "unauthorized" }, 401);
     }
 
-    processIntervalsWebhook(body, c.env).catch((err) =>
-      console.error("Intervals.icu webhook processing failed:", err),
-    );
+    runInBackground("intervals.webhook.process", () => processIntervalsWebhook(body, c.env), {
+      attributes: {
+        "intervals.event": body.event,
+        "intervals.athlete_id": body.athlete_id,
+        "intervals.activity_id": activityId,
+      },
+      logger: c.var.logger,
+    });
     return c.json({ status: "ok" }, 200);
   },
 );
