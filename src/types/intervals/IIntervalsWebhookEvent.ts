@@ -4,21 +4,38 @@ export type IntervalsActivityEventType =
   | "ACTIVITY_ANALYZED"
   | "ACTIVITY_DELETED";
 
-export type IntervalsWebhookEventType = IntervalsActivityEventType | "APP_SCOPE_CHANGED";
+export type IntervalsWebhookEventType = IntervalsActivityEventType | "APP_SCOPE_CHANGED" | "TEST";
 
-export interface IIntervalsActivityWebhookEvent {
-  event: IntervalsActivityEventType;
+interface IIntervalsWebhookEventBase {
   athlete_id: string;
-  activity_id: string;
-  secret: string;
+  timestamp?: string;
 }
 
-export interface IIntervalsScopeChangeWebhookEvent {
-  event: "APP_SCOPE_CHANGED";
-  athlete_id: string;
-  secret: string;
+export interface IIntervalsActivityWebhookEvent extends IIntervalsWebhookEventBase {
+  type: IntervalsActivityEventType;
+  activity?: { id: string | number; [key: string]: unknown };
+}
+
+export interface IIntervalsScopeChangeWebhookEvent extends IIntervalsWebhookEventBase {
+  type: "APP_SCOPE_CHANGED";
+}
+
+export interface IIntervalsTestWebhookEvent extends IIntervalsWebhookEventBase {
+  type: "TEST";
+}
+
+export interface IIntervalsUnknownWebhookEvent extends IIntervalsWebhookEventBase {
+  type: string;
+  [key: string]: unknown;
 }
 
 export type IIntervalsWebhookEvent =
   | IIntervalsActivityWebhookEvent
-  | IIntervalsScopeChangeWebhookEvent;
+  | IIntervalsScopeChangeWebhookEvent
+  | IIntervalsTestWebhookEvent
+  | IIntervalsUnknownWebhookEvent;
+
+export interface IIntervalsWebhookPayload {
+  secret: string;
+  events: IIntervalsWebhookEvent[];
+}

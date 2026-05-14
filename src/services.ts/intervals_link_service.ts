@@ -1,17 +1,66 @@
 import { createClerkClient } from "@clerk/backend";
-import { env } from "bun";
-import { and, eq, gte, isNull, lte } from "drizzle-orm";
+import { env, sleep } from "bun";
+import { and, desc, eq, gte, isNull, lte } from "drizzle-orm";
 import { IntervalsError } from "../error";
 import { logger } from "../logger";
 import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
-import { activities, users } from "../schema";
+import { activities, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsActivity } from "../types/intervals/IIntervalsActivity";
 import { intervalsApiService } from "./intervals_api_service";
 
+type EnrichmentFields = Partial<
+  Pick<
+    InsertActivity,
+    | "elapsedTime"
+    | "maxHeartRate"
+    | "averagePower"
+    | "weightedAveragePower"
+    | "calories"
+    | "deviceName"
+    | "trainingLoad"
+    | "icuTrainingLoad"
+    | "icuIntensity"
+    | "relativeIntensity"
+    | "decoupling"
+    | "polarizationIndex"
+    | "icuFtp"
+    | "icuCtl"
+    | "icuAtl"
+  >
+>;
+
+function buildEnrichment(activity: IIntervalsActivity): EnrichmentFields {
+  return {
+    elapsedTime: activity.elapsed_time ?? null,
+    maxHeartRate: activity.max_hr ?? null,
+    averagePower: activity.average_power ?? null,
+    weightedAveragePower: activity.weighted_average_power ?? null,
+    calories: activity.calories ?? null,
+    deviceName: activity.device_name ?? null,
+    trainingLoad: activity.training_load ?? null,
+    icuTrainingLoad: activity.icu_training_load ?? null,
+    icuIntensity: activity.icu_intensity ?? null,
+    relativeIntensity: activity.relative_intensity ?? null,
+    decoupling: activity.decoupling ?? null,
+    polarizationIndex: activity.polarization_index ?? null,
+    icuFtp: activity.icu_ftp ?? null,
+    icuCtl: activity.icu_ctl ?? null,
+    icuAtl: activity.icu_atl ?? null,
+  };
+}
+
 const TIME_TOLERANCE_MS = 5 * 60 * 1000;
 const DISTANCE_TOLERANCE_RATIO = 0.03;
 const LIST_WINDOW_MS = 60 * 60 * 1000;
+
+// intervals.icu returns start_date_local as naïve local time (no `Z`).
+// We store local times as UTC instants, so parse the naïve string as UTC.
+function parseIntervalsLocalStartMs(value: string | undefined | null): number {
+  if (!value) return NaN;
+  const normalized = value.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`;
+  return new Date(normalized).getTime();
+}
 
 export interface LinkResult {
   localActivityId: number;
@@ -37,11 +86,11 @@ async function findLocalByFuzzyMatch(
   userId: string,
   intervalsActivity: IIntervalsActivity,
 ): Promise<{ id: number } | null> {
-  const startTime = new Date(intervalsActivity.local_start_time);
-  if (Number.isNaN(startTime.getTime())) return null;
+  const startMs = parseIntervalsLocalStartMs(intervalsActivity.start_date_local);
+  if (Number.isNaN(startMs)) return null;
 
-  const minTime = new Date(startTime.getTime() - TIME_TOLERANCE_MS);
-  const maxTime = new Date(startTime.getTime() + TIME_TOLERANCE_MS);
+  const minTime = new Date(startMs - TIME_TOLERANCE_MS);
+  const maxTime = new Date(startMs + TIME_TOLERANCE_MS);
 
   const minDistance = intervalsActivity.distance * (1 - DISTANCE_TOLERANCE_RATIO);
   const maxDistance = intervalsActivity.distance * (1 + DISTANCE_TOLERANCE_RATIO);
@@ -67,13 +116,15 @@ async function findLocalByFuzzyMatch(
 async function commitLink(
   context: IGlobalBindings,
   localActivityId: number,
-  intervalsActivityId: string,
+  intervalsActivity: IIntervalsActivity,
 ): Promise<void> {
   await context.db
     .update(activities)
     .set({
-      intervalsIcuId: intervalsActivityId,
+      intervalsIcuId: intervalsActivity.id,
       intervalsAnalyzed: true,
+      intervalsIcuEnrichedAt: new Date(),
+      ...buildEnrichment(intervalsActivity),
     })
     .where(and(eq(activities.id, localActivityId), isNull(activities.intervalsIcuId)));
 }
@@ -95,7 +146,7 @@ export async function linkFromIntervalsActivity(
   const match = await findLocalByFuzzyMatch(context, user.id, intervalsActivity);
   if (!match) return null;
 
-  await commitLink(context, match.id, intervalsActivityId);
+  await commitLink(context, match.id, intervalsActivity);
   return { localActivityId: match.id, intervalsActivityId };
 }
 
@@ -135,7 +186,7 @@ export async function linkFromLocalActivity(
   }
 
   const fuzzy = candidates.filter((candidate) => {
-    const candidateStart = new Date(candidate.local_start_time).getTime();
+    const candidateStart = parseIntervalsLocalStartMs(candidate.start_date_local);
     if (Number.isNaN(candidateStart)) return false;
     return matchesByDistanceAndTime(
       candidateStart,
@@ -146,8 +197,115 @@ export async function linkFromLocalActivity(
   });
   if (fuzzy.length !== 1) return null;
 
-  await commitLink(context, activity.id, fuzzy[0].id);
-  return { localActivityId: activity.id, intervalsActivityId: fuzzy[0].id };
+  // Re-fetch by id so we get the full activity payload (icu_ctl/icu_atl/icu_ftp
+  // and other fitness-state fields may only be populated post-analysis and
+  // missing from the list response).
+  let full: IIntervalsActivity;
+  try {
+    full = await intervalsApiService.getActivity(accessToken, fuzzy[0].id);
+  } catch (err) {
+    logger.error({ err, intervalsActivityId: fuzzy[0].id }, "intervals.icu getActivity failed");
+    full = fuzzy[0];
+  }
+
+  await commitLink(context, activity.id, full);
+  return { localActivityId: activity.id, intervalsActivityId: full.id };
+}
+
+export async function enrichActivityFromIntervalsIcu(
+  context: IGlobalBindings,
+  user: { id: string; clerkId: string },
+  localActivityId: number,
+): Promise<"enriched" | "linked" | "skipped" | "no_match" | "no_token"> {
+  const activity = await context.db.query.activities.findFirst({
+    where: (a, { eq, and }) => and(eq(a.id, localActivityId), eq(a.userId, user.id)),
+    columns: {
+      id: true,
+      intervalsIcuId: true,
+      intervalsIcuEnrichedAt: true,
+    },
+  });
+  if (!activity) return "no_match";
+
+  if (activity.intervalsIcuId && activity.intervalsIcuEnrichedAt) {
+    return "skipped";
+  }
+
+  if (!activity.intervalsIcuId) {
+    const result = await linkFromLocalActivity(context, user, localActivityId);
+    return result ? "linked" : "no_match";
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getIntervalsAccessToken(user.clerkId);
+  } catch {
+    return "no_token";
+  }
+
+  let full: IIntervalsActivity;
+  try {
+    full = await intervalsApiService.getActivity(accessToken, activity.intervalsIcuId);
+  } catch (err) {
+    logger.error(
+      { err, intervalsActivityId: activity.intervalsIcuId },
+      "intervals.icu getActivity failed during enrichment",
+    );
+    return "no_match";
+  }
+
+  await context.db
+    .update(activities)
+    .set({
+      intervalsIcuEnrichedAt: new Date(),
+      ...buildEnrichment(full),
+    })
+    .where(eq(activities.id, activity.id));
+
+  return "enriched";
+}
+
+const SYNC_BATCH_LIMIT = 100;
+const SYNC_THROTTLE_MS = 100;
+
+export interface SyncIntervalsResult {
+  candidates: number;
+  linked: number;
+  noMatch: number;
+  failed: number;
+}
+
+export async function syncUnlinkedActivities(
+  context: IGlobalBindings,
+  user: { id: string; clerkId: string },
+): Promise<SyncIntervalsResult> {
+  const rows = await context.db
+    .select({ id: activities.id })
+    .from(activities)
+    .where(and(eq(activities.userId, user.id), isNull(activities.intervalsIcuId)))
+    .orderBy(desc(activities.startDateLocal))
+    .limit(SYNC_BATCH_LIMIT);
+
+  const result: SyncIntervalsResult = {
+    candidates: rows.length,
+    linked: 0,
+    noMatch: 0,
+    failed: 0,
+  };
+
+  for (const row of rows) {
+    try {
+      const link = await linkFromLocalActivity(context, user, row.id);
+      if (link) result.linked++;
+      else result.noMatch++;
+    } catch (err) {
+      result.failed++;
+      logger.error({ err, activityId: row.id }, "intervals.icu sync failed for activity");
+    }
+    await sleep(SYNC_THROTTLE_MS);
+  }
+
+  return result;
 }
 
 export async function disconnectIntervals(

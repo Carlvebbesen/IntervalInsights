@@ -4,25 +4,37 @@ import type { IIntervalsWebhookEvent } from "../types/intervals/IIntervalsWebhoo
 import { handleIntervalsScopeChange, linkFromIntervalsActivity } from "./intervals_link_service";
 
 export async function processIntervalsWebhook(
-  body: IIntervalsWebhookEvent,
+  event: IIntervalsWebhookEvent,
   context: IGlobalBindings,
 ) {
-  const log = logger.child({ fn: "processIntervalsWebhook", event: body.event });
+  const log = logger.child({ fn: "processIntervalsWebhook", type: event.type });
+
+  if (event.type === "TEST") {
+    log.info({ athleteId: event.athlete_id }, "Intervals.icu TEST event acknowledged");
+    return;
+  }
+
   const user = await context.db.query.users.findFirst({
-    where: (u, { eq }) => eq(u.intervalsAthleteId, body.athlete_id),
+    where: (u, { eq }) => eq(u.intervalsAthleteId, event.athlete_id),
     columns: { id: true, clerkId: true },
   });
 
   if (!user) {
-    log.info({ athleteId: body.athlete_id }, "No user found for Intervals.icu athlete");
+    log.info({ athleteId: event.athlete_id }, "No user found for Intervals.icu athlete");
     return;
   }
 
-  if (body.event === "ACTIVITY_UPLOADED" || body.event === "ACTIVITY_ANALYZED") {
-    const result = await linkFromIntervalsActivity(context, user, body.activity_id);
+  if (event.type === "ACTIVITY_UPLOADED" || event.type === "ACTIVITY_ANALYZED") {
+    const activity = (event as { activity?: { id: string | number } }).activity;
+    const activityId = activity ? String(activity.id) : undefined;
+    if (!activityId) {
+      log.info("Activity event missing activity.id, skipping");
+      return;
+    }
+    const result = await linkFromIntervalsActivity(context, user, activityId);
     if (!result) {
       log.info(
-        { intervalsActivityId: body.activity_id },
+        { intervalsActivityId: activityId },
         "No matching local activity for Intervals.icu activity",
       );
       return;
@@ -37,7 +49,7 @@ export async function processIntervalsWebhook(
     return;
   }
 
-  if (body.event === "APP_SCOPE_CHANGED") {
+  if (event.type === "APP_SCOPE_CHANGED") {
     const outcome = await handleIntervalsScopeChange(context, user);
     log.info({ clerkUserId: user.clerkId, outcome }, "APP_SCOPE_CHANGED");
     return;

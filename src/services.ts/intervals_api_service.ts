@@ -4,10 +4,7 @@ import type {
   IIntervalsAthlete,
   IIntervalsInterval,
 } from "../types/intervals/IIntervalsActivity";
-import type {
-  IIntervalsFitnessEvent,
-  IIntervalsWellness,
-} from "../types/intervals/IIntervalsWellness";
+import type { IIntervalsWellness } from "../types/intervals/IIntervalsWellness";
 
 const INTERVALS_BASE_URL = "https://intervals.icu/api/v1";
 const INTERVALS_FETCH_TIMEOUT_MS = 8000;
@@ -59,20 +56,8 @@ export const intervalsApiService = {
     return fetchIntervals<IIntervalsActivity>(`/activity/${activityId}`, accessToken);
   },
 
-  async getActivityStreams(accessToken: string, activityId: string) {
-    return fetchIntervals<Record<string, number[]>>(`/activity/${activityId}/streams`, accessToken);
-  },
-
   async getActivityIntervals(accessToken: string, activityId: string) {
     return fetchIntervals<IIntervalsInterval[]>(`/activity/${activityId}/intervals`, accessToken);
-  },
-
-  async getActivityPaceCurve(accessToken: string, activityId: string) {
-    return fetchIntervals<number[]>(`/activity/${activityId}/pace-curve`, accessToken);
-  },
-
-  async getActivityHrCurve(accessToken: string, activityId: string) {
-    return fetchIntervals<number[]>(`/activity/${activityId}/hr-curve`, accessToken);
   },
 
   async listActivities(accessToken: string, oldest: string, newest: string) {
@@ -87,21 +72,5 @@ export const intervalsApiService = {
       oldest,
       newest,
     });
-  },
-
-  async getFitnessModel(accessToken: string, oldest: string, newest: string) {
-    return fetchIntervals<IIntervalsFitnessEvent[]>(
-      "/athlete/0/fitness-model-events",
-      accessToken,
-      { oldest, newest },
-    );
-  },
-
-  async getPaceCurves(accessToken: string, params?: Record<string, string>) {
-    return fetchIntervals<number[]>("/athlete/0/pace-curves", accessToken, params);
-  },
-
-  async getSportSettings(accessToken: string) {
-    return fetchIntervals<Record<string, unknown>[]>("/athlete/0/sport-settings", accessToken);
   },
 };

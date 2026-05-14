@@ -7,7 +7,7 @@ import { ErrorSchema } from "../schemas/api_schemas";
 import { processIntervalsWebhook } from "../services.ts/process_intervals_event";
 import { processStravaWebhook } from "../services.ts/process_strava_event";
 import type { TPublicEnv } from "../types/IRouters";
-import type { IIntervalsWebhookEvent } from "../types/intervals/IIntervalsWebhookEvent";
+import type { IIntervalsWebhookPayload } from "../types/intervals/IIntervalsWebhookEvent";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
 import { requireEnv } from "../utils";
 
@@ -193,22 +193,46 @@ publicRouter.post(
 );
 
 const IntervalsActivityEventSchema = z.object({
-  event: z.enum(["ACTIVITY_UPLOADED", "ACTIVITY_UPDATED", "ACTIVITY_ANALYZED", "ACTIVITY_DELETED"]),
+  type: z.enum(["ACTIVITY_UPLOADED", "ACTIVITY_UPDATED", "ACTIVITY_ANALYZED", "ACTIVITY_DELETED"]),
   athlete_id: z.string(),
-  activity_id: z.string(),
-  secret: z.string(),
+  timestamp: z.string().optional(),
+  activity: z
+    .object({ id: z.union([z.string(), z.number()]) })
+    .passthrough()
+    .optional(),
 });
 
 const IntervalsScopeChangeEventSchema = z.object({
-  event: z.literal("APP_SCOPE_CHANGED"),
+  type: z.literal("APP_SCOPE_CHANGED"),
   athlete_id: z.string(),
-  secret: z.string(),
+  timestamp: z.string().optional(),
 });
 
-const IntervalsWebhookEventSchema = z.discriminatedUnion("event", [
+const IntervalsTestEventSchema = z.object({
+  type: z.literal("TEST"),
+  athlete_id: z.string(),
+  timestamp: z.string().optional(),
+});
+
+const IntervalsUnknownEventSchema = z
+  .object({
+    type: z.string(),
+    athlete_id: z.string(),
+    timestamp: z.string().optional(),
+  })
+  .passthrough();
+
+const IntervalsWebhookEventSchema = z.union([
   IntervalsActivityEventSchema,
   IntervalsScopeChangeEventSchema,
+  IntervalsTestEventSchema,
+  IntervalsUnknownEventSchema,
 ]);
+
+const IntervalsWebhookPayloadSchema = z.object({
+  secret: z.string(),
+  events: z.array(IntervalsWebhookEventSchema),
+});
 
 const IntervalsWebhookAckSchema = z.object({
   status: z.enum(["ok", "unauthorized"]),
@@ -236,32 +260,37 @@ publicRouter.post(
       },
     },
   }),
-  validator("json", IntervalsWebhookEventSchema),
+  validator("json", IntervalsWebhookPayloadSchema),
   async (c) => {
-    const body: IIntervalsWebhookEvent = c.req.valid("json");
-    const activityId = "activity_id" in body ? body.activity_id : undefined;
-
-    c.var.logger.info(
-      { event: body.event, athleteId: body.athlete_id, activityId },
-      "Intervals.icu event received",
-    );
+    const body: IIntervalsWebhookPayload = c.req.valid("json");
 
     if (body.secret !== INTERVALS_WEBHOOK_SECRET) {
       c.var.logger.warn(
-        { athleteId: body.athlete_id, activityId },
+        { eventCount: body.events.length },
         "Rejected intervals.icu webhook with bad secret",
       );
       return c.json({ status: "unauthorized" }, 401);
     }
 
-    runInBackground("intervals.webhook.process", () => processIntervalsWebhook(body, c.env), {
-      attributes: {
-        "intervals.event": body.event,
-        "intervals.athlete_id": body.athlete_id,
-        "intervals.activity_id": activityId,
-      },
-      logger: c.var.logger,
-    });
+    for (const event of body.events) {
+      const activity = (event as { activity?: { id: string | number } }).activity;
+      const activityId = activity ? String(activity.id) : undefined;
+
+      c.var.logger.info(
+        { type: event.type, athleteId: event.athlete_id, activityId },
+        "Intervals.icu event received",
+      );
+
+      runInBackground("intervals.webhook.process", () => processIntervalsWebhook(event, c.env), {
+        attributes: {
+          "intervals.event": event.type,
+          "intervals.athlete_id": event.athlete_id,
+          "intervals.activity_id": activityId,
+        },
+        logger: c.var.logger,
+      });
+    }
+
     return c.json({ status: "ok" }, 200);
   },
 );

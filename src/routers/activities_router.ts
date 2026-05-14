@@ -4,7 +4,14 @@ import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
 import { runInBackground } from "../background";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
-import { activities, intervalStructures, trainingTypeEnum } from "../schema";
+import {
+  activities,
+  activityEvents,
+  events,
+  eventTypeEnum,
+  intervalStructures,
+  trainingTypeEnum,
+} from "../schema";
 import {
   ActivityListResponseSchema,
   ActivitySchema,
@@ -15,7 +22,7 @@ import {
   StravaLapSchema,
 } from "../schemas/api_schemas";
 import { userHasHeartRateConsent } from "../services.ts/heart_rate_consent_service";
-import { linkFromLocalActivity } from "../services.ts/intervals_link_service";
+import { enrichActivityFromIntervalsIcu } from "../services.ts/intervals_link_service";
 import { getSegmentsForActivity } from "../services.ts/lap_derivation_service";
 import { stravaApiService } from "../services.ts/strava_api_service";
 import type { TGlobalEnv, TStravaEnv } from "../types/IRouters";
@@ -33,6 +40,8 @@ const bodySchema = z.object({
   signatures: z.array(z.string()).optional(),
   dateFrom: z.string().datetime().optional(),
   dateTo: z.string().datetime().optional(),
+  eventTypes: z.array(z.enum(eventTypeEnum.enumValues)).optional(),
+  eventIds: z.array(z.number().int().positive()).optional(),
 });
 
 activitiesRouter.post(
@@ -66,6 +75,8 @@ activitiesRouter.post(
         signatures,
         dateFrom,
         dateTo,
+        eventTypes,
+        eventIds,
       } = c.req.valid("json");
       const filters = [];
       filters.push(eq(activities.userId, userId));
@@ -116,13 +127,59 @@ activitiesRouter.post(
                 signatures,
                 dateFrom,
                 dateTo,
+                eventTypes,
+                eventIds,
               },
             },
           });
         }
       }
+      if (eventTypes?.length || eventIds?.length) {
+        const eventFilters = [eq(events.userId, userId)];
+        if (eventTypes?.length) eventFilters.push(inArray(events.eventType, eventTypes));
+        if (eventIds?.length) eventFilters.push(inArray(events.id, eventIds));
+        const linkedRows = await c.env.db
+          .selectDistinct({ activityId: activityEvents.activityId })
+          .from(activityEvents)
+          .innerJoin(events, eq(events.id, activityEvents.eventId))
+          .where(and(...eventFilters));
+        const linkedActivityIds = linkedRows.map((r) => r.activityId);
+        if (linkedActivityIds.length === 0) {
+          return c.json({
+            data: [],
+            meta: {
+              page,
+              pageSize: PAGE_SIZE,
+              filterApplied: {
+                search,
+                trainingType,
+                distance,
+                intervalStructureId,
+                sportTypes,
+                signatures,
+                dateFrom,
+                dateTo,
+                eventTypes,
+                eventIds,
+              },
+            },
+          });
+        }
+        filters.push(inArray(activities.id, linkedActivityIds));
+      }
       const result = await c.env.db
-        .select()
+        .select({
+          id: activities.id,
+          title: activities.title,
+          startDateLocal: activities.startDateLocal,
+          distance: activities.distance,
+          sportType: activities.sportType,
+          indoor: activities.indoor,
+          trainingType: activities.trainingType,
+          trainingLoad: activities.trainingLoad,
+          icuTrainingLoad: activities.icuTrainingLoad,
+          averageHeartRate: activities.averageHeartRate,
+        })
         .from(activities)
         .where(and(...filters))
         .limit(PAGE_SIZE)
@@ -142,11 +199,87 @@ activitiesRouter.post(
             signatures,
             dateFrom,
             dateTo,
+            eventTypes,
+            eventIds,
           },
         },
       });
     } catch (err) {
       c.var.logger.error({ err }, "Error fetching activities");
+      return c.json({ error: "Internal Server Error" }, 500);
+    }
+  },
+);
+
+activitiesRouter.get(
+  "/:id",
+  describeRoute({
+    description: "Get full activity details (all stored columns) for a single activity",
+    responses: {
+      200: {
+        description: "Activity",
+        content: { "application/json": { schema: resolver(ActivitySchema) } },
+      },
+      400: {
+        description: "Invalid activity ID",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      404: {
+        description: "Activity not found",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  async (c) => {
+    try {
+      const activityId = parseInt(c.req.param("id"), 10);
+      if (Number.isNaN(activityId)) {
+        return c.json({ error: "Invalid activity ID" }, 400);
+      }
+      const userId = c.get("userId");
+      const clerkId = c.get("clerkUserId");
+      const env = c.env;
+      const [activity, relatedEvents] = await Promise.all([
+        env.db.query.activities.findFirst({
+          where: (a, { eq, and }) => and(eq(a.id, activityId), eq(a.userId, userId)),
+        }),
+        env.db
+          .select({
+            id: events.id,
+            eventType: events.eventType,
+            bodyLocation: events.bodyLocation,
+            description: events.description,
+            startTime: events.startTime,
+            lastOccurrence: events.lastOccurrence,
+            status: events.status,
+            resolvedAt: events.resolvedAt,
+          })
+          .from(activityEvents)
+          .innerJoin(events, eq(events.id, activityEvents.eventId))
+          .where(eq(activityEvents.activityId, activityId)),
+      ]);
+      if (!activity) {
+        return c.json({ error: "Activity not found" }, 404);
+      }
+
+      if (!activity.intervalsIcuId || !activity.intervalsIcuEnrichedAt) {
+        runInBackground(
+          "intervals.enrichActivity",
+          () => enrichActivityFromIntervalsIcu(env, { id: userId, clerkId }, activityId),
+          {
+            attributes: { "activity.id": activityId, "user.id": userId },
+            logger: c.var.logger,
+          },
+        );
+      }
+
+      return c.json({ ...activity, events: relatedEvents });
+    } catch (err) {
+      c.var.logger.error({ err }, "Error fetching activity details");
       return c.json({ error: "Internal Server Error" }, 500);
     }
   },
@@ -177,29 +310,8 @@ activitiesRouter.get(
       if (Number.isNaN(activityId)) {
         return c.json({ error: "Invalid activity ID" }, 400);
       }
-      const userId = c.get("userId");
       const clerkId = c.get("clerkUserId");
-      const env = c.env;
-
-      const [activity, segments] = await Promise.all([
-        env.db.query.activities.findFirst({
-          where: (a, { eq, and }) => and(eq(a.id, activityId), eq(a.userId, userId)),
-          columns: { intervalsIcuId: true },
-        }),
-        getSegmentsForActivity(env.db, clerkId, activityId),
-      ]);
-
-      if (activity && !activity.intervalsIcuId) {
-        runInBackground(
-          "intervals.linkFromLocalActivity",
-          () => linkFromLocalActivity(env, { id: userId, clerkId }, activityId),
-          {
-            attributes: { "activity.id": activityId, "user.id": userId },
-            logger: c.var.logger,
-          },
-        );
-      }
-
+      const segments = await getSegmentsForActivity(c.env.db, clerkId, activityId);
       return c.json({ intervalSegments: segments });
     } catch (err) {
       c.var.logger.error({ err }, "Error fetching activity");
@@ -294,45 +406,6 @@ stravaActivitiesRouter.get(
       return c.json({ stats });
     } catch (err) {
       c.var.logger.error({ err }, "Error fetching gear stats");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
-  },
-);
-
-stravaActivitiesRouter.get(
-  "/gear",
-  describeRoute({
-    description: "Get gear for the authenticated user from Strava",
-    responses: {
-      200: {
-        description: "Gear list",
-        content: {
-          "application/json": {
-            schema: resolver(z.object({ gear: z.array(z.unknown()) })),
-          },
-        },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-    },
-  }),
-  async (c) => {
-    try {
-      const userId = c.get("userId");
-      const gearRows = await c.env.db
-        .selectDistinct({ gearId: activities.gearId })
-        .from(activities)
-        .where(and(eq(activities.userId, userId), isNotNull(activities.gearId)));
-
-      const gearIds = gearRows.map((r) => r.gearId as string);
-      const gear = await Promise.all(
-        gearIds.map((id) => stravaApiService.getGear(c.get("stravaAccessToken"), id)),
-      );
-      return c.json({ gear });
-    } catch (err) {
-      c.var.logger.error({ err }, "Error fetching gear");
       return c.json({ error: "Internal Server Error" }, 500);
     }
   },

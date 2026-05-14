@@ -20,6 +20,7 @@ import activitiesRouter, { stravaActivitiesRouter } from "./routers/activities_r
 import adminRouter from "./routers/admin_router";
 import agentsRouter from "./routers/agents_router";
 import dashboardRouter from "./routers/dashboard_router";
+import eventsRouter from "./routers/events_router";
 import intervalStructureRouter from "./routers/interval_structure_router";
 import intervalsEntryRouter from "./routers/intervals/intervals_entry_router";
 import publicRouter from "./routers/public_router";
@@ -116,6 +117,7 @@ app.route("/api/agents", agentsRouter);
 app.route("/api/strava", stravaEntryRouter);
 app.route("/api/interval-structures", intervalStructureRouter);
 app.route("/api/dashboard", dashboardRouter);
+app.route("/api/events", eventsRouter);
 app.route("/api/admin", adminRouter);
 app.route("/api/user", userRouter);
 app.route("/api/intervals", intervalsEntryRouter);

@@ -6,7 +6,7 @@ export interface IIntervalsActivity {
   type: string;
   sub_type: string | null;
   start_time: string;
-  local_start_time: string;
+  start_date_local: string;
   moving_time: number;
   elapsed_time: number;
   distance: number;
@@ -20,6 +20,11 @@ export interface IIntervalsActivity {
   icu_training_load: number | null;
   icu_intensity: number | null;
   relative_intensity: number | null;
+  decoupling: number | null;
+  polarization_index: number | null;
+  icu_ftp: number | null;
+  icu_ctl: number | null;
+  icu_atl: number | null;
   device_name: string | null;
   source: string | null;
   external_id: string | null;

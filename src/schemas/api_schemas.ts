@@ -1,10 +1,32 @@
 import { z } from "zod";
 import {
   analysisStatusEnum,
+  eventStatusEnum,
+  eventTypeEnum,
   targetTypeEnum,
   trainingTypeEnum,
   workoutPartEnum,
 } from "../schema/enums";
+
+export const ActivityEventSchema = z.object({
+  id: z.number(),
+  eventType: z.enum(eventTypeEnum.enumValues),
+  bodyLocation: z.string().nullable(),
+  description: z.string(),
+  startTime: z.string(),
+  lastOccurrence: z.string(),
+  status: z.enum(eventStatusEnum.enumValues),
+  resolvedAt: z.string().nullable(),
+});
+
+export const EventListItemSchema = ActivityEventSchema.extend({
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const EventListResponseSchema = z.object({
+  events: z.array(EventListItemSchema),
+});
 
 export const ErrorSchema = z.object({ error: z.string() });
 
@@ -32,10 +54,42 @@ export const ActivitySchema = z.object({
   notes: z.string().nullable(),
   createdAt: z.string().nullable(),
   indoor: z.boolean(),
+  intervalsIcuId: z.string().nullable().optional(),
+  intervalsAnalyzed: z.boolean().nullable().optional(),
+  intervalsIcuEnrichedAt: z.string().nullable().optional(),
+  elapsedTime: z.number().nullable().optional(),
+  maxHeartRate: z.number().nullable().optional(),
+  averagePower: z.number().nullable().optional(),
+  weightedAveragePower: z.number().nullable().optional(),
+  calories: z.number().nullable().optional(),
+  deviceName: z.string().nullable().optional(),
+  trainingLoad: z.number().nullable().optional(),
+  icuTrainingLoad: z.number().nullable().optional(),
+  icuIntensity: z.number().nullable().optional(),
+  relativeIntensity: z.number().nullable().optional(),
+  decoupling: z.number().nullable().optional(),
+  polarizationIndex: z.number().nullable().optional(),
+  icuFtp: z.number().nullable().optional(),
+  icuCtl: z.number().nullable().optional(),
+  icuAtl: z.number().nullable().optional(),
+  events: z.array(ActivityEventSchema).optional(),
+});
+
+export const ActivityListItemSchema = z.object({
+  id: z.number(),
+  title: z.string(),
+  startDateLocal: z.string(),
+  distance: z.number(),
+  sportType: z.string(),
+  indoor: z.boolean(),
+  trainingType: z.enum(trainingTypeEnum.enumValues).nullable(),
+  trainingLoad: z.number().nullable(),
+  icuTrainingLoad: z.number().nullable(),
+  averageHeartRate: z.number().nullable(),
 });
 
 export const ActivityListResponseSchema = z.object({
-  data: z.array(ActivitySchema),
+  data: z.array(ActivityListItemSchema),
   meta: z.object({
     page: z.number(),
     pageSize: z.number(),
@@ -48,6 +102,8 @@ export const ActivityListResponseSchema = z.object({
       signatures: z.array(z.string()).optional(),
       dateFrom: z.string().optional(),
       dateTo: z.string().optional(),
+      eventTypes: z.array(z.enum(eventTypeEnum.enumValues)).optional(),
+      eventIds: z.array(z.number().int().positive()).optional(),
     }),
   }),
 });
@@ -149,6 +205,95 @@ export const TrainingSummaryResponseSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("no_recent_data"), data: z.null() }),
 ]);
 
+export const MAX_WELLNESS_RANGE_DAYS = 366;
+
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
+  .refine((s) => {
+    const d = new Date(`${s}T00:00:00Z`);
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+  }, "Invalid calendar date");
+
+export const WellnessQuerySchema = z
+  .object({ oldest: isoDate, newest: isoDate })
+  .refine(({ oldest, newest }) => oldest <= newest, {
+    message: "`oldest` must be on or before `newest`",
+    path: ["newest"],
+  })
+  .refine(
+    ({ oldest, newest }) => {
+      const days = Math.floor((Date.parse(newest) - Date.parse(oldest)) / 86_400_000) + 1;
+      return days <= MAX_WELLNESS_RANGE_DAYS;
+    },
+    {
+      message: `Range too large (max ${MAX_WELLNESS_RANGE_DAYS} days)`,
+      path: ["newest"],
+    },
+  );
+
+const MetricStatsSchema = z.object({
+  latest: z.number().nullable(),
+  min: z.number().nullable(),
+  max: z.number().nullable(),
+  avg: z.number().nullable(),
+});
+
+const WellnessSeriesPointSchema = z.object({
+  date: z.string(),
+  fitness: z.object({
+    ctl: z.number().nullable(),
+    atl: z.number().nullable(),
+    tsb: z.number().nullable(),
+    rampRate: z.number().nullable(),
+    ctlLoad: z.number().nullable(),
+    atlLoad: z.number().nullable(),
+  }),
+  sleep: z.object({
+    sleepSecs: z.number().nullable(),
+    sleepScore: z.number().nullable(),
+    sleepQuality: z.number().nullable(),
+  }),
+  recovery: z.object({
+    restingHR: z.number().nullable(),
+    hrv: z.number().nullable(),
+    readiness: z.number().nullable(),
+    baevskySI: z.number().nullable(),
+    spO2: z.number().nullable(),
+    respiration: z.number().nullable(),
+  }),
+  subjective: z.object({
+    soreness: z.number().nullable(),
+    fatigue: z.number().nullable(),
+    stress: z.number().nullable(),
+    mood: z.number().nullable(),
+    motivation: z.number().nullable(),
+  }),
+  health: z.object({
+    injury: z.number().nullable(),
+    sickness: z.number().nullable(),
+  }),
+  body: z.object({
+    weight: z.number().nullable(),
+    bodyFat: z.number().nullable(),
+    vo2max: z.number().nullable(),
+  }),
+  comments: z.string().nullable(),
+});
+
+const WellnessSeriesDataSchema = z.object({
+  range: z.object({ oldest: z.string(), newest: z.string() }),
+  metricsAvailable: z.array(z.string()),
+  summary: z.record(z.string(), MetricStatsSchema),
+  points: z.array(WellnessSeriesPointSchema),
+});
+
+export const WellnessSeriesResponseSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), data: WellnessSeriesDataSchema }),
+  z.object({ status: z.literal("not_linked"), data: z.null() }),
+  z.object({ status: z.literal("no_data"), data: z.null() }),
+]);
+
 export const WeekDetailResponseSchema = z.object({
   weekStart: z.string(),
   running: z.object({
@@ -178,6 +323,15 @@ export const WeekDetailResponseSchema = z.object({
       }),
     ),
   }),
+  wellness: z
+    .object({
+      avgSleepScore: z.number().nullable(),
+      avgFatigue: z.number().nullable(),
+      fitness: z.number().nullable(),
+      form: z.number().nullable(),
+      totalLoad: z.number().nullable(),
+    })
+    .nullable(),
 });
 
 export const GearStatsItemSchema = z.object({

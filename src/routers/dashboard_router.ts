@@ -9,9 +9,13 @@ import {
   ErrorSchema,
   TrainingSummaryResponseSchema,
   WeekDetailResponseSchema,
+  WellnessQuerySchema,
+  WellnessSeriesResponseSchema,
 } from "../schemas/api_schemas";
 import {
   fetchTrainingSummary,
+  fetchWeekWellnessStats,
+  fetchWellnessSeries,
   fetchWellnessSummary,
 } from "../services.ts/intervals_wellness_service";
 import { ellipticalTimeToMetres, isTimeBased, toISODate } from "../services.ts/utils";
@@ -301,6 +305,32 @@ dashboardRouter.get(
   },
 );
 
+dashboardRouter.get(
+  "/wellness",
+  describeRoute({
+    description:
+      "Daily intervals.icu wellness series for the requested date range. Discriminated by `status`: `ok` (per-day points + summary stats + metricsAvailable for the picker), `not_linked` (intervals.icu not connected), `no_data` (linked but no records in range). Each point groups fields into `fitness` (CTL/ATL/TSB/load), `sleep`, `recovery` (RHR/HRV/readiness/SpO2/respiration), `subjective` (soreness/fatigue/stress/mood/motivation, 1–4 scale), `health` (injury/sickness flags), `body` (weight/bodyFat/VO2max), and free-text `comments`. Range capped at 366 days; oldest must be ≤ newest.",
+    responses: {
+      200: {
+        description: "Discriminated wellness-series result",
+        content: {
+          "application/json": { schema: resolver(WellnessSeriesResponseSchema) },
+        },
+      },
+      400: {
+        description: "Invalid date range",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("query", WellnessQuerySchema),
+  async (c) => {
+    const { oldest, newest } = c.req.valid("query");
+    const result = await fetchWellnessSeries(c.get("clerkUserId"), oldest, newest);
+    return c.json(result);
+  },
+);
+
 const weekStartParamSchema = z.object({ weekStart: z.string() });
 
 dashboardRouter.get(
@@ -473,6 +503,14 @@ dashboardRouter.get(
       };
     });
 
+    const lastDayOfWeek = new Date(weekEnd);
+    lastDayOfWeek.setUTCDate(lastDayOfWeek.getUTCDate() - 1);
+    const wellness = await fetchWeekWellnessStats(
+      c.get("clerkUserId"),
+      toISODate(weekStart),
+      toISODate(lastDayOfWeek),
+    );
+
     return c.json({
       weekStart: weekStartParam,
       running: {
@@ -498,6 +536,7 @@ dashboardRouter.get(
         combinedKm: otherCombinedKm,
         breakdown: otherActivities,
       },
+      wellness,
     });
   },
 );
