@@ -106,6 +106,13 @@ The text may be written in any language — commonly English or Norwegian. Treat
 - Most activities will produce zero events — return an empty array unless there is a clear mention.
 - Distinguish kinds of injury on the same body part: a knee strain and a knee bruise are SEPARATE events.
 
+### What is NOT an event (do not emit)
+- Normal post-workout muscle soreness / DOMS. Phrases like "sore", "a bit sore", "stiff", "støl", "støle", "stiv", "ømme bein", "tight legs", "legs feel heavy after yesterday" describe expected training response, not a health event. This applies EVEN when paired with a body part ("sore quads", "støl i bena").
+- The user explicitly stating the ABSENCE of an issue ("no pain", "ingen smerte", "ingen vondt", "felt fine", "føltes bra"). Negations are not events.
+- General fatigue, low energy, "felt heavy", "rough day", "off day".
+- A single sentence that contains both soreness AND a no-pain disclaimer (e.g. "litt støl, men ingen smerte") is the canonical non-event — return empty array.
+- Only escalate soreness to an event when the user clearly frames it as a problem: lingering pain, sharp/stabbing pain, something that hurts during the activity, or wording like "injury", "strain", "pull", "tweak", "skade", "strekk", "vondt", "smerter".
+
 ### Linking to existing events
 - A list of the user's events from the last year is provided as \`recentEvents\` below.
 - If the activity mentions the SAME condition as one of those entries (same body location AND same kind of issue), set \`linkedEventId\` to that entry's id.
