@@ -107,6 +107,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/activity/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Get full activity details (all stored columns) for a single activity */
+    get: operations["getApiActivityById"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/activity/{id}/segments": {
     parameters: {
       query?: never;
@@ -150,23 +167,6 @@ export interface paths {
     };
     /** @description Get aggregated usage statistics for each shoe/gear item */
     get: operations["getApiActivityGearStats"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/activity/gear": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** @description Get gear for the authenticated user from Strava */
-    get: operations["getApiActivityGear"];
     put?: never;
     post?: never;
     delete?: never;
@@ -465,6 +465,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/dashboard/wellness": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Daily intervals.icu wellness series for the requested date range. Discriminated by `status`: `ok` (per-day points + summary stats + metricsAvailable for the picker), `not_linked` (intervals.icu not connected), `no_data` (linked but no records in range). Each point groups fields into `fitness` (CTL/ATL/TSB/load), `sleep`, `recovery` (RHR/HRV/readiness/SpO2/respiration), `subjective` (soreness/fatigue/stress/mood/motivation, 1–4 scale), `health` (injury/sickness flags), `body` (weight/bodyFat/VO2max), and free-text `comments`. Range capped at 366 days; oldest must be ≤ newest. */
+    get: operations["getApiDashboardWellness"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/dashboard/week/{weekStart}": {
     parameters: {
       query?: never;
@@ -561,38 +578,6 @@ export interface paths {
     get?: never;
     put?: never;
     post: operations["postApiIntervalsAuthExchange"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/intervals/wellness": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get: operations["getApiIntervalsWellness"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/intervals/fitness": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get: operations["getApiIntervalsFitness"];
-    put?: never;
-    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -768,24 +753,45 @@ export interface operations {
     };
     requestBody: {
       content: {
-        "application/json":
-          | {
-              /** @enum {string} */
-              event:
-                | "ACTIVITY_UPLOADED"
-                | "ACTIVITY_UPDATED"
-                | "ACTIVITY_ANALYZED"
-                | "ACTIVITY_DELETED";
-              athlete_id: string;
-              activity_id: string;
-              secret: string;
-            }
-          | {
-              /** @constant */
-              event: "APP_SCOPE_CHANGED";
-              athlete_id: string;
-              secret: string;
-            };
+        "application/json": {
+          secret: string;
+          events: (
+            | {
+                /** @enum {string} */
+                type:
+                  | "ACTIVITY_UPLOADED"
+                  | "ACTIVITY_UPDATED"
+                  | "ACTIVITY_ANALYZED"
+                  | "ACTIVITY_DELETED";
+                athlete_id: string;
+                timestamp?: string;
+                activity?: {
+                  id: string | number;
+                } & {
+                  [key: string]: unknown;
+                };
+              }
+            | {
+                /** @constant */
+                type: "APP_SCOPE_CHANGED";
+                athlete_id: string;
+                timestamp?: string;
+              }
+            | {
+                /** @constant */
+                type: "TEST";
+                athlete_id: string;
+                timestamp?: string;
+              }
+            | ({
+                type: string;
+                athlete_id: string;
+                timestamp?: string;
+              } & {
+                [key: string]: unknown;
+              })
+          )[];
+        };
       };
     };
     responses: {
@@ -863,7 +869,11 @@ export interface operations {
           "application/json": {
             data: {
               id: number;
-              userId: string;
+              title: string;
+              startDateLocal: string;
+              distance: number;
+              sportType: string;
+              indoor: boolean;
               /** @enum {string|null} */
               trainingType:
                 | "LONG"
@@ -879,35 +889,9 @@ export interface operations {
                 | "TEMPO"
                 | "OTHER"
                 | null;
-              intervalStructureId: number | null;
-              analyzedAt: string | null;
-              /** @enum {string|null} */
-              analysisStatus:
-                | "pending"
-                | "ongoing_init"
-                | "initial"
-                | "ongoing_completed"
-                | "completed"
-                | "error"
-                | "skipped_inactive"
-                | null;
-              draftAnalysisResult?: null;
-              analysisVersion: string | null;
-              stravaActivityId: number;
-              gearId: string | null;
-              hasHeartrate: boolean | null;
-              title: string;
-              description: string | null;
-              sportType: string;
-              distance: number;
-              movingTime: number;
-              totalElevationGain: number | null;
+              trainingLoad: number | null;
+              icuTrainingLoad: number | null;
               averageHeartRate: number | null;
-              startDateLocal: string;
-              feeling: number | null;
-              notes: string | null;
-              createdAt: string | null;
-              indoor: boolean;
             }[];
             meta: {
               page: number;
@@ -936,6 +920,126 @@ export interface operations {
                 dateTo?: string;
               };
             };
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  getApiActivityById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Activity */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            id: number;
+            userId: string;
+            /** @enum {string|null} */
+            trainingType:
+              | "LONG"
+              | "EASY"
+              | "RECOVERY"
+              | "SHORT_INTERVALS"
+              | "HILL_SPRINTS"
+              | "LONG_INTERVALS"
+              | "SPRINTS"
+              | "FARTLEK"
+              | "PROGRESSIVE_LONG"
+              | "RACE"
+              | "TEMPO"
+              | "OTHER"
+              | null;
+            intervalStructureId: number | null;
+            analyzedAt: string | null;
+            /** @enum {string|null} */
+            analysisStatus:
+              | "pending"
+              | "ongoing_init"
+              | "initial"
+              | "ongoing_completed"
+              | "completed"
+              | "error"
+              | "skipped_inactive"
+              | null;
+            draftAnalysisResult?: null;
+            analysisVersion: string | null;
+            stravaActivityId: number;
+            gearId: string | null;
+            hasHeartrate: boolean | null;
+            title: string;
+            description: string | null;
+            sportType: string;
+            distance: number;
+            movingTime: number;
+            totalElevationGain: number | null;
+            averageHeartRate: number | null;
+            startDateLocal: string;
+            feeling: number | null;
+            notes: string | null;
+            createdAt: string | null;
+            indoor: boolean;
+            intervalsIcuId?: string | null;
+            intervalsAnalyzed?: boolean | null;
+            intervalsIcuEnrichedAt?: string | null;
+            elapsedTime?: number | null;
+            maxHeartRate?: number | null;
+            averagePower?: number | null;
+            weightedAveragePower?: number | null;
+            calories?: number | null;
+            deviceName?: string | null;
+            trainingLoad?: number | null;
+            icuTrainingLoad?: number | null;
+            icuIntensity?: number | null;
+            relativeIntensity?: number | null;
+            decoupling?: number | null;
+            polarizationIndex?: number | null;
+            icuFtp?: number | null;
+            icuCtl?: number | null;
+            icuAtl?: number | null;
+          };
+        };
+      };
+      /** @description Invalid activity ID */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
+        };
+      };
+      /** @description Activity not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
           };
         };
       };
@@ -1087,6 +1191,24 @@ export interface operations {
             notes: string | null;
             createdAt: string | null;
             indoor: boolean;
+            intervalsIcuId?: string | null;
+            intervalsAnalyzed?: boolean | null;
+            intervalsIcuEnrichedAt?: string | null;
+            elapsedTime?: number | null;
+            maxHeartRate?: number | null;
+            averagePower?: number | null;
+            weightedAveragePower?: number | null;
+            calories?: number | null;
+            deviceName?: string | null;
+            trainingLoad?: number | null;
+            icuTrainingLoad?: number | null;
+            icuIntensity?: number | null;
+            relativeIntensity?: number | null;
+            decoupling?: number | null;
+            polarizationIndex?: number | null;
+            icuFtp?: number | null;
+            icuCtl?: number | null;
+            icuAtl?: number | null;
           };
         };
       };
@@ -1150,39 +1272,6 @@ export interface operations {
               };
               distanceKm: number;
             }[];
-          };
-        };
-      };
-      /** @description Internal server error */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": {
-            error: string;
-          };
-        };
-      };
-    };
-  };
-  getApiActivityGear: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Gear list */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": {
-            gear: unknown[];
           };
         };
       };
@@ -2109,6 +2198,108 @@ export interface operations {
       };
     };
   };
+  getApiDashboardWellness: {
+    parameters: {
+      query: {
+        oldest: string;
+        newest: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Discriminated wellness-series result */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json":
+            | {
+                /** @constant */
+                status: "ok";
+                data: {
+                  range: {
+                    oldest: string;
+                    newest: string;
+                  };
+                  summary: {
+                    [key: string]: {
+                      latest: number | null;
+                      min: number | null;
+                      max: number | null;
+                      avg: number | null;
+                    };
+                  };
+                  points: {
+                    date: string;
+                    fitness: {
+                      ctl: number | null;
+                      atl: number | null;
+                      rampRate: number | null;
+                      ctlLoad: number | null;
+                      atlLoad: number | null;
+                    };
+                    sleep: {
+                      sleepSecs: number | null;
+                      sleepScore: number | null;
+                      sleepQuality: number | null;
+                    };
+                    recovery: {
+                      restingHR: number | null;
+                      hrv: number | null;
+                      readiness: number | null;
+                      baevskySI: number | null;
+                      spO2: number | null;
+                      respiration: number | null;
+                    };
+                    subjective: {
+                      soreness: number | null;
+                      fatigue: number | null;
+                      stress: number | null;
+                      mood: number | null;
+                      motivation: number | null;
+                    };
+                    health: {
+                      injury: number | null;
+                      sickness: number | null;
+                    };
+                    body: {
+                      weight: number | null;
+                      bodyFat: number | null;
+                      vo2max: number | null;
+                    };
+                    comments: string | null;
+                  }[];
+                };
+              }
+            | {
+                /** @constant */
+                status: "not_linked";
+                data: null;
+              }
+            | {
+                /** @constant */
+                status: "no_data";
+                data: null;
+              };
+        };
+      };
+      /** @description Invalid date range */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
+        };
+      };
+    };
+  };
   getApiDashboardWeekByWeekStart: {
     parameters: {
       query?: never;
@@ -2386,46 +2577,6 @@ export interface operations {
         };
       };
     };
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  getApiIntervalsWellness: {
-    parameters: {
-      query: {
-        oldest: string;
-        newest: string;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  getApiIntervalsFitness: {
-    parameters: {
-      query: {
-        oldest: string;
-        newest: string;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
     responses: {
       200: {
         headers: {

@@ -15,24 +15,16 @@ export interface IIntervalsWellness {
   spO2: number | null;
   respiration: number | null;
   weight: number | null;
+  bodyFat: number | null;
   vo2max: number | null;
-}
-
-export interface IIntervalsFitnessEvent {
-  id: number;
-  start_date_local: string;
-  end_date_local: string | null;
-  name: string | null;
-  category: string | null;
-  type: string | null;
-  sub_type: string | null;
-  icu_ctl: number | null;
-  icu_atl: number | null;
-  icu_training_load: number | null;
-  icu_intensity: number | null;
-  icu_ftp: number | null;
-  moving_time: number | null;
-  distance: number | null;
+  soreness: number | null;
+  fatigue: number | null;
+  stress: number | null;
+  mood: number | null;
+  motivation: number | null;
+  injury: number | null;
+  sickness: number | null;
+  comments: string | null;
 }
 
 export interface IIntervalsWellnessSummary {
@@ -75,3 +67,99 @@ export type IIntervalsTrainingSummaryResult =
   | { status: "ok"; data: IIntervalsTrainingSummary }
   | { status: "not_linked"; data: null }
   | { status: "no_recent_data"; data: null };
+
+export type NumericMetric =
+  | "ctl"
+  | "atl"
+  | "tsb"
+  | "rampRate"
+  | "ctlLoad"
+  | "atlLoad"
+  | "sleepSecs"
+  | "sleepScore"
+  | "sleepQuality"
+  | "restingHR"
+  | "hrv"
+  | "readiness"
+  | "baevskySI"
+  | "spO2"
+  | "respiration"
+  | "soreness"
+  | "fatigue"
+  | "stress"
+  | "mood"
+  | "motivation"
+  | "injury"
+  | "sickness"
+  | "weight"
+  | "bodyFat"
+  | "vo2max";
+
+export interface IIntervalsWellnessPoint {
+  date: string;
+  fitness: {
+    ctl: number | null;
+    atl: number | null;
+    tsb: number | null;
+    rampRate: number | null;
+    ctlLoad: number | null;
+    atlLoad: number | null;
+  };
+  sleep: {
+    sleepSecs: number | null;
+    sleepScore: number | null;
+    sleepQuality: number | null;
+  };
+  recovery: {
+    restingHR: number | null;
+    hrv: number | null;
+    readiness: number | null;
+    baevskySI: number | null;
+    spO2: number | null;
+    respiration: number | null;
+  };
+  subjective: {
+    soreness: number | null;
+    fatigue: number | null;
+    stress: number | null;
+    mood: number | null;
+    motivation: number | null;
+  };
+  health: {
+    injury: number | null;
+    sickness: number | null;
+  };
+  body: {
+    weight: number | null;
+    bodyFat: number | null;
+    vo2max: number | null;
+  };
+  comments: string | null;
+}
+
+export interface IIntervalsMetricStats {
+  latest: number | null;
+  min: number | null;
+  max: number | null;
+  avg: number | null;
+}
+
+export interface IIntervalsWellnessSeries {
+  range: { oldest: string; newest: string };
+  metricsAvailable: NumericMetric[];
+  summary: Record<NumericMetric, IIntervalsMetricStats>;
+  points: IIntervalsWellnessPoint[];
+}
+
+export type IIntervalsWellnessSeriesResult =
+  | { status: "ok"; data: IIntervalsWellnessSeries }
+  | { status: "not_linked"; data: null }
+  | { status: "no_data"; data: null };
+
+export interface IIntervalsWeekWellness {
+  avgSleepScore: number | null;
+  avgFatigue: number | null;
+  fitness: number | null;
+  form: number | null;
+  totalLoad: number | null;
+}

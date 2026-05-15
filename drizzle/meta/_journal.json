@@ -57,6 +57,13 @@
       "when": 1778617948516,
       "tag": "0007_medical_emma_frost",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1778749615980,
+      "tag": "0008_ordinary_valeria_richards",
+      "breakpoints": true
     }
   ]
 }
