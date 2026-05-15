@@ -174,16 +174,29 @@ export async function detectAndPersistEvents(
         : new Date();
   log.info({ unique: deduped.length, beforeDedup: result.events.length }, "persisting events");
 
+  const normLoc = (s: string | null) => (s ?? "").toLowerCase().trim();
+
   await db.transaction(async (tx) => {
     for (const e of deduped) {
       let eventId: number;
 
-      const linkedEventId =
-        e.linkedEventId !== null && recentById.has(e.linkedEventId) ? e.linkedEventId : null;
+      const candidate = e.linkedEventId !== null ? (recentById.get(e.linkedEventId) ?? null) : null;
+      const linkValid =
+        candidate !== null &&
+        candidate.eventType === e.eventType &&
+        normLoc(candidate.bodyLocation) === normLoc(e.bodyLocation);
+      const linkedEventId = linkValid ? (candidate?.id ?? null) : null;
       if (e.linkedEventId !== null && linkedEventId === null) {
         log.info(
-          { llmLinkedEventId: e.linkedEventId },
-          "LLM returned linkedEventId not in recentEvents — treating as new event",
+          {
+            llmLinkedEventId: e.linkedEventId,
+            reason: candidate === null ? "not_in_recent" : "type_or_location_mismatch",
+            llmType: e.eventType,
+            llmLocation: e.bodyLocation,
+            candidateType: candidate?.eventType,
+            candidateLocation: candidate?.bodyLocation,
+          },
+          "LLM linkedEventId rejected — treating as new event",
         );
       }
 
@@ -195,9 +208,6 @@ export async function detectAndPersistEvents(
         const updates: Partial<InsertEvent> = { updatedAt: new Date() };
         if (activityStart > existing.lastOccurrence) {
           updates.lastOccurrence = activityStart;
-        }
-        if (e.description && e.description !== existing.description) {
-          updates.description = e.description;
         }
         if (e.markResolved && existing.status !== "resolved") {
           updates.status = "resolved";

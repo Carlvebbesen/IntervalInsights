@@ -21,19 +21,19 @@ export const eventDetectionOutput = z.object({
         .number()
         .nullable()
         .describe(
-          "The id of an existing event from `recentEvents` that this mention refers to. MUST be exactly null (NOT 0, NOT -1, NOT a placeholder integer) when introducing a new event. Only set when an entry in `recentEvents` has the matching id.",
+          "The id of an existing event from `recentEvents` that this mention refers to. MUST be exactly null (NOT 0, NOT -1, NOT a placeholder integer) when introducing a new event. Only set when an entry in `recentEvents` has BOTH the same eventType AND the same bodyLocation as the event you are emitting.",
         ),
       eventType: z.enum(eventTypeEnum.enumValues).describe("The category of the event."),
       bodyLocation: z
         .string()
         .nullable()
         .describe(
-          "Body location for an injury (e.g. 'right knee', 'left achilles'). Null for ILLNESS / MEDICAL_VISIT / PHYSIO_VISIT / OTHER unless a specific body part is the subject.",
+          "Body location for an injury. Include a side ONLY when the user explicitly states one ('right knee', 'left achilles'). When the user mentions a body part without a side ('hofta', 'kneet', 'foten'), use the body part alone ('hip', 'knee', 'foot') — do NOT guess a side. Null for ILLNESS / MEDICAL_VISIT / PHYSIO_VISIT / OTHER unless a specific body part is the subject.",
         ),
       description: z
         .string()
         .describe(
-          "A 1–2 sentence narrative summarising the condition. MUST be written in the SAME language the user wrote the title/description/notes in (e.g. Norwegian text -> Norwegian description). Do NOT translate the description to English.",
+          "A short (5–15 word) summary of the underlying CONDITION, not this specific activity's experience of it. Examples: 'Recurring right hip pain', 'Achilles tendon pain', 'Cold/flu'. Avoid activity-specific phrasing like 'felt pain during today's run'. MUST be written in the SAME language the user wrote the title/description/notes in (Norwegian text -> Norwegian description). Do NOT translate.",
         ),
       markResolved: z
         .boolean()
@@ -96,35 +96,99 @@ You are extracting health events from a single Strava activity.
 
 A health event is one of: an injury, an illness, a medical/doctor visit, a physiotherapy visit, or another physical-state issue worth tracking. The activity's title, description and the user's notes are below.
 
+### Categories (eventType)
+- **INJURY**: pain in a specific body part (hip, knee, achilles, foot, back, etc.). Pain is the trigger word.
+- **ILLNESS**: actual sickness — cold (forkjølelse), flu, fever, sore throat (vondt i halsen), stomach bug. NEVER for fatigue, soreness, heavy legs, or pain in a body part.
+- **MEDICAL_VISIT**: doctor/hospital visit.
+- **PHYSIO_VISIT**: physiotherapist (fysio, fysioterapeut) visit.
+- **OTHER**: physical-state issues that don't fit above (e.g. blisters, dehydration episode).
+
 ### Language
 The text may be written in any language — commonly English or Norwegian. Treat clear pain/injury/illness mentions identically regardless of language.
-- **\`bodyLocation\`**: always English (e.g. "venstre hofte" -> "left hip", "høyre kne" -> "right knee", "korsrygg" -> "lower back", "akilles" -> "achilles"). This field is used for filtering and must be consistent across users.
-- **\`description\`**: always in the SAME language the user wrote in. If notes are Norwegian, write the description in Norwegian. If English, write in English. The user reads this back later — keep it in their voice.
+- **\`bodyLocation\`**: always English. Translate body parts ("hofte" -> "hip", "kne" -> "knee", "korsrygg" -> "lower back", "akilles" -> "achilles", "fotbue" -> "foot arch"). Include a side ONLY when the user explicitly states one ("høyre hofte" -> "right hip", "venstre kne" -> "left knee"). When no side is stated ("hofta", "kneet"), use the body part alone ("hip", "knee") — DO NOT guess a side, even to match an existing event.
+- **\`description\`**: always in the SAME language the user wrote in. Short condition summary, not activity-specific phrasing.
 
 ### What to detect (be selective)
 - Detect ONLY explicit mentions. Do NOT infer from generic phrases like "tough run", "tired", "felt slow", "long day".
 - Most activities will produce zero events — return an empty array unless there is a clear mention.
+- A single note may contain MULTIPLE distinct events. Extract each one separately (e.g. knee pain AND foot pain in the same note → two events).
 - Distinguish kinds of injury on the same body part: a knee strain and a knee bruise are SEPARATE events.
 
-### What is NOT an event (do not emit)
-- Normal post-workout muscle soreness / DOMS. Phrases like "sore", "a bit sore", "stiff", "støl", "støle", "stiv", "ømme bein", "tight legs", "legs feel heavy after yesterday" describe expected training response, not a health event. This applies EVEN when paired with a body part ("sore quads", "støl i bena").
-- The user explicitly stating the ABSENCE of an issue ("no pain", "ingen smerte", "ingen vondt", "felt fine", "føltes bra"). Negations are not events.
-- General fatigue, low energy, "felt heavy", "rough day", "off day".
-- A single sentence that contains both soreness AND a no-pain disclaimer (e.g. "litt støl, men ingen smerte") is the canonical non-event — return empty array.
-- Only escalate soreness to an event when the user clearly frames it as a problem: lingering pain, sharp/stabbing pain, something that hurts during the activity, or wording like "injury", "strain", "pull", "tweak", "skade", "strekk", "vondt", "smerter".
+### Pain vs soreness (CRITICAL)
+The trigger word determines whether something is an event:
+- **Pain words → EVENT**: "vondt", "smerter", "smerte", "pain", "ache", "hurts", "injury", "strain", "skade", "strekk".
+- **Soreness words → NOT an event**: "støl", "støle", "stiv", "stive", "sore", "stiff", "tight", "ømme bein", "tunge bein", "heavy legs". These describe expected training response.
+- Soreness words paired with a body part are STILL not events ("støl i leggene", "sore quads", "litt stiv i hofta", "støl i bena").
+- A pain word IS an event even with a softener: "vondt i hofta, men løsnet" = EVENT. "litt vondt" = EVENT. "fortsatt vondt" = EVENT (and likely a link to a recent event).
+- Softeners ("men løsnet", "ga seg etterhvert", "ble bedre") describe the trajectory — they do NOT cancel the event.
+
+### What is NEVER an event
+- Negations of an issue: "ingen smerte", "ingen vondt", "no pain", "felt fine", "føltes bra", "kjente ikke noe". When a sentence contains BOTH a problem mention AND its negation, the negation wins ONLY if the problem word is soreness, not pain. So "litt støl, men ingen smerte" = no event. "litt vondt, men ingen smerter nå" = still an event (pain occurred).
+- General fatigue: "tunge bein", "sliten kropp", "lite overskudd", "kjenner det i bena", "rough day", "off day", "heavy". These are not illness and not injury.
+- Mentions of training advice or things to work on ("burde trent mer hofte" = "should train more hip"). This is intent, not pain.
 
 ### Linking to existing events
-- A list of the user's events from the last year is provided as \`recentEvents\` below.
-- If the activity mentions the SAME condition as one of those entries (same body location AND same kind of issue), set \`linkedEventId\` to that entry's id.
+- Only set \`linkedEventId\` when an entry in \`recentEvents\` has BOTH the same \`eventType\` AND the same \`bodyLocation\` (after side normalisation) as the event you are emitting. If body parts differ, return \`linkedEventId: null\`. A right-foot injury must NEVER link to a hip event, a calves event, etc.
+- If no entry matches, \`linkedEventId\` MUST be exactly null. Never 0, never -1, never a placeholder.
 - If a candidate has \`status=resolved\`, only link if the user explicitly says the issue returned.
-- If a candidate has \`alreadyLinkedToThisActivity=true\`, the condition is ALREADY recorded for the current activity. Do NOT emit it again — neither as a link, nor as a new event for the same body part / condition.
+- If a candidate has \`alreadyLinkedToThisActivity=true\`, the condition is ALREADY recorded for the current activity. Do NOT emit it again — not as a link, not as a new event for the same body part.
 
 ### Resolution
 - Set \`markResolved: true\` only when the user explicitly states the condition is over / better / resolved.
 
 ### Body location
-- Required for INJURY when the body part is mentioned (e.g. "right knee", "left achilles", "lower back").
+- Required for INJURY when the body part is mentioned (e.g. "right knee", "left achilles", "lower back", "hip" without side).
 - Use null when no specific body part is involved (most ILLNESS, MEDICAL_VISIT, PHYSIO_VISIT, OTHER).
+
+### Worked examples
+These illustrate the rules above. Each example shows notes -> the events array you should produce.
+
+Example 1 — pain with softener IS an event
+notes: "litt vondt i høyre hofte, men løsnet etterhvert"
+recentEvents: (none for hip)
+→ [{ linkedEventId: null, eventType: "INJURY", bodyLocation: "right hip", description: "Smerter i høyre hofte", markResolved: false, attributes: [] }]
+
+Example 2 — recurring pain links only when body part matches
+notes: "fortsatt vondt i høyre hofte"
+recentEvents: [{ id: 5, eventType: "INJURY", bodyLocation: "right hip", description: "Smerter i høyre hofte", ... }]
+→ [{ linkedEventId: 5, eventType: "INJURY", bodyLocation: "right hip", description: "Smerter i høyre hofte", markResolved: false, attributes: [] }]
+
+Example 3 — DO NOT link when body part differs
+notes: "litt vondt i kneet"
+recentEvents: [{ id: 5, eventType: "INJURY", bodyLocation: "right hip", ... }]
+→ [{ linkedEventId: null, eventType: "INJURY", bodyLocation: "knee", description: "Smerter i kneet", markResolved: false, attributes: [] }]
+(Knee ≠ hip — must be a new event.)
+
+Example 4 — soreness + no-pain disclaimer is NOT an event
+notes: "føltes bra! litt støl i kroppen etter styrke, men ingen smerte!"
+→ []
+
+Example 5 — soreness alone with a body part is NOT an event
+notes: "veldig tungt, ganske støl. spesielt i hofta"
+→ []
+(Soreness in hip, no pain word — not an event.)
+
+Example 6 — multiple events in one note, with a negation
+notes: "Litt smerter i kneet underveis, innsiden. kjente ikke noe i hofta, og litt vondt under fotbuen på venstre"
+→ [
+  { linkedEventId: null, eventType: "INJURY", bodyLocation: "knee", description: "Smerter på innsiden av kneet", markResolved: false, attributes: [{ key: "side_of_joint", type: "string", value: "inner" }] },
+  { linkedEventId: null, eventType: "INJURY", bodyLocation: "left foot arch", description: "Smerter under venstre fotbue", markResolved: false, attributes: [] }
+]
+(Hip is negated → skip. Knee and foot arch are separate events.)
+
+Example 7 — fatigue + pain → only the pain is an event
+notes: "tunge bein, lite overskudd, vondt i hofta"
+recentEvents: [{ id: 5, eventType: "INJURY", bodyLocation: "right hip", ... }]
+→ [{ linkedEventId: null, eventType: "INJURY", bodyLocation: "hip", description: "Smerter i hofta", markResolved: false, attributes: [] }]
+(Fatigue is not an event. The user did not say "høyre"/"venstre", so bodyLocation is "hip" without a side — and that means it does NOT link to event 5 which has bodyLocation "right hip".)
+
+Example 8 — illness is sickness, not fatigue
+notes: "Kriger med en liten forkjølelse 🤧"
+→ [{ linkedEventId: null, eventType: "ILLNESS", bodyLocation: null, description: "Forkjølelse", markResolved: false, attributes: [] }]
+
+Example 9 — fatigue alone is NEVER an illness
+notes: "ting økt, kjenner det i bena etter tirsdag"
+→ []
 
 ### Attributes (typed extra facts)
 - Use \`attributes\` to capture additional facts mentioned by the user that would make the event easier to filter, sort, or group later — e.g. severity, side, pain_scale (number 1–10), doctor_name, clinic, medication, next_appointment (datetime), affected_muscles (string_list).
