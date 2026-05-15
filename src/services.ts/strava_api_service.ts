@@ -2,6 +2,7 @@ import { sleep } from "bun";
 import { eq } from "drizzle-orm";
 import { StravaError } from "../error";
 import { logger } from "../logger";
+import { tracedFetch } from "../otel";
 import { activities, getDbInsertActivity } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type {
@@ -25,7 +26,7 @@ async function fetchStrava<T>(
     });
   }
   logger.debug({ url: url.toString() }, "Strava API call");
-  const response = await fetch(url.toString(), {
+  const response = await tracedFetch(url, {
     method: "GET",
     headers: { Authorization: `Bearer ${accessToken}` },
   });

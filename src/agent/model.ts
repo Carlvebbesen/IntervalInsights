@@ -1,15 +1,43 @@
+import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
+import type { LLMResult } from "@langchain/core/outputs";
 import { ChatOpenAI } from "@langchain/openai";
+import {
+  GEN_AI_OPERATION_NAME_VALUE_CHAT,
+  GEN_AI_SYSTEM_VALUE_OPENAI,
+} from "@opentelemetry/semantic-conventions/incubating";
 import { sleep } from "bun";
 import type { z } from "zod";
 import { logger } from "../logger";
+import { recordTokenUsage } from "../otel";
 
 export const ANALYSIS_VERSION = "v4.0";
 
+const MODEL_NAME = "gpt-4o-mini";
+
+class TokenUsageCallback extends BaseCallbackHandler {
+  name = "OtelTokenUsage";
+  async handleLLMEnd(output: LLMResult): Promise<void> {
+    const usage = output.llmOutput?.tokenUsage as
+      | { promptTokens?: number; completionTokens?: number }
+      | undefined;
+    if (!usage) return;
+    recordTokenUsage(
+      {
+        system: GEN_AI_SYSTEM_VALUE_OPENAI,
+        model: MODEL_NAME,
+        operation: GEN_AI_OPERATION_NAME_VALUE_CHAT,
+      },
+      { inputTokens: usage.promptTokens, outputTokens: usage.completionTokens },
+    );
+  }
+}
+
 export const gptMiniModel = new ChatOpenAI({
-  model: "gpt-4o-mini",
+  model: MODEL_NAME,
   temperature: 0,
   maxRetries: 2,
   timeout: 45_000,
+  callbacks: [new TokenUsageCallback()],
 });
 
 export async function invokeStructured<T extends Record<string, unknown>>(

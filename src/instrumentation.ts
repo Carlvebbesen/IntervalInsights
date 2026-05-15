@@ -3,7 +3,6 @@ import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentation
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { PinoInstrumentation } from "@opentelemetry/instrumentation-pino";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { BatchLogRecordProcessor } from "@opentelemetry/sdk-logs";
 import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
@@ -38,8 +37,9 @@ if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
         "@opentelemetry/instrumentation-fs": { enabled: false },
         "@opentelemetry/instrumentation-pg": { enhancedDatabaseReporting: true },
         "@opentelemetry/instrumentation-undici": { enabled: true },
-        // Disable bundled Pino instrumentation; we register our own below so
-        // it picks up the LoggerProvider that NodeSDK registers globally.
+        // PinoInstrumentation relies on require-in-the-middle, which doesn't
+        // activate under Bun's loader — leave it off. Pino → OTel forwarding
+        // is wired manually in src/logger.ts via a custom destination.
         "@opentelemetry/instrumentation-pino": { enabled: false },
         // Incoming HTTP spans are created by @hono/otel with Hono route paths.
         // Keep outgoing-client spans only.
@@ -47,7 +47,6 @@ if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
           ignoreIncomingRequestHook: () => true,
         },
       }),
-      new PinoInstrumentation(),
     ],
   });
 

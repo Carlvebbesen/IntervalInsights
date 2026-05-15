@@ -1,4 +1,5 @@
 import { IntervalsError } from "../error";
+import { tracedFetch } from "../otel";
 import type {
   IIntervalsActivity,
   IIntervalsAthlete,
@@ -23,7 +24,7 @@ async function fetchIntervals<T>(
 
   let response: Response;
   try {
-    response = await fetch(url.toString(), {
+    response = await tracedFetch(url, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${accessToken}`,
