@@ -1,12 +1,11 @@
 import { trace } from "@opentelemetry/api";
-import { logs } from "@opentelemetry/api-logs";
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { PinoInstrumentation } from "@opentelemetry/instrumentation-pino";
 import { resourceFromAttributes } from "@opentelemetry/resources";
-import { BatchLogRecordProcessor, LoggerProvider } from "@opentelemetry/sdk-logs";
+import { BatchLogRecordProcessor } from "@opentelemetry/sdk-logs";
 import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import {
@@ -26,12 +25,6 @@ if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
       process.env.OTEL_DEPLOYMENT_ENVIRONMENT ?? process.env.NODE_ENV ?? "development",
   });
 
-  const loggerProvider = new LoggerProvider({
-    resource,
-    processors: [new BatchLogRecordProcessor(new OTLPLogExporter())],
-  });
-  logs.setGlobalLoggerProvider(loggerProvider);
-
   const sdk = new NodeSDK({
     resource,
     traceExporter: new OTLPTraceExporter(),
@@ -39,13 +32,14 @@ if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
       exporter: new OTLPMetricExporter(),
       exportIntervalMillis: 15_000,
     }),
+    logRecordProcessors: [new BatchLogRecordProcessor(new OTLPLogExporter())],
     instrumentations: [
       getNodeAutoInstrumentations({
         "@opentelemetry/instrumentation-fs": { enabled: false },
         "@opentelemetry/instrumentation-pg": { enhancedDatabaseReporting: true },
         "@opentelemetry/instrumentation-undici": { enabled: true },
         // Disable bundled Pino instrumentation; we register our own below so
-        // it picks up the LoggerProvider we just configured.
+        // it picks up the LoggerProvider that NodeSDK registers globally.
         "@opentelemetry/instrumentation-pino": { enabled: false },
         // Incoming HTTP spans are created by @hono/otel with Hono route paths.
         // Keep outgoing-client spans only.
@@ -71,7 +65,7 @@ if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
 
   const shutdown = async () => {
     try {
-      await Promise.all([sdk.shutdown(), loggerProvider.shutdown()]);
+      await sdk.shutdown();
     } catch (err) {
       console.error("OpenTelemetry shutdown error", err);
     }

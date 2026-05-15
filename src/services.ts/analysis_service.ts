@@ -174,7 +174,7 @@ export const startAnalysisByStravaId = async (
   await startAnalysis(db, stravaAccessToken, result.id, stravaActivityId, userId);
 };
 
-export const restartAnalysisByStravaId = async (
+export const triggerAnalysisByStravaId = async (
   db: IGlobalBindings["db"],
   stravaAccessToken: string,
   stravaActivityId: number,

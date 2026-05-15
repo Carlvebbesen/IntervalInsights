@@ -58,6 +58,7 @@ export const SKIP_START_STATUSES: ReadonlySet<AnalysisStatus> = new Set<Analysis
 export const SKIP_RESTART_STATUSES: ReadonlySet<AnalysisStatus> = new Set<AnalysisStatus>([
   ...IN_FLIGHT_STATUSES,
   "skipped_inactive",
+  "completed",
 ]);
 
 /** Training types that count as interval / quality sessions */

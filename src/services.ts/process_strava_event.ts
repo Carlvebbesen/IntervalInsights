@@ -6,7 +6,7 @@ import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import { activities, getDbInsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
-import { restartAnalysisByStravaId } from "./analysis_service";
+import { triggerAnalysisByStravaId } from "./analysis_service";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { stravaApiService } from "./strava_api_service";
 import { shouldAnalyze } from "./utils";
@@ -121,7 +121,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
       .set(activity)
       .where(eq(activities.stravaActivityId, stravaActivityId));
     if (activityClass === "active" && (body.updates?.title || body.updates?.description)) {
-      await restartAnalysisByStravaId(context.db, accessToken, stravaActivityId, user.id);
+      await triggerAnalysisByStravaId(context.db, accessToken, stravaActivityId, user.id);
     }
   }
 }

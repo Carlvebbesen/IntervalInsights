@@ -499,6 +499,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/events": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description List every event for the authenticated user, newest occurrence first. Optional filters: `status` (active/resolved), `eventType`. */
+    get: operations["getApiEvents"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/user": {
     parameters: {
       query?: never;
@@ -856,6 +873,8 @@ export interface operations {
           dateFrom?: string;
           /** Format: date-time */
           dateTo?: string;
+          eventTypes?: ("INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER")[];
+          eventIds?: number[];
         };
       };
     };
@@ -918,6 +937,8 @@ export interface operations {
                 signatures?: string[];
                 dateFrom?: string;
                 dateTo?: string;
+                eventTypes?: ("INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER")[];
+                eventIds?: number[];
               };
             };
           };
@@ -1018,6 +1039,18 @@ export interface operations {
             icuFtp?: number | null;
             icuCtl?: number | null;
             icuAtl?: number | null;
+            events?: {
+              id: number;
+              /** @enum {string} */
+              eventType: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
+              bodyLocation: string | null;
+              description: string;
+              startTime: string;
+              lastOccurrence: string;
+              /** @enum {string} */
+              status: "active" | "resolved";
+              resolvedAt: string | null;
+            }[];
           };
         };
       };
@@ -1209,6 +1242,18 @@ export interface operations {
             icuFtp?: number | null;
             icuCtl?: number | null;
             icuAtl?: number | null;
+            events?: {
+              id: number;
+              /** @enum {string} */
+              eventType: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
+              bodyLocation: string | null;
+              description: string;
+              startTime: string;
+              lastOccurrence: string;
+              /** @enum {string} */
+              status: "active" | "resolved";
+              resolvedAt: string | null;
+            }[];
           };
         };
       };
@@ -2225,6 +2270,7 @@ export interface operations {
                     oldest: string;
                     newest: string;
                   };
+                  metricsAvailable: string[];
                   summary: {
                     [key: string]: {
                       latest: number | null;
@@ -2238,6 +2284,7 @@ export interface operations {
                     fitness: {
                       ctl: number | null;
                       atl: number | null;
+                      tsb: number | null;
                       rampRate: number | null;
                       ctlLoad: number | null;
                       atlLoad: number | null;
@@ -2348,6 +2395,13 @@ export interface operations {
                 movingTimeSec: number;
               }[];
             };
+            wellness: {
+              avgSleepScore: number | null;
+              avgFatigue: number | null;
+              fitness: number | null;
+              form: number | null;
+              totalLoad: number | null;
+            } | null;
           };
         };
       };
@@ -2359,6 +2413,55 @@ export interface operations {
         content: {
           "application/json": {
             error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  getApiEvents: {
+    parameters: {
+      query?: {
+        status?: "active" | "resolved";
+        eventType?: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description All events for the user */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            events: {
+              id: number;
+              /** @enum {string} */
+              eventType: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
+              bodyLocation: string | null;
+              description: string;
+              startTime: string;
+              lastOccurrence: string;
+              /** @enum {string} */
+              status: "active" | "resolved";
+              resolvedAt: string | null;
+              createdAt: string;
+              updatedAt: string;
+            }[];
           };
         };
       };

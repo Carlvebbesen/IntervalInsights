@@ -3,7 +3,7 @@ import { runInBackground } from "../background";
 import { logger } from "../logger";
 import { activities } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
-import { restartAnalysisByStravaId } from "./analysis_service";
+import { triggerAnalysisByStravaId } from "./analysis_service";
 
 const REQUEUE_BATCH_LIMIT = 100;
 const ERROR_RETRY_CAP = 2;
@@ -29,7 +29,7 @@ export async function requeueStaleActivities(
             analysis_status = 'skipped_inactive'
             OR (analysis_status = 'error' AND analysis_attempt_count < ${ERROR_RETRY_CAP})
             OR (
-              analysis_status IN ('pending', 'ongoing_init')
+              analysis_status = 'ongoing_init'
               AND created_at < NOW() - INTERVAL '${sql.raw(String(ORPHAN_TIMEOUT_MINUTES))} minutes'
               AND analysis_attempt_count < ${ERROR_RETRY_CAP}
             )
@@ -51,7 +51,7 @@ export async function requeueStaleActivities(
   for (const row of requeued) {
     runInBackground(
       "analysis.restart",
-      () => restartAnalysisByStravaId(db, stravaAccessToken, row.stravaActivityId, userId),
+      () => triggerAnalysisByStravaId(db, stravaAccessToken, row.stravaActivityId, userId),
       {
         attributes: {
           "activity.id": row.id,
