@@ -1,5 +1,5 @@
 import { context } from "@opentelemetry/api";
-import { SeverityNumber, logs } from "@opentelemetry/api-logs";
+import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import pino from "pino";
 
 // `@opentelemetry/instrumentation-pino` doesn't activate under Bun (its

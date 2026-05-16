@@ -1,10 +1,6 @@
 import { IntervalsError } from "../error";
 import { tracedFetch } from "../otel";
-import type {
-  IIntervalsActivity,
-  IIntervalsAthlete,
-  IIntervalsInterval,
-} from "../types/intervals/IIntervalsActivity";
+import type { IIntervalsActivity, IIntervalsAthlete } from "../types/intervals/IIntervalsActivity";
 import type { IIntervalsWellness } from "../types/intervals/IIntervalsWellness";
 
 const INTERVALS_BASE_URL = "https://intervals.icu/api/v1";
@@ -58,7 +54,9 @@ export const intervalsApiService = {
   },
 
   async getActivityIntervals(accessToken: string, activityId: string) {
-    return fetchIntervals<IIntervalsInterval[]>(`/activity/${activityId}/intervals`, accessToken);
+    // intervals.icu returns a wrapper object (e.g. { icu_intervals: [...], ... })
+    // here, not a bare array — caller must normalize.
+    return fetchIntervals<unknown>(`/activity/${activityId}/intervals`, accessToken);
   },
 
   async listActivities(accessToken: string, oldest: string, newest: string) {

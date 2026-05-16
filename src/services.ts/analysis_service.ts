@@ -6,6 +6,16 @@ import { activities, users } from "../schema";
 import { SKIP_RESTART_STATUSES, SKIP_START_STATUSES, type TrainingType } from "../schema/enums";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
+import { needCompleteAnalysis } from "./utils";
+
+// Thrown for user-input validation problems in the resume flow. Distinct from
+// a server-side error so the router can map it to 400.
+export class ResumeValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ResumeValidationError";
+  }
+}
 
 async function getUserContext(
   db: IGlobalBindings["db"],
@@ -41,6 +51,13 @@ export const startAnalysis = async (
     log.error({ userId }, "user not found — aborting");
     return;
   }
+
+  // Always start from a clean checkpoint. Without this, an invoke layered on
+  // top of a stale thread (e.g. from a prior dev session or a different state
+  // schema) silently corrupts the run and resume crashes later with empty
+  // state.streams / state.activityId. resetAnalysisThread is a no-op when no
+  // thread exists, so this is safe to call unconditionally here.
+  await resetAnalysisThread(activityId);
 
   try {
     const graph = await buildAnalysisGraph();
@@ -100,6 +117,20 @@ export const resumeAnalysis = async (
 
   if (!finalTrainingType) {
     throw new Error(`Cannot resume activity ${activityId} — no training type resolved`);
+  }
+
+  // Interval-type sessions need a structure for the complete-analysis LLM to
+  // anchor on. If the user submitted no sets and the initial agent also
+  // produced none, fail fast with a user-facing message instead of either
+  // hanging the LLM call or marking the activity as a server error.
+  if (needCompleteAnalysis(finalTrainingType)) {
+    const draftStructureLen =
+      (current.draftAnalysisResult as { structure?: unknown[] } | null)?.structure?.length ?? 0;
+    if (sets.length === 0 && draftStructureLen === 0) {
+      throw new ResumeValidationError(
+        "Define an interval structure before completing — no sets were submitted and the initial analysis did not produce one.",
+      );
+    }
   }
 
   const userCtx = await getUserContext(db, current.userId);
@@ -197,6 +228,6 @@ export const triggerAnalysisByStravaId = async (
     return;
   }
 
-  await resetAnalysisThread(result.id);
+  // startAnalysis resets the thread itself, no need to do it twice.
   await startAnalysis(db, stravaAccessToken, result.id, stravaActivityId, userId);
 };

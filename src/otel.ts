@@ -1,4 +1,4 @@
-import { SpanKind, SpanStatusCode, metrics, trace } from "@opentelemetry/api";
+import { metrics, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 import {
   ATTR_ERROR_TYPE,
   ATTR_HTTP_REQUEST_METHOD,
@@ -43,10 +43,7 @@ const genAiTokenUsage = meter.createHistogram("gen_ai.client.token.usage", {
 // (`g1234567`), while leaving version segments like `v3` untouched.
 const ID_SEGMENT = /\/[a-zA-Z]?\d{3,}/g;
 
-export async function tracedFetch(
-  input: string | URL,
-  init: RequestInit = {},
-): Promise<Response> {
+export async function tracedFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
   const url = typeof input === "string" ? new URL(input) : input;
   const method = (init.method ?? "GET").toUpperCase();
   const scheme = url.protocol.replace(":", "");

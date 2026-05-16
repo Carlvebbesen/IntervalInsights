@@ -18,10 +18,8 @@ type EnrichmentFields = Partial<
     | "weightedAveragePower"
     | "calories"
     | "deviceName"
-    | "trainingLoad"
     | "icuTrainingLoad"
     | "icuIntensity"
-    | "relativeIntensity"
     | "decoupling"
     | "polarizationIndex"
     | "icuFtp"
@@ -33,15 +31,13 @@ type EnrichmentFields = Partial<
 function buildEnrichment(activity: IIntervalsActivity): EnrichmentFields {
   return {
     elapsedTime: activity.elapsed_time ?? null,
-    maxHeartRate: activity.max_hr ?? null,
-    averagePower: activity.average_power ?? null,
-    weightedAveragePower: activity.weighted_average_power ?? null,
+    maxHeartRate: activity.max_heartrate ?? null,
+    averagePower: activity.icu_average_watts ?? null,
+    weightedAveragePower: activity.icu_weighted_avg_watts ?? null,
     calories: activity.calories ?? null,
     deviceName: activity.device_name ?? null,
-    trainingLoad: activity.training_load ?? null,
     icuTrainingLoad: activity.icu_training_load ?? null,
     icuIntensity: activity.icu_intensity ?? null,
-    relativeIntensity: activity.relative_intensity ?? null,
     decoupling: activity.decoupling ?? null,
     polarizationIndex: activity.polarization_index ?? null,
     icuFtp: activity.icu_ftp ?? null,

@@ -13,7 +13,11 @@ import {
   PendingActivitySchema,
   ProposedPaceResponseSchema,
 } from "../schemas/api_schemas";
-import { resumeAnalysis, startAnalysis } from "../services.ts/analysis_service";
+import {
+  ResumeValidationError,
+  resumeAnalysis,
+  startAnalysis,
+} from "../services.ts/analysis_service";
 import { getProposedPaceForStructure, getProposedPaceFromLaps } from "../services.ts/pace_service";
 import { requeueStaleActivities } from "../services.ts/requeue_service";
 import { stravaApiService } from "../services.ts/strava_api_service";
@@ -168,6 +172,10 @@ agentsRouter.post(
       );
       return c.json({ success: true }, 200);
     } catch (err) {
+      if (err instanceof ResumeValidationError) {
+        c.var.logger.info({ err: err.message }, "resume-analysis validation failed");
+        return c.json({ error: err.message }, 400);
+      }
       c.var.logger.error({ err }, "Error resuming analysis");
       return c.json({ error: "Internal Server Error" }, 500);
     }

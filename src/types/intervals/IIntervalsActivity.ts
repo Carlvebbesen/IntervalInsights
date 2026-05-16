@@ -1,25 +1,24 @@
+// Matches intervals.icu's Activity schema from /api/v1/docs. Only the fields
+// we actually read are listed — the real payload has ~170 fields.
 export interface IIntervalsActivity {
   id: string;
-  athlete_id: string;
   name: string;
   description: string | null;
   type: string;
   sub_type: string | null;
-  start_time: string;
+  start_date: string;
   start_date_local: string;
   moving_time: number;
-  elapsed_time: number;
+  elapsed_time: number | null;
   distance: number;
-  elevation_gain: number | null;
-  average_hr: number | null;
-  max_hr: number | null;
-  average_power: number | null;
-  weighted_average_power: number | null;
+  total_elevation_gain: number | null;
+  average_heartrate: number | null;
+  max_heartrate: number | null;
+  icu_average_watts: number | null;
+  icu_weighted_avg_watts: number | null;
   calories: number | null;
-  training_load: number | null;
   icu_training_load: number | null;
   icu_intensity: number | null;
-  relative_intensity: number | null;
   decoupling: number | null;
   polarization_index: number | null;
   icu_ftp: number | null;
@@ -31,29 +30,29 @@ export interface IIntervalsActivity {
   strava_id: number | null;
   paired_event_id: number | null;
   route_id: number | null;
-  indoor: boolean;
-  manual: boolean;
+  trainer: boolean | null;
   tags: string[] | null;
-  created: string;
-  updated: string;
+  created: string | null;
 }
 
+// Matches intervals.icu's Interval schema from /api/v1/docs. Only the fields
+// we actually consume are listed — the real payload is much larger.
 export interface IIntervalsInterval {
   id: number;
-  name: string | null;
+  type: string;
   start_index: number;
   end_index: number;
-  type: string;
-  avg_power: number | null;
-  max_power: number | null;
-  avg_hr: number | null;
-  max_hr: number | null;
-  avg_pace: number | null;
   distance: number;
   moving_time: number;
-  work_interval: boolean;
-  intensity_factor: number | null;
+  elapsed_time: number | null;
+  average_watts: number | null;
+  max_watts: number | null;
+  average_heartrate: number | null;
+  max_heartrate: number | null;
+  average_speed: number | null;
+  intensity: number | null;
   training_load: number | null;
+  label: string | null;
 }
 
 export interface IIntervalsAthlete {

@@ -75,10 +75,17 @@ const CLASSIFICATION_RULES = `
 
 function formatIntervalsIcuBlock(prediction: IntervalsIcuPrediction | null | undefined): string {
   if (!prediction) return "";
-  const rows = (prediction.intervals ?? [])
+  const intervals = Array.isArray(prediction.intervals) ? prediction.intervals : [];
+  const rows = intervals
     .map((i, idx) => {
-      const pace = i.avg_pace != null ? `${i.avg_pace.toFixed(2)} m/s` : "-";
-      const hr = i.avg_hr != null ? `${Math.round(i.avg_hr)} bpm` : "-";
+      const speedMs =
+        i.average_speed != null
+          ? i.average_speed
+          : i.moving_time > 0
+            ? i.distance / i.moving_time
+            : null;
+      const pace = speedMs != null ? `${speedMs.toFixed(2)} m/s` : "-";
+      const hr = i.average_heartrate != null ? `${Math.round(i.average_heartrate)} bpm` : "-";
       const load = i.training_load != null ? `${i.training_load.toFixed(1)}` : "-";
       return `| ${idx + 1} | ${i.type} | ${i.distance}m | ${i.moving_time}s | ${pace} | ${hr} | ${load} |`;
     })
