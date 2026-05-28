@@ -509,11 +509,30 @@ export interface paths {
     /** @description List every event for the authenticated user, newest occurrence first. Optional filters: `status` (active/resolved), `eventType`. */
     get: operations["getApiEvents"];
     put?: never;
-    post?: never;
+    /** @description Create a new event and link it to one of the user's activities. `startTime` defaults to the activity's start date when omitted. */
+    post: operations["postApiEvents"];
     delete?: never;
     options?: never;
     head?: never;
     patch?: never;
+    trace?: never;
+  };
+  "/api/events/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** @description Unlink an event from the given activity. When that was the event's only linked activity, the event itself is deleted. */
+    delete: operations["deleteApiEventsById"];
+    options?: never;
+    head?: never;
+    /** @description Edit an event (description, body location, type, status). Toggling `status` keeps `resolvedAt` in sync. */
+    patch: operations["patchApiEventsById"];
     trace?: never;
   };
   "/api/user": {
@@ -2462,6 +2481,203 @@ export interface operations {
               createdAt: string;
               updatedAt: string;
             }[];
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  postApiEvents: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          activityId: number;
+          /** @enum {string} */
+          eventType: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
+          bodyLocation?: string | null;
+          description: string;
+          /** Format: date-time */
+          startTime?: string;
+          /** @enum {string} */
+          status?: "active" | "resolved";
+        };
+      };
+    };
+    responses: {
+      /** @description Created event */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            id: number;
+            /** @enum {string} */
+            eventType: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
+            bodyLocation: string | null;
+            description: string;
+            startTime: string;
+            lastOccurrence: string;
+            /** @enum {string} */
+            status: "active" | "resolved";
+            resolvedAt: string | null;
+            createdAt: string;
+            updatedAt: string;
+          };
+        };
+      };
+      /** @description Activity not found or unauthorized */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  deleteApiEventsById: {
+    parameters: {
+      query: {
+        activityId: number;
+      };
+      header?: never;
+      path: {
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Unlink result */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            unlinked: boolean;
+            deleted: boolean;
+          };
+        };
+      };
+      /** @description Event not found or unauthorized */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  patchApiEventsById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          /** @enum {string} */
+          eventType?: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
+          bodyLocation?: string | null;
+          description?: string;
+          /** @enum {string} */
+          status?: "active" | "resolved";
+        };
+      };
+    };
+    responses: {
+      /** @description Updated event */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            id: number;
+            /** @enum {string} */
+            eventType: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
+            bodyLocation: string | null;
+            description: string;
+            startTime: string;
+            lastOccurrence: string;
+            /** @enum {string} */
+            status: "active" | "resolved";
+            resolvedAt: string | null;
+            createdAt: string;
+            updatedAt: string;
+          };
+        };
+      };
+      /** @description Bad request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
+        };
+      };
+      /** @description Event not found or unauthorized */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
           };
         };
       };
