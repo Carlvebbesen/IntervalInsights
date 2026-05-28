@@ -1,4 +1,4 @@
-import { and, avg, count, eq, gte, inArray, lte, sql, sum } from "drizzle-orm";
+import { and, asc, avg, count, eq, gte, inArray, lte, sql, sum } from "drizzle-orm";
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
@@ -7,11 +7,15 @@ import { INTERVAL_TRAINING_TYPES, OTHER_SPORT_TYPES, RUNNING_SPORT_TYPES } from 
 import {
   DashboardResponseSchema,
   ErrorSchema,
+  FitnessDayParamSchema,
+  FitnessDayResponseSchema,
+  FitnessSeriesResponseSchema,
   TrainingSummaryResponseSchema,
   WeekDetailResponseSchema,
   WellnessQuerySchema,
   WellnessSeriesResponseSchema,
 } from "../schemas/api_schemas";
+import { fetchFitnessDayBlock, fetchFitnessSeries } from "../services.ts/fitness_service";
 import {
   fetchTrainingSummary,
   fetchWeekWellnessStats,
@@ -328,6 +332,80 @@ dashboardRouter.get(
     const { oldest, newest } = c.req.valid("query");
     const result = await fetchWellnessSeries(c.get("clerkUserId"), oldest, newest);
     return c.json(result);
+  },
+);
+
+dashboardRouter.get(
+  "/fitness",
+  describeRoute({
+    description:
+      "Flat fitness-view series for the requested date range. Discriminated by `status`: `ok` (per-day points: CTL/ATL/TSB/CTL-load/ATL-load + HRV with derived `hrvStatus` + sleep score), `not_linked` (intervals.icu not connected), `no_data` (linked but no records in range). `hrvStatus` is computed (7-day rolling HRV mean vs ~60-day baseline ± 1 SD) and is null when history is insufficient. Range capped at 366 days; oldest must be ≤ newest.",
+    responses: {
+      200: {
+        description: "Discriminated fitness-series result",
+        content: {
+          "application/json": { schema: resolver(FitnessSeriesResponseSchema) },
+        },
+      },
+      400: {
+        description: "Invalid date range",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("query", WellnessQuerySchema),
+  async (c) => {
+    const { oldest, newest } = c.req.valid("query");
+    const result = await fetchFitnessSeries(c.get("clerkUserId"), oldest, newest);
+    return c.json(result);
+  },
+);
+
+dashboardRouter.get(
+  "/fitness/day/:date",
+  describeRoute({
+    description:
+      "Per-day fitness detail. Bare object (NOT status-wrapped): `date`, `fitness` (same shape as a series point, or null when intervals.icu isn't linked / has no record that day), and `activities` (this user's activities on that local date).",
+    responses: {
+      200: {
+        description: "Day fitness detail",
+        content: {
+          "application/json": { schema: resolver(FitnessDayResponseSchema) },
+        },
+      },
+      400: {
+        description: "Invalid date",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("param", FitnessDayParamSchema),
+  async (c) => {
+    const userId = c.get("userId");
+    const { date } = c.req.valid("param");
+
+    const [fitness, dayActivities] = await Promise.all([
+      fetchFitnessDayBlock(c.get("clerkUserId"), date),
+      c.env.db
+        .select({
+          id: activities.id,
+          title: activities.title,
+          sportType: activities.sportType,
+          trainingType: activities.trainingType,
+          distance: activities.distance,
+          movingTime: activities.movingTime,
+          averageHeartRate: activities.averageHeartRate,
+          trainingLoad: activities.trainingLoad,
+          icuTrainingLoad: activities.icuTrainingLoad,
+        })
+        .from(activities)
+        .where(
+          and(eq(activities.userId, userId), sql`DATE(${activities.startDateLocal}) = ${date}`),
+        )
+        .orderBy(asc(activities.startDateLocal)),
+    ]);
+
+    return c.json({ date, fitness, activities: dayActivities });
   },
 );
 

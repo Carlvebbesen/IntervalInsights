@@ -299,6 +299,66 @@ export const WellnessSeriesResponseSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("no_data"), data: z.null() }),
 ]);
 
+// ─── Fitness view (flat CTL/ATL/TSB/HRV/sleep series + per-day detail) ─────────
+
+const FitnessPointSchema = z.object({
+  date: z.string(),
+  ctl: z.number().nullable(),
+  atl: z.number().nullable(),
+  tsb: z.number().nullable(),
+  ctlLoad: z.number().nullable(),
+  atlLoad: z.number().nullable(),
+  hrv: z.number().nullable(),
+  hrv7dAvg: z.number().nullable(),
+  hrvStatus: z.enum(["balanced", "unbalanced", "low"]).nullable(),
+  hrvNightlyStatus: z.enum(["balanced", "unbalanced", "low"]).nullable(),
+  // Personal baseline band (mean ± 1 SD) for shading the "balanced" zone behind
+  // the HRV line. Null when there's insufficient history for a baseline.
+  hrvBaseline: z
+    .object({
+      mean: z.number(),
+      lowerBalanced: z.number(),
+      upperBalanced: z.number(),
+    })
+    .nullable(),
+  sleepScore: z.number().nullable(),
+});
+
+export const FitnessSeriesResponseSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("ok"),
+    data: z.object({
+      range: z.object({ oldest: z.string(), newest: z.string() }),
+      points: z.array(FitnessPointSchema),
+    }),
+  }),
+  z.object({ status: z.literal("not_linked"), data: z.null() }),
+  z.object({ status: z.literal("no_data"), data: z.null() }),
+]);
+
+export const FitnessDayParamSchema = z.object({ date: isoDate });
+
+const FitnessDayActivitySchema = z.object({
+  id: z.number(),
+  title: z.string(),
+  sportType: z.string(),
+  trainingType: z.enum(trainingTypeEnum.enumValues).nullable(),
+  distance: z.number(),
+  movingTime: z.number(),
+  averageHeartRate: z.number().nullable(),
+  trainingLoad: z.number().nullable(),
+  icuTrainingLoad: z.number().nullable(),
+});
+
+// NOTE: bare object (NOT status-wrapped) — the frontend FitnessDayDetail.fromJson
+// reads date/fitness/activities at the top level. `fitness` is null when
+// intervals.icu isn't linked or has no wellness record for that day.
+export const FitnessDayResponseSchema = z.object({
+  date: z.string(),
+  fitness: FitnessPointSchema.nullable(),
+  activities: z.array(FitnessDayActivitySchema),
+});
+
 export const WeekDetailResponseSchema = z.object({
   weekStart: z.string(),
   running: z.object({
