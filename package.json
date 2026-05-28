@@ -3,11 +3,12 @@
   "scripts": {
     "dev": "bun run --hot --preload ./src/instrumentation.ts src/index.ts | pino-pretty",
     "start": "bun run --preload ./src/instrumentation.ts src/index.ts",
+    "test": "bun test",
     "build": "bun build src/index.ts --compile --outfile server",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "types:api": "openapi-typescript http://localhost:3000/api/openapi.json -o src/types/api.d.ts"
+    "types:api": "openapi-typescript http://127.0.0.1:3000/api/openapi.json -o src/types/api.d.ts"
   },
   "dependencies": {
     "@clerk/backend": "^2.29.0",

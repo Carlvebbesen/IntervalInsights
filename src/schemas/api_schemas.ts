@@ -28,6 +28,11 @@ export const EventListResponseSchema = z.object({
   events: z.array(EventListItemSchema),
 });
 
+export const DeleteEventResponseSchema = z.object({
+  unlinked: z.boolean(),
+  deleted: z.boolean(),
+});
+
 export const ErrorSchema = z.object({ error: z.string() });
 
 export const ActivitySchema = z.object({
