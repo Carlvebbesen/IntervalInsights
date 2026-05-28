@@ -4,6 +4,7 @@
     "dev": "bun run --hot --preload ./src/instrumentation.ts src/index.ts | pino-pretty",
     "start": "bun run --preload ./src/instrumentation.ts src/index.ts",
     "build": "bun build src/index.ts --compile --outfile server",
+    "test": "bun test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",

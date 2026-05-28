@@ -482,6 +482,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/dashboard/fitness": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Flat fitness-view series for the requested date range. Discriminated by `status`: `ok` (per-day points: CTL/ATL/TSB/CTL-load/ATL-load + HRV with derived `hrvStatus` + sleep score), `not_linked` (intervals.icu not connected), `no_data` (linked but no records in range). `hrvStatus` is computed (7-day rolling HRV mean vs ~60-day baseline ± 1 SD) and is null when history is insufficient. Range capped at 366 days; oldest must be ≤ newest. */
+    get: operations["getApiDashboardFitness"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/dashboard/fitness/day/{date}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Per-day fitness detail. Bare object (NOT status-wrapped): `date`, `fitness` (same shape as a series point, or null when intervals.icu isn't linked / has no record that day), and `activities` (this user's activities on that local date). */
+    get: operations["getApiDashboardFitnessDayByDate"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/dashboard/week/{weekStart}": {
     parameters: {
       query?: never;
@@ -2335,6 +2369,160 @@ export interface operations {
         };
       };
       /** @description Invalid date range */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  getApiDashboardFitness: {
+    parameters: {
+      query: {
+        oldest: string;
+        newest: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Discriminated fitness-series result */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json":
+            | {
+                /** @constant */
+                status: "ok";
+                data: {
+                  range: {
+                    oldest: string;
+                    newest: string;
+                  };
+                  points: {
+                    date: string;
+                    ctl: number | null;
+                    atl: number | null;
+                    tsb: number | null;
+                    ctlLoad: number | null;
+                    atlLoad: number | null;
+                    hrv: number | null;
+                    hrv7dAvg: number | null;
+                    /** @enum {string|null} */
+                    hrvStatus: "balanced" | "unbalanced" | "low" | null;
+                    /** @enum {string|null} */
+                    hrvNightlyStatus: "balanced" | "unbalanced" | "low" | null;
+                    hrvBaseline: {
+                      mean: number;
+                      lowerBalanced: number;
+                      upperBalanced: number;
+                    } | null;
+                    sleepScore: number | null;
+                  }[];
+                };
+              }
+            | {
+                /** @constant */
+                status: "not_linked";
+                data: null;
+              }
+            | {
+                /** @constant */
+                status: "no_data";
+                data: null;
+              };
+        };
+      };
+      /** @description Invalid date range */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            error: string;
+          };
+        };
+      };
+    };
+  };
+  getApiDashboardFitnessDayByDate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        date: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Day fitness detail */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            date: string;
+            fitness: {
+              date: string;
+              ctl: number | null;
+              atl: number | null;
+              tsb: number | null;
+              ctlLoad: number | null;
+              atlLoad: number | null;
+              hrv: number | null;
+              hrv7dAvg: number | null;
+              /** @enum {string|null} */
+              hrvStatus: "balanced" | "unbalanced" | "low" | null;
+              /** @enum {string|null} */
+              hrvNightlyStatus: "balanced" | "unbalanced" | "low" | null;
+              hrvBaseline: {
+                mean: number;
+                lowerBalanced: number;
+                upperBalanced: number;
+              } | null;
+              sleepScore: number | null;
+            } | null;
+            activities: {
+              id: number;
+              title: string;
+              sportType: string;
+              /** @enum {string|null} */
+              trainingType:
+                | "LONG"
+                | "EASY"
+                | "RECOVERY"
+                | "SHORT_INTERVALS"
+                | "HILL_SPRINTS"
+                | "LONG_INTERVALS"
+                | "SPRINTS"
+                | "FARTLEK"
+                | "PROGRESSIVE_LONG"
+                | "RACE"
+                | "TEMPO"
+                | "OTHER"
+                | null;
+              distance: number;
+              movingTime: number;
+              averageHeartRate: number | null;
+              trainingLoad: number | null;
+              icuTrainingLoad: number | null;
+            }[];
+          };
+        };
+      };
+      /** @description Invalid date */
       400: {
         headers: {
           [name: string]: unknown;
