@@ -45,10 +45,8 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
     // Delete all activities (interval_segments cascade via ON DELETE CASCADE)
     await context.db.delete(activities).where(eq(activities.userId, user.id));
 
-    // Clear Strava connection
     await context.db.update(users).set({ stravaId: null }).where(eq(users.id, user.id));
 
-    // Clear Clerk metadata
     const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
     await clerkClient.users.updateUserMetadata(user.clerkId, {
       privateMetadata: { strava: null },
