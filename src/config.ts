@@ -1,0 +1,59 @@
+import { z } from "zod";
+
+/**
+ * Central, validated environment configuration. Parsed once at startup — the
+ * first import of `config` fails fast with an aggregated error listing every
+ * missing/invalid variable, instead of surfacing `undefined` deep in a request.
+ *
+ * Optional telemetry vars are intentionally left optional so local dev stays
+ * silent (see `instrumentation.ts`, which reads OTel vars directly off
+ * `process.env` because it is preloaded before this module).
+ */
+const envSchema = z.object({
+  // Core
+  DATABASE_URL: z.string().min(1),
+  CLERK_SECRET_KEY: z.string().min(1),
+  OPENAI_API_KEY: z.string().min(1),
+
+  // App
+  APP_BASE_URL: z.string().url(),
+  PORT: z.coerce.number().default(3000),
+  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  LOG_LEVEL: z.string().optional(),
+
+  // Strava integration
+  STRAVA_CLIENT_ID: z.string().min(1),
+  STRAVA_CLIENT_SECRET: z.string().min(1),
+  STRAVA_WEBHOOK_VERIFY_TOKEN: z.string().min(1),
+  STRAVA_SUBSCRIPTION_ID: z.string().min(1),
+
+  // Intervals.icu integration
+  INTERVALS_CLIENT_ID: z.string().min(1),
+  INTERVALS_CLIENT_SECRET: z.string().min(1),
+  INTERVALS_WEBHOOK_SECRET: z.string().min(1),
+
+  // OpenTelemetry / tracing (optional — only shipped when the endpoint is set)
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
+  OTEL_EXPORTER_OTLP_HEADERS: z.string().optional(),
+  OTEL_SERVICE_NAME: z.string().default("intervals-backend"),
+  OTEL_SERVICE_VERSION: z.string().optional(),
+  OTEL_DEPLOYMENT_ENVIRONMENT: z.string().optional(),
+  GIT_SHA: z.string().optional(),
+  LANGSMITH_OTEL_ENABLED: z.string().optional(),
+  LANGSMITH_TRACING: z.string().optional(),
+});
+
+export type AppConfig = z.infer<typeof envSchema>;
+
+function loadConfig(): AppConfig {
+  const parsed = envSchema.safeParse(process.env);
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
+      .join("\n");
+    throw new Error(`Invalid environment configuration:\n${issues}`);
+  }
+  return parsed.data;
+}
+
+export const config = loadConfig();

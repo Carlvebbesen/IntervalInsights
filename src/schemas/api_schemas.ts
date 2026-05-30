@@ -5,6 +5,7 @@ import {
   eventTypeEnum,
   targetTypeEnum,
   trainingTypeEnum,
+  userRoleEnum,
   workoutPartEnum,
 } from "../schema/enums";
 
@@ -34,6 +35,26 @@ export const DeleteEventResponseSchema = z.object({
 });
 
 export const ErrorSchema = z.object({ error: z.string() });
+
+export const UserSchema = z.object({
+  id: z.string(),
+  clerkId: z.string(),
+  stravaId: z.string().nullable(),
+  role: z.enum(userRoleEnum.enumValues).nullable(),
+  maxHeartRate: z.number().nullable(),
+  processHeartRate: z.boolean(),
+  privacyPolicyAcceptedAt: z.string().nullable(),
+  privacyPolicyVersion: z.string().nullable(),
+  currentPrivacyPolicyVersion: z.string(),
+  termsOfServiceAcceptedAt: z.string().nullable(),
+  termsOfServiceVersion: z.string().nullable(),
+  currentTermsOfServiceVersion: z.string(),
+});
+
+export const DeleteAccountResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+});
 
 export const ActivitySchema = z.object({
   id: z.number(),
@@ -100,7 +121,7 @@ export const ActivityListResponseSchema = z.object({
     pageSize: z.number(),
     filterApplied: z.object({
       search: z.string().optional(),
-      trainingType: z.enum(trainingTypeEnum.enumValues).optional(),
+      trainingType: z.array(z.enum(trainingTypeEnum.enumValues)).optional(),
       distance: z.number().optional(),
       intervalStructureId: z.number().optional(),
       sportTypes: z.array(z.string()).optional(),

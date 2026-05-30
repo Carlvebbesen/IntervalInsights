@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { logger } from "../../logger";
 import { getIntervalsAccessToken } from "../../middlewares/intervals_middleware";
 import { activities, type IntervalsIcuPrediction } from "../../schema";
-import { intervalsApiService } from "../../services.ts/intervals_api_service";
+import { intervalsApiService } from "../../services/intervals_api_service";
 import type { IIntervalsInterval } from "../../types/intervals/IIntervalsActivity";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";
 

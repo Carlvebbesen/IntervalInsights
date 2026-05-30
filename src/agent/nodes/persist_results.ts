@@ -4,7 +4,7 @@ import type { DraftAnalysisResult } from "../../schema/activities";
 import {
   completeWithoutSegments,
   persistSegmentsAndStructure,
-} from "../../services.ts/signature_service";
+} from "../../services/signature_service";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";
 
 export async function persistResults(

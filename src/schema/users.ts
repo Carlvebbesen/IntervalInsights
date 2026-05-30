@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+import { type InferInsertModel, type InferSelectModel, relations } from "drizzle-orm";
 import { boolean, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { activities } from "./activities";
 import { userRoleEnum } from "./enums";
@@ -21,3 +21,6 @@ export const users = pgTable("users", {
 export const usersRelations = relations(users, ({ many }) => ({
   activities: many(activities),
 }));
+
+export type InsertUser = InferInsertModel<typeof users>;
+export type SelectUser = InferSelectModel<typeof users>;

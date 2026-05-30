@@ -1,6 +1,6 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { logger } from "../../logger";
-import { findMatchingStructure } from "../../services.ts/signature_service";
+import { findMatchingStructure } from "../../services/signature_service";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";
 
 export async function validateSignature(

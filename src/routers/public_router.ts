@@ -1,17 +1,11 @@
-import { env } from "bun";
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
-import { runInBackground } from "../background";
+import * as webhookController from "../controllers/webhook_controller";
 import { ErrorSchema } from "../schemas/api_schemas";
-import { processIntervalsWebhook } from "../services.ts/process_intervals_event";
-import { processStravaWebhook } from "../services.ts/process_strava_event";
 import type { TPublicEnv } from "../types/IRouters";
 import type { IIntervalsWebhookPayload } from "../types/intervals/IIntervalsWebhookEvent";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
-import { requireEnv } from "../utils";
-
-const INTERVALS_WEBHOOK_SECRET = requireEnv("INTERVALS_WEBHOOK_SECRET");
 
 const publicRouter = new Hono<TPublicEnv>();
 
@@ -60,19 +54,16 @@ publicRouter.get(
   }),
   validator("query", StravaHandshakeQuerySchema),
   (c) => {
-    const mode = c.req.query("hub.mode");
-    const token = c.req.query("hub.verify_token");
-    const challenge = c.req.query("hub.challenge");
-    const expectedToken = env.STRAVA_WEBHOOK_VERIFY_TOKEN;
-    c.var.logger.info(
-      { mode, tokenMatch: token === expectedToken, challenge },
-      "Strava handshake triggered",
+    const challenge = webhookController.verifyStravaHandshake(
+      c.req.query("hub.mode"),
+      c.req.query("hub.verify_token"),
+      c.req.query("hub.challenge"),
+      c.var.logger,
     );
-    if (mode === "subscribe" && token === expectedToken) {
-      return c.json({ "hub.challenge": challenge }, 200);
+    if (challenge === null) {
+      return c.json({ error: "Verification failed" }, 403);
     }
-    c.var.logger.error("Strava handshake verification failed: token mismatch or invalid mode");
-    return c.json({ error: "Verification failed" }, 403);
+    return c.json({ "hub.challenge": challenge }, 200);
   },
 );
 
@@ -168,27 +159,8 @@ publicRouter.post(
   validator("json", StravaWebhookEventSchema),
   async (c) => {
     const body = (await c.req.json()) as IStravaWebhookEvent;
-
-    c.var.logger.info(
-      {
-        aspectType: body.aspect_type,
-        eventId: body.object_id,
-        athleteId: body.owner_id,
-      },
-      "Strava event received",
-    );
-    if (body.subscription_id?.toString() !== env.STRAVA_SUBSCRIPTION_ID) {
-      return c.json({ status: "unauthorized" }, 401);
-    }
-    runInBackground("strava.webhook.process", () => processStravaWebhook(body, c.env), {
-      attributes: {
-        "strava.aspect_type": body.aspect_type,
-        "strava.object_id": body.object_id,
-        "strava.owner_id": body.owner_id,
-      },
-      logger: c.var.logger,
-    });
-    return c.json({ status: "ok" }, 200);
+    const ok = webhookController.handleStravaWebhook(body, c.env, c.var.logger);
+    return ok ? c.json({ status: "ok" }, 200) : c.json({ status: "unauthorized" }, 401);
   },
 );
 
@@ -263,35 +235,8 @@ publicRouter.post(
   validator("json", IntervalsWebhookPayloadSchema),
   async (c) => {
     const body: IIntervalsWebhookPayload = c.req.valid("json");
-
-    if (body.secret !== INTERVALS_WEBHOOK_SECRET) {
-      c.var.logger.warn(
-        { eventCount: body.events.length },
-        "Rejected intervals.icu webhook with bad secret",
-      );
-      return c.json({ status: "unauthorized" }, 401);
-    }
-
-    for (const event of body.events) {
-      const activity = (event as { activity?: { id: string | number } }).activity;
-      const activityId = activity ? String(activity.id) : undefined;
-
-      c.var.logger.info(
-        { type: event.type, athleteId: event.athlete_id, activityId },
-        "Intervals.icu event received",
-      );
-
-      runInBackground("intervals.webhook.process", () => processIntervalsWebhook(event, c.env), {
-        attributes: {
-          "intervals.event": event.type,
-          "intervals.athlete_id": event.athlete_id,
-          "intervals.activity_id": activityId,
-        },
-        logger: c.var.logger,
-      });
-    }
-
-    return c.json({ status: "ok" }, 200);
+    const ok = webhookController.handleIntervalsWebhook(body, c.env, c.var.logger);
+    return ok ? c.json({ status: "ok" }, 200) : c.json({ status: "unauthorized" }, 401);
   },
 );
 

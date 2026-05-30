@@ -1,32 +1,20 @@
-import { and, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
-import z from "zod";
+import { z } from "zod";
 import { workoutSet } from "../agent/initial_analysis_agent";
-import { invokeParseIntervalsAgent } from "../agent/parse_intervals_agent";
+import * as analysisController from "../controllers/analysis_controller";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
-import { activities } from "../schema";
-import { type TrainingType, trainingTypeEnum } from "../schema/enums";
+import { trainingTypeEnum } from "../schema/enums";
 import {
   ErrorSchema,
   ExpandedIntervalSetSchema,
   PendingActivitySchema,
   ProposedPaceResponseSchema,
 } from "../schemas/api_schemas";
-import {
-  ResumeValidationError,
-  resumeAnalysis,
-  startAnalysis,
-} from "../services.ts/analysis_service";
-import { getProposedPaceForStructure, getProposedPaceFromLaps } from "../services.ts/pace_service";
-import { requeueStaleActivities } from "../services.ts/requeue_service";
-import { stravaApiService } from "../services.ts/strava_api_service";
 import type { TStravaEnv } from "../types/IRouters";
 
 const agentsRouter = new Hono<TStravaEnv>();
 agentsRouter.use("*", stravaMiddleware);
-
-const PENDING_STATUSES = ["initial", "pending", "error"] as const;
 
 agentsRouter.get(
   "/pending",
@@ -40,35 +28,11 @@ agentsRouter.get(
     },
   }),
   async (c) => {
-    const userId = c.get("userId");
-    const accessToken = c.get("stravaAccessToken");
-
-    if (accessToken) {
-      await requeueStaleActivities(c.env.db, userId, accessToken);
-    }
-
-    const result = await c.env.db
-      .select({
-        id: activities.id,
-        stravaId: activities.stravaActivityId,
-        trainingType: activities.trainingType,
-        analysisStatus: activities.analysisStatus,
-        draftAnalysisResult: activities.draftAnalysisResult,
-        title: activities.title,
-        notes: activities.notes,
-        distance: activities.distance,
-        movingTime: activities.movingTime,
-        description: activities.description,
-        indoor: activities.indoor,
-        feeling: activities.feeling,
-      })
-      .from(activities)
-      .where(
-        and(
-          eq(activities.userId, userId),
-          inArray(activities.analysisStatus, [...PENDING_STATUSES]),
-        ),
-      );
+    const result = await analysisController.getPending(
+      c.env.db,
+      c.get("userId"),
+      c.get("stravaAccessToken"),
+    );
     return c.json(result, 200);
   },
 );
@@ -99,19 +63,15 @@ agentsRouter.post(
   }),
   validator("json", startAnalysisSchema),
   async (c) => {
-    try {
-      const { activityId, stravaActivityId } = c.req.valid("json");
-      const userId = c.get("userId");
-      const accessToken = c.get("stravaAccessToken");
-      if (!accessToken) {
-        return c.json({ error: "Access token missing" }, 400);
-      }
-      startAnalysis(c.env.db, accessToken, activityId, stravaActivityId, userId);
-      return c.json({ success: true }, 200);
-    } catch (err) {
-      c.var.logger.error({ err }, "Error starting analysis");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const { activityId, stravaActivityId } = c.req.valid("json");
+    const result = analysisController.startActivityAnalysis(
+      c.env.db,
+      c.get("stravaAccessToken"),
+      activityId,
+      stravaActivityId,
+      c.get("userId"),
+    );
+    return c.json(result, 200);
   },
 );
 
@@ -119,7 +79,7 @@ const resumeAnalysisSchema = z.object({
   activityId: z.number(),
   notes: z.string(),
   sets: z.array(ExpandedIntervalSetSchema).optional(),
-  trainingType: z.string().nullable().optional(),
+  trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),
   feeling: z.number().int().min(1).max(5).nullable().optional(),
 });
 
@@ -144,41 +104,13 @@ agentsRouter.post(
   }),
   validator("json", resumeAnalysisSchema),
   async (c) => {
-    try {
-      const { activityId, notes, sets, trainingType, feeling } = c.req.valid("json");
-      const accessToken = c.get("stravaAccessToken");
-      c.var.logger.info(
-        {
-          activityId,
-          setCount: sets?.length ?? 0,
-          stepCount: sets?.reduce((s, set) => s + set.steps.length, 0) ?? 0,
-          notesLen: notes.length,
-          trainingType,
-          feeling,
-        },
-        "resume-analysis payload",
-      );
-      if (!accessToken) {
-        return c.json({ error: "Access token missing" }, 400);
-      }
-      await resumeAnalysis(
-        c.env.db,
-        accessToken,
-        activityId,
-        notes ?? "",
-        sets ?? [],
-        (trainingType as TrainingType | null) ?? null,
-        feeling ?? null,
-      );
-      return c.json({ success: true }, 200);
-    } catch (err) {
-      if (err instanceof ResumeValidationError) {
-        c.var.logger.info({ err: err.message }, "resume-analysis validation failed");
-        return c.json({ error: err.message }, 400);
-      }
-      c.var.logger.error({ err }, "Error resuming analysis");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const result = await analysisController.resumeActivityAnalysis(
+      c.env.db,
+      c.get("stravaAccessToken"),
+      c.req.valid("json"),
+      c.var.logger,
+    );
+    return c.json(result, 200);
   },
 );
 
@@ -195,9 +127,7 @@ agentsRouter.post(
       200: {
         description:
           "Proposed paces — one ExpandedIntervalSet per workout set, in order. Empty array if no structure was provided.",
-        content: {
-          "application/json": { schema: resolver(ProposedPaceResponseSchema) },
-        },
+        content: { "application/json": { schema: resolver(ProposedPaceResponseSchema) } },
       },
       500: {
         description: "Internal server error",
@@ -207,74 +137,17 @@ agentsRouter.post(
   }),
   validator("json", paceRequestSchema),
   async (c) => {
-    const user = c.get("userId");
-    const accessToken = c.get("stravaAccessToken");
-    const data = c.req.valid("json");
-    const { structure, activityId } = data;
-    const log = c.var.logger.child({ route: "proposed-pace", activityId });
-    log.info(
-      { structureSets: structure?.length ?? 0, hasAccessToken: !!accessToken },
-      "proposed-pace request",
+    const { structure, activityId } = c.req.valid("json");
+    const result = await analysisController.getProposedPace(
+      c.env.db,
+      c.get("userId"),
+      c.get("clerkUserId"),
+      c.get("stravaAccessToken"),
+      structure,
+      activityId,
+      c.var.logger,
     );
-    if (!structure || structure.length === 0) {
-      log.info("empty structure — returning []");
-      return c.json([]);
-    }
-    try {
-      if (activityId) {
-        const activity = await c.env.db.query.activities.findFirst({
-          where: and(eq(activities.id, activityId), eq(activities.userId, user)),
-          columns: { indoor: true, stravaActivityId: true },
-        });
-        log.info(
-          {
-            found: !!activity,
-            indoor: activity?.indoor,
-            stravaId: activity?.stravaActivityId,
-          },
-          "activity lookup",
-        );
-        if (activity && !activity.indoor && accessToken) {
-          try {
-            const laps = await stravaApiService.getActivityLaps(
-              accessToken,
-              activity.stravaActivityId,
-            );
-            log.info({ lapCount: laps.length }, "fetched laps from Strava");
-            const fromLaps = getProposedPaceFromLaps(laps, structure);
-            if (fromLaps) {
-              log.info("returning pace from laps");
-              return c.json(fromLaps);
-            }
-            log.info("lap-derivation returned null — falling back to history");
-          } catch (lapErr) {
-            log.error({ err: lapErr }, "Strava laps fetch failed — falling back to history");
-          }
-        } else {
-          log.info(
-            {
-              indoor: activity?.indoor,
-              hasActivity: !!activity,
-              hasToken: !!accessToken,
-            },
-            "skipping lap-derivation — using history",
-          );
-        }
-      } else {
-        log.info("no activityId provided — using history");
-      }
-      const proposedPaces = await getProposedPaceForStructure(
-        c.env.db,
-        user,
-        c.get("clerkUserId"),
-        structure,
-      );
-      log.info({ sets: proposedPaces.length }, "returning pace from history");
-      return c.json(proposedPaces);
-    } catch (err) {
-      log.error({ err }, "Error calculating proposed pace");
-      return c.json({ error: "Failed to calculate pace" }, 500);
-    }
+    return c.json(result);
   },
 );
 
@@ -291,9 +164,7 @@ agentsRouter.post(
     responses: {
       200: {
         description: "Parsed interval sets with proposed paces.",
-        content: {
-          "application/json": { schema: resolver(ProposedPaceResponseSchema) },
-        },
+        content: { "application/json": { schema: resolver(ProposedPaceResponseSchema) } },
       },
       400: {
         description: "Bad request",
@@ -307,24 +178,16 @@ agentsRouter.post(
   }),
   validator("json", parseIntervalsSchema),
   async (c) => {
-    const userId = c.get("userId");
     const { text, trainingType } = c.req.valid("json");
-    try {
-      const parsed = await invokeParseIntervalsAgent(text, trainingType ?? null);
-      if (!parsed || parsed.sets.length === 0) {
-        return c.json([], 200);
-      }
-      const proposed = await getProposedPaceForStructure(
-        c.env.db,
-        userId,
-        c.get("clerkUserId"),
-        parsed.sets,
-      );
-      return c.json(proposed, 200);
-    } catch (err) {
-      c.var.logger.error({ err }, "Error parsing intervals");
-      return c.json({ error: "Failed to parse intervals" }, 500);
-    }
+    const result = await analysisController.parseIntervals(
+      c.env.db,
+      c.get("userId"),
+      c.get("clerkUserId"),
+      text,
+      trainingType ?? null,
+      c.var.logger,
+    );
+    return c.json(result, 200);
   },
 );
 

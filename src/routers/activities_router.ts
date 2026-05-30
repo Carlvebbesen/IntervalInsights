@@ -1,17 +1,9 @@
-import { and, count, desc, eq, gte, ilike, inArray, isNotNull, lte, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
-import z from "zod";
-import { runInBackground } from "../background";
+import { z } from "zod";
+import * as activityController from "../controllers/activity_controller";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
-import {
-  activities,
-  activityEvents,
-  events,
-  eventTypeEnum,
-  intervalStructures,
-  trainingTypeEnum,
-} from "../schema";
+import { eventTypeEnum, trainingTypeEnum } from "../schema";
 import {
   ActivityListResponseSchema,
   ActivitySchema,
@@ -21,14 +13,9 @@ import {
   SplitMetricSchema,
   StravaLapSchema,
 } from "../schemas/api_schemas";
-import { userHasHeartRateConsent } from "../services.ts/heart_rate_consent_service";
-import { enrichActivityFromIntervalsIcu } from "../services.ts/intervals_link_service";
-import { getSegmentsForActivity } from "../services.ts/lap_derivation_service";
-import { stravaApiService } from "../services.ts/strava_api_service";
 import type { TGlobalEnv, TStravaEnv } from "../types/IRouters";
 
 const activitiesRouter = new Hono<TGlobalEnv>();
-const PAGE_SIZE = 15;
 
 const bodySchema = z.object({
   page: z.number().min(1).default(1),
@@ -44,6 +31,10 @@ const bodySchema = z.object({
   eventIds: z.array(z.number().int().positive()).optional(),
 });
 
+const activityIdParamSchema = z.object({
+  id: z.coerce.number().int().positive(),
+});
+
 activitiesRouter.post(
   "/",
   describeRoute({
@@ -51,9 +42,7 @@ activitiesRouter.post(
     responses: {
       200: {
         description: "Paginated activity list",
-        content: {
-          "application/json": { schema: resolver(ActivityListResponseSchema) },
-        },
+        content: { "application/json": { schema: resolver(ActivityListResponseSchema) } },
       },
       500: {
         description: "Internal server error",
@@ -63,151 +52,12 @@ activitiesRouter.post(
   }),
   validator("json", bodySchema),
   async (c) => {
-    try {
-      const userId = c.get("userId");
-      const {
-        page,
-        search,
-        distance,
-        trainingType,
-        intervalStructureId,
-        sportTypes,
-        signatures,
-        dateFrom,
-        dateTo,
-        eventTypes,
-        eventIds,
-      } = c.req.valid("json");
-      const filters = [];
-      filters.push(eq(activities.userId, userId));
-      filters.push(eq(activities.analysisStatus, "completed"));
-      if (search) {
-        filters.push(
-          or(ilike(activities.title, `%${search}%`), ilike(activities.description, `%${search}%`)),
-        );
-      }
-      if (trainingType?.length) {
-        filters.push(inArray(activities.trainingType, trainingType));
-      }
-      if (distance) {
-        filters.push(gte(activities.distance, distance));
-      }
-      if (intervalStructureId) {
-        filters.push(eq(activities.intervalStructureId, intervalStructureId));
-      }
-      if (sportTypes?.length) {
-        filters.push(inArray(activities.sportType, sportTypes));
-      }
-      if (dateFrom) {
-        filters.push(gte(activities.startDateLocal, new Date(dateFrom)));
-      }
-      if (dateTo) {
-        filters.push(lte(activities.startDateLocal, new Date(dateTo)));
-      }
-      if (signatures?.length) {
-        const structs = await c.env.db
-          .select({ id: intervalStructures.id })
-          .from(intervalStructures)
-          .where(inArray(intervalStructures.signature, signatures));
-        const ids = structs.map((s) => s.id);
-        if (ids.length > 0) {
-          filters.push(inArray(activities.intervalStructureId, ids));
-        } else {
-          return c.json({
-            data: [],
-            meta: {
-              page,
-              pageSize: PAGE_SIZE,
-              filterApplied: {
-                search,
-                trainingType,
-                distance,
-                intervalStructureId,
-                sportTypes,
-                signatures,
-                dateFrom,
-                dateTo,
-                eventTypes,
-                eventIds,
-              },
-            },
-          });
-        }
-      }
-      if (eventTypes?.length || eventIds?.length) {
-        const eventFilters = [eq(events.userId, userId)];
-        if (eventTypes?.length) eventFilters.push(inArray(events.eventType, eventTypes));
-        if (eventIds?.length) eventFilters.push(inArray(events.id, eventIds));
-        const linkedRows = await c.env.db
-          .selectDistinct({ activityId: activityEvents.activityId })
-          .from(activityEvents)
-          .innerJoin(events, eq(events.id, activityEvents.eventId))
-          .where(and(...eventFilters));
-        const linkedActivityIds = linkedRows.map((r) => r.activityId);
-        if (linkedActivityIds.length === 0) {
-          return c.json({
-            data: [],
-            meta: {
-              page,
-              pageSize: PAGE_SIZE,
-              filterApplied: {
-                search,
-                trainingType,
-                distance,
-                intervalStructureId,
-                sportTypes,
-                signatures,
-                dateFrom,
-                dateTo,
-                eventTypes,
-                eventIds,
-              },
-            },
-          });
-        }
-        filters.push(inArray(activities.id, linkedActivityIds));
-      }
-      const result = await c.env.db
-        .select({
-          id: activities.id,
-          title: activities.title,
-          startDateLocal: activities.startDateLocal,
-          distance: activities.distance,
-          sportType: activities.sportType,
-          indoor: activities.indoor,
-          trainingType: activities.trainingType,
-          trainingLoad: activities.trainingLoad,
-          icuTrainingLoad: activities.icuTrainingLoad,
-          averageHeartRate: activities.averageHeartRate,
-        })
-        .from(activities)
-        .where(and(...filters))
-        .limit(PAGE_SIZE)
-        .offset((page - 1) * PAGE_SIZE)
-        .orderBy(desc(activities.startDateLocal));
-      return c.json({
-        data: result,
-        meta: {
-          page,
-          pageSize: PAGE_SIZE,
-          filterApplied: {
-            search,
-            trainingType,
-            distance,
-            intervalStructureId,
-            sportTypes,
-            signatures,
-            dateFrom,
-            dateTo,
-            eventTypes,
-            eventIds,
-          },
-        },
-      });
-    } catch (err) {
-      c.var.logger.error({ err }, "Error fetching activities");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const result = await activityController.listActivities(
+      c.env.db,
+      c.get("userId"),
+      c.req.valid("json"),
+    );
+    return c.json(result);
   },
 );
 
@@ -234,54 +84,17 @@ activitiesRouter.get(
       },
     },
   }),
+  validator("param", activityIdParamSchema),
   async (c) => {
-    try {
-      const activityId = parseInt(c.req.param("id"), 10);
-      if (Number.isNaN(activityId)) {
-        return c.json({ error: "Invalid activity ID" }, 400);
-      }
-      const userId = c.get("userId");
-      const clerkId = c.get("clerkUserId");
-      const env = c.env;
-      const [activity, relatedEvents] = await Promise.all([
-        env.db.query.activities.findFirst({
-          where: (a, { eq, and }) => and(eq(a.id, activityId), eq(a.userId, userId)),
-        }),
-        env.db
-          .select({
-            id: events.id,
-            eventType: events.eventType,
-            bodyLocation: events.bodyLocation,
-            description: events.description,
-            startTime: events.startTime,
-            lastOccurrence: events.lastOccurrence,
-            status: events.status,
-            resolvedAt: events.resolvedAt,
-          })
-          .from(activityEvents)
-          .innerJoin(events, eq(events.id, activityEvents.eventId))
-          .where(eq(activityEvents.activityId, activityId)),
-      ]);
-      if (!activity) {
-        return c.json({ error: "Activity not found" }, 404);
-      }
-
-      if (!activity.intervalsIcuId || !activity.intervalsIcuEnrichedAt) {
-        runInBackground(
-          "intervals.enrichActivity",
-          () => enrichActivityFromIntervalsIcu(env, { id: userId, clerkId }, activityId),
-          {
-            attributes: { "activity.id": activityId, "user.id": userId },
-            logger: c.var.logger,
-          },
-        );
-      }
-
-      return c.json({ ...activity, events: relatedEvents });
-    } catch (err) {
-      c.var.logger.error({ err }, "Error fetching activity details");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const { id } = c.req.valid("param");
+    const activity = await activityController.getActivityDetail(
+      c.env.db,
+      c.get("userId"),
+      c.get("clerkUserId"),
+      id,
+      c.var.logger,
+    );
+    return c.json(activity);
   },
 );
 
@@ -304,25 +117,100 @@ activitiesRouter.get(
       },
     },
   }),
+  validator("param", activityIdParamSchema),
   async (c) => {
-    try {
-      const activityId = parseInt(c.req.param("id"), 10);
-      if (Number.isNaN(activityId)) {
-        return c.json({ error: "Invalid activity ID" }, 400);
-      }
-      const clerkId = c.get("clerkUserId");
-      const segments = await getSegmentsForActivity(c.env.db, clerkId, activityId);
-      return c.json({ intervalSegments: segments });
-    } catch (err) {
-      c.var.logger.error({ err }, "Error fetching activity");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const { id } = c.req.valid("param");
+    const result = await activityController.getSegments(c.env.db, c.get("clerkUserId"), id);
+    return c.json(result);
   },
 );
 
-const activityIdParamSchema = z.object({
-  id: z.coerce.number().int().positive(),
+// Editable activity-metadata fields, shared by PATCH /:id and the deprecated POST /update.
+const activityMetadataSchema = z.object({
+  trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),
+  notes: z.string().nullable().optional(),
+  feeling: z.number().nullable().optional(),
 });
+
+// POST /update carries the id in the body; PATCH /:id takes it from the path.
+const updateActivitySchema = activityMetadataSchema.extend({
+  id: z.number(),
+});
+
+// PATCH /:id — preferred update route.
+activitiesRouter.patch(
+  "/:id",
+  describeRoute({
+    description: "Update activity metadata (trainingType, notes, feeling)",
+    responses: {
+      200: {
+        description: "Updated activity",
+        content: { "application/json": { schema: resolver(ActivitySchema) } },
+      },
+      400: {
+        description: "Bad request",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      404: {
+        description: "Activity not found",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("param", activityIdParamSchema),
+  validator("json", activityMetadataSchema),
+  async (c) => {
+    const { id } = c.req.valid("param");
+    const updated = await activityController.updateMetadata(
+      c.env.db,
+      c.get("userId"),
+      id,
+      c.req.valid("json"),
+    );
+    return c.json(updated);
+  },
+);
+
+/**
+ * @deprecated Use `PATCH /activity/:id` instead. Kept for older app versions that
+ * send the activity id in the request body. Remove once all clients have migrated.
+ */
+activitiesRouter.post(
+  "/update",
+  describeRoute({
+    description:
+      "[DEPRECATED — use PATCH /activity/:id] Update activity metadata (trainingType, notes, feeling)",
+    deprecated: true,
+    responses: {
+      200: {
+        description: "Updated activity",
+        content: { "application/json": { schema: resolver(ActivitySchema) } },
+      },
+      400: {
+        description: "Bad request",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      404: {
+        description: "Activity not found",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("json", updateActivitySchema),
+  async (c) => {
+    const { id, ...data } = c.req.valid("json");
+    const updated = await activityController.updateMetadata(c.env.db, c.get("userId"), id, data);
+    return c.json(updated);
+  },
+);
 
 const stravaActivitiesRouter = new Hono<TStravaEnv>();
 stravaActivitiesRouter.use("*", stravaMiddleware);
@@ -334,9 +222,7 @@ stravaActivitiesRouter.get(
     responses: {
       200: {
         description: "Gear stats",
-        content: {
-          "application/json": { schema: resolver(GearStatsResponseSchema) },
-        },
+        content: { "application/json": { schema: resolver(GearStatsResponseSchema) } },
       },
       500: {
         description: "Internal server error",
@@ -345,69 +231,12 @@ stravaActivitiesRouter.get(
     },
   }),
   async (c) => {
-    try {
-      const userId = c.get("userId");
-      const accessToken = c.get("stravaAccessToken");
-
-      const rows = await c.env.db
-        .select({
-          gearId: activities.gearId,
-          trainingType: activities.trainingType,
-          count: count(),
-        })
-        .from(activities)
-        .where(and(eq(activities.userId, userId), isNotNull(activities.gearId)))
-        .groupBy(activities.gearId, activities.trainingType);
-
-      const statsMap = new Map<
-        string,
-        {
-          activityCount: number;
-          trainingTypeCounts: Record<string, number>;
-        }
-      >();
-      for (const row of rows) {
-        const id = row.gearId as string;
-        const rowCount = Number(row.count);
-        const existing = statsMap.get(id);
-        if (!existing) {
-          statsMap.set(id, {
-            activityCount: rowCount,
-            trainingTypeCounts: row.trainingType ? { [row.trainingType]: rowCount } : {},
-          });
-        } else {
-          existing.activityCount += rowCount;
-          if (row.trainingType) {
-            existing.trainingTypeCounts[row.trainingType] =
-              (existing.trainingTypeCounts[row.trainingType] ?? 0) + rowCount;
-          }
-        }
-      }
-
-      const gearIds = [...statsMap.keys()];
-      const gearDetails = await Promise.all(
-        gearIds.map((id) => stravaApiService.getGear(accessToken, id)),
-      );
-
-      const stats = gearDetails
-        .filter((gear) => !gear.retired)
-        .map((gear) => {
-          const agg = statsMap.get(gear.id);
-          if (!agg) throw new Error(`Missing aggregated stats for gear ${gear.id}`);
-          return {
-            gearId: gear.id,
-            gearName: gear.name,
-            activityCount: agg.activityCount,
-            trainingTypeCounts: agg.trainingTypeCounts,
-            distanceKm: Math.round((gear.distance / 1000) * 10) / 10,
-          };
-        });
-
-      return c.json({ stats });
-    } catch (err) {
-      c.var.logger.error({ err }, "Error fetching gear stats");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const result = await activityController.getGearStats(
+      c.env.db,
+      c.get("userId"),
+      c.get("stravaAccessToken"),
+    );
+    return c.json(result);
   },
 );
 
@@ -419,9 +248,7 @@ stravaActivitiesRouter.get(
       200: {
         description: "Activity laps",
         content: {
-          "application/json": {
-            schema: resolver(z.object({ laps: z.array(StravaLapSchema) })),
-          },
+          "application/json": { schema: resolver(z.object({ laps: z.array(StravaLapSchema) })) },
         },
       },
       500: {
@@ -432,14 +259,9 @@ stravaActivitiesRouter.get(
   }),
   validator("param", activityIdParamSchema),
   async (c) => {
-    try {
-      const { id } = c.req.valid("param");
-      const laps = await stravaApiService.getActivityLaps(c.get("stravaAccessToken"), id);
-      return c.json({ laps });
-    } catch (err) {
-      c.var.logger.error({ err }, "Error fetching laps");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const { id } = c.req.valid("param");
+    const laps = await activityController.getLaps(c.get("stravaAccessToken"), id);
+    return c.json({ laps });
   },
 );
 
@@ -464,14 +286,9 @@ stravaActivitiesRouter.get(
   }),
   validator("param", activityIdParamSchema),
   async (c) => {
-    try {
-      const { id } = c.req.valid("param");
-      const activity = await stravaApiService.getActivity(c.get("stravaAccessToken"), id);
-      return c.json({ splits_metric: activity.splits_metric ?? [] });
-    } catch (err) {
-      c.var.logger.error({ err }, "Error fetching splits");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const { id } = c.req.valid("param");
+    const splits = await activityController.getSplits(c.get("stravaAccessToken"), id);
+    return c.json({ splits_metric: splits });
   },
 );
 
@@ -492,83 +309,14 @@ stravaActivitiesRouter.get(
   }),
   validator("param", activityIdParamSchema),
   async (c) => {
-    try {
-      const consent = await userHasHeartRateConsent(c.env.db, c.get("userId"));
-      if (!consent) {
-        return c.json({ error: "Heart-rate processing not enabled for this account" }, 403);
-      }
-      const { id } = c.req.valid("param");
-      const streams = await stravaApiService.getActivityStreams(c.get("stravaAccessToken"), id, [
-        "heartrate",
-        "time",
-        "distance",
-      ]);
-      return c.json(streams);
-    } catch (err) {
-      c.var.logger.error({ err }, "Error fetching heartrate stream");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
-  },
-);
-
-const updateActivitySchema = z.object({
-  id: z.number(),
-  trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),
-  notes: z.string().nullable().optional(),
-  feeling: z.number().nullable().optional(),
-});
-activitiesRouter.post(
-  "/update",
-  describeRoute({
-    description: "Update activity metadata (trainingType, notes, feeling)",
-    responses: {
-      200: {
-        description: "Updated activity",
-        content: { "application/json": { schema: resolver(ActivitySchema) } },
-      },
-      400: {
-        description: "Bad request",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      404: {
-        description: "Activity not found",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-    },
-  }),
-  validator("json", updateActivitySchema),
-  async (c) => {
-    try {
-      const { id, ...data } = c.req.valid("json");
-      const updateData = Object.fromEntries(
-        Object.entries(data).filter(([_, value]) => value != null),
-      );
-      if (Object.keys(updateData).length === 0) {
-        return c.json({ error: "No valid data provided to update" }, 400);
-      }
-
-      const userId = c.get("userId");
-      const updated = await c.env.db
-        .update(activities)
-        .set(updateData)
-        .where(and(eq(activities.id, id), eq(activities.userId, userId)))
-        .returning();
-
-      if (updated.length === 0) {
-        return c.json({ error: "Activity not found or unauthorized" }, 404);
-      }
-
-      return c.json(updated[0]);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return c.json({ error: "Invalid input", details: error.errors }, 400);
-      }
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const { id } = c.req.valid("param");
+    const streams = await activityController.getHeartrateStream(
+      c.env.db,
+      c.get("userId"),
+      c.get("stravaAccessToken"),
+      id,
+    );
+    return c.json(streams);
   },
 );
 

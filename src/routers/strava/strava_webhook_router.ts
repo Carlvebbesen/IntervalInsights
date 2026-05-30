@@ -1,14 +1,13 @@
-import { env } from "bun";
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
+import { config } from "../../config";
 import type { TStravaEnv } from "../../types/IRouters";
-import { requireEnv } from "../../utils";
 
-const STRAVA_CLIENT_ID = requireEnv("STRAVA_CLIENT_ID");
-const STRAVA_CLIENT_SECRET = requireEnv("STRAVA_CLIENT_SECRET");
-const STRAVA_WEBHOOK_VERIFY_TOKEN = requireEnv("STRAVA_WEBHOOK_VERIFY_TOKEN");
+const STRAVA_CLIENT_ID = config.STRAVA_CLIENT_ID;
+const STRAVA_CLIENT_SECRET = config.STRAVA_CLIENT_SECRET;
+const STRAVA_WEBHOOK_VERIFY_TOKEN = config.STRAVA_WEBHOOK_VERIFY_TOKEN;
 
 const stravaWebhookRouter = new Hono<TStravaEnv>();
 
@@ -63,7 +62,7 @@ stravaWebhookRouter.get(
     },
   }),
   async (c) => {
-    const CALLBACK_URL = `${env.APP_BASE_URL}api/strava/event`;
+    const CALLBACK_URL = `${config.APP_BASE_URL}api/strava/event`;
     c.var.logger.info({ callbackUrl: CALLBACK_URL }, "Setting up Strava subscription");
     const formData = new FormData();
     formData.append("client_id", STRAVA_CLIENT_ID);

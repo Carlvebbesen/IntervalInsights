@@ -2,15 +2,14 @@ import { and, desc, eq } from "drizzle-orm";
 import type z from "zod";
 import type { workoutSet } from "../agent/initial_analysis_agent";
 import { logger } from "../logger";
-import {
-  activities,
-  generateIntervalSignature,
-  intervalStructures,
-  mapSetsToIntervalComponent,
-} from "../schema";
+import { activities, intervalStructures } from "../schema";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { Lap } from "../types/strava/IDetailedActivity";
+import {
+  generateIntervalSignature,
+  mapSetsToIntervalComponent,
+} from "./interval_structure_service";
 import { getSegmentsForActivity, matchLapsToExpandedSteps } from "./lap_derivation_service";
 import { generateCompleteIntervalSet } from "./utils";
 

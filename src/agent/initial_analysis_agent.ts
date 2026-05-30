@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { trainingTypeEnum } from "../schema";
 import type { IntervalsIcuPrediction } from "../schema/activities";
-import { normalizeActivityStreams, prepareDataForLLM } from "../services.ts/utils";
+import { normalizeActivityStreams, prepareDataForLLM } from "../services/utils";
 import type { StreamSet } from "../types/strava/IStream";
 import { invokeStructured } from "./model";
 export type WorkoutAnalysisOutput = z.infer<typeof workoutAnalysisOutput>;

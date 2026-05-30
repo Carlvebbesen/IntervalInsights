@@ -1,15 +1,8 @@
-import { and, count, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
-import {
-  activities,
-  activityEvents,
-  eventStatusEnum,
-  events,
-  eventTypeEnum,
-  type InsertEvent,
-} from "../schema";
+import * as eventController from "../controllers/event_controller";
+import { eventStatusEnum, eventTypeEnum } from "../schema";
 import {
   DeleteEventResponseSchema,
   ErrorSchema,
@@ -24,19 +17,6 @@ const listQuerySchema = z.object({
   status: z.enum(eventStatusEnum.enumValues).optional(),
   eventType: z.enum(eventTypeEnum.enumValues).optional(),
 });
-
-const eventColumns = {
-  id: events.id,
-  eventType: events.eventType,
-  bodyLocation: events.bodyLocation,
-  description: events.description,
-  startTime: events.startTime,
-  lastOccurrence: events.lastOccurrence,
-  status: events.status,
-  resolvedAt: events.resolvedAt,
-  createdAt: events.createdAt,
-  updatedAt: events.updatedAt,
-} as const;
 
 eventsRouter.get(
   "/",
@@ -56,25 +36,12 @@ eventsRouter.get(
   }),
   validator("query", listQuerySchema),
   async (c) => {
-    try {
-      const userId = c.get("userId");
-      const { status, eventType } = c.req.valid("query");
-
-      const filters = [eq(events.userId, userId)];
-      if (status) filters.push(eq(events.status, status));
-      if (eventType) filters.push(eq(events.eventType, eventType));
-
-      const rows = await c.env.db
-        .select(eventColumns)
-        .from(events)
-        .where(and(...filters))
-        .orderBy(desc(events.lastOccurrence));
-
-      return c.json({ events: rows });
-    } catch (err) {
-      c.var.logger.error({ err }, "Error fetching events");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const events = await eventController.listEvents(
+      c.env.db,
+      c.get("userId"),
+      c.req.valid("query"),
+    );
+    return c.json({ events });
   },
 );
 
@@ -110,51 +77,12 @@ eventsRouter.post(
   }),
   validator("json", createEventSchema),
   async (c) => {
-    try {
-      const userId = c.get("userId");
-      const { activityId, eventType, bodyLocation, description, startTime, status } =
-        c.req.valid("json");
-
-      const [activity] = await c.env.db
-        .select({ startDateLocal: activities.startDateLocal })
-        .from(activities)
-        .where(and(eq(activities.id, activityId), eq(activities.userId, userId)));
-
-      if (!activity) {
-        return c.json({ error: "Activity not found or unauthorized" }, 404);
-      }
-
-      const occurredAt = startTime ? new Date(startTime) : activity.startDateLocal;
-      const resolved = status === "resolved";
-
-      const created = await c.env.db.transaction(async (tx) => {
-        const [row] = await tx
-          .insert(events)
-          .values({
-            userId,
-            eventType,
-            bodyLocation: bodyLocation ?? null,
-            description,
-            startTime: occurredAt,
-            lastOccurrence: occurredAt,
-            status: status ?? "active",
-            resolvedAt: resolved ? occurredAt : null,
-          })
-          .returning(eventColumns);
-
-        await tx
-          .insert(activityEvents)
-          .values({ activityId, eventId: row.id })
-          .onConflictDoNothing();
-
-        return row;
-      });
-
-      return c.json(created, 201);
-    } catch (err) {
-      c.var.logger.error({ err }, "Error creating event");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const created = await eventController.createEvent(
+      c.env.db,
+      c.get("userId"),
+      c.req.valid("json"),
+    );
+    return c.json(created, 201);
   },
 );
 
@@ -200,35 +128,14 @@ eventsRouter.patch(
   validator("param", eventIdParamSchema),
   validator("json", updateEventSchema),
   async (c) => {
-    try {
-      const userId = c.get("userId");
-      const { id } = c.req.valid("param");
-      const { eventType, bodyLocation, description, status } = c.req.valid("json");
-
-      const updates: Partial<InsertEvent> = { updatedAt: new Date() };
-      if (eventType !== undefined) updates.eventType = eventType;
-      if (bodyLocation !== undefined) updates.bodyLocation = bodyLocation;
-      if (description !== undefined) updates.description = description;
-      if (status !== undefined) {
-        updates.status = status;
-        updates.resolvedAt = status === "resolved" ? new Date() : null;
-      }
-
-      const [updated] = await c.env.db
-        .update(events)
-        .set(updates)
-        .where(and(eq(events.id, id), eq(events.userId, userId)))
-        .returning(eventColumns);
-
-      if (!updated) {
-        return c.json({ error: "Event not found or unauthorized" }, 404);
-      }
-
-      return c.json(updated);
-    } catch (err) {
-      c.var.logger.error({ err }, "Error updating event");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const { id } = c.req.valid("param");
+    const updated = await eventController.updateEvent(
+      c.env.db,
+      c.get("userId"),
+      id,
+      c.req.valid("json"),
+    );
+    return c.json(updated);
   },
 );
 
@@ -259,47 +166,10 @@ eventsRouter.delete(
   validator("param", eventIdParamSchema),
   validator("query", deleteEventQuerySchema),
   async (c) => {
-    try {
-      const userId = c.get("userId");
-      const { id } = c.req.valid("param");
-      const { activityId } = c.req.valid("query");
-
-      const result = await c.env.db.transaction(async (tx) => {
-        const [event] = await tx
-          .select({ id: events.id })
-          .from(events)
-          .where(and(eq(events.id, id), eq(events.userId, userId)));
-
-        if (!event) return null;
-
-        const unlinked = await tx
-          .delete(activityEvents)
-          .where(and(eq(activityEvents.eventId, id), eq(activityEvents.activityId, activityId)))
-          .returning({ eventId: activityEvents.eventId });
-
-        const [{ remaining }] = await tx
-          .select({ remaining: count() })
-          .from(activityEvents)
-          .where(eq(activityEvents.eventId, id));
-
-        let deleted = false;
-        if (remaining === 0) {
-          await tx.delete(events).where(eq(events.id, id));
-          deleted = true;
-        }
-
-        return { unlinked: unlinked.length > 0, deleted };
-      });
-
-      if (result === null) {
-        return c.json({ error: "Event not found or unauthorized" }, 404);
-      }
-
-      return c.json(result);
-    } catch (err) {
-      c.var.logger.error({ err }, "Error deleting event");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const { id } = c.req.valid("param");
+    const { activityId } = c.req.valid("query");
+    const result = await eventController.unlinkEvent(c.env.db, c.get("userId"), id, activityId);
+    return c.json(result);
   },
 );
 

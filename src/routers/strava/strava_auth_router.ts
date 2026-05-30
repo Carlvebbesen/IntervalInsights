@@ -1,20 +1,19 @@
 import { createClerkClient } from "@clerk/backend";
 import { getAuth } from "@hono/clerk-auth";
-import { env } from "bun";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
+import { config } from "../../config";
 import { users } from "../../schema/users";
 import { ErrorSchema } from "../../schemas/api_schemas";
 import type { TGlobalEnv } from "../../types/IRouters";
-import { requireEnv } from "../../utils";
 
 const stravaAuthRouter = new Hono<TGlobalEnv>();
 
 const REDIRECT_URI = "https://intervalinsights.cvebbesen.no/strava-callback";
 
-const STRAVA_CLIENT_ID = requireEnv("STRAVA_CLIENT_ID");
+const STRAVA_CLIENT_ID = config.STRAVA_CLIENT_ID;
 
 const StravaAuthUrlResponseSchema = z.object({
   url: z.string().url(),
@@ -98,8 +97,8 @@ stravaAuthRouter.post(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          client_id: env.STRAVA_CLIENT_ID,
-          client_secret: env.STRAVA_CLIENT_SECRET,
+          client_id: config.STRAVA_CLIENT_ID,
+          client_secret: config.STRAVA_CLIENT_SECRET,
           code: code,
           grant_type: "authorization_code",
         }),
@@ -111,7 +110,7 @@ stravaAuthRouter.post(
         c.var.logger.error({ tokenData }, "Strava token exchange failed");
         return c.json({ error: "Failed to exchange token with Strava" }, 401);
       }
-      const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+      const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
       await clerkClient.users.updateUserMetadata(auth.userId, {
         privateMetadata: {
           strava: {

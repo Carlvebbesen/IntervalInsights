@@ -13,7 +13,8 @@ import { requestId } from "hono/request-id";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { openAPIRouteHandler } from "hono-openapi";
 import { Pool } from "pg";
-import { IntervalsError, StravaError } from "./error";
+import { config } from "./config";
+import { AppError, IntervalsError, StravaError } from "./error";
 import { logger } from "./logger";
 import { authGuard } from "./middlewares/auth_middleware";
 import activitiesRouter, { stravaActivitiesRouter } from "./routers/activities_router";
@@ -29,7 +30,7 @@ import userRouter from "./routers/user_router";
 import * as schema from "./schema";
 import type { TGlobalEnv } from "./types/IRouters";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool({ connectionString: config.DATABASE_URL });
 const db = drizzle({ client: pool, schema });
 
 const app = new Hono<TGlobalEnv>();
@@ -137,6 +138,17 @@ app.onError((err, c) => {
   span?.recordException(err);
   span?.setStatus({ code: SpanStatusCode.ERROR, message: err.message });
 
+  if (err instanceof AppError) {
+    // Expected client errors (4xx) are warn-level noise; only 5xx are true errors.
+    if (err.status >= 500) c.var.logger.error({ err }, err.message);
+    else c.var.logger.warn({ err }, err.message);
+    return c.json(
+      err.details !== undefined
+        ? { error: err.message, details: err.details }
+        : { error: err.message },
+      err.status as ContentfulStatusCode,
+    );
+  }
   if (err instanceof StravaError) {
     return c.json(
       { error: "Strava API Error", details: err.details },
@@ -154,6 +166,6 @@ app.onError((err, c) => {
 });
 
 export default {
-  port: Number(process.env.PORT) || 3000,
+  port: config.PORT,
   fetch: app.fetch,
 };

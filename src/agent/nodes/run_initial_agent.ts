@@ -2,7 +2,7 @@ import type { RunnableConfig } from "@langchain/core/runnables";
 import { eq } from "drizzle-orm";
 import { logger } from "../../logger";
 import { activities, type DraftAnalysisResult } from "../../schema";
-import { lapsMatchIntervals, needCompleteAnalysis } from "../../services.ts/utils";
+import { lapsMatchIntervals, needCompleteAnalysis } from "../../services/utils";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";
 import { invokeActivityAnalysisAgent } from "../initial_analysis_agent";
 import { ANALYSIS_VERSION, invokeWithRateLimitRetry } from "../model";

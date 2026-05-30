@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { syncUnlinkedActivities } from "../../services.ts/intervals_link_service";
+import { syncUnlinkedActivities } from "../../services/intervals_link_service";
 import type { TIntervalsEnv } from "../../types/IRouters";
 
 const intervalsApiRouter = new Hono<TIntervalsEnv>();

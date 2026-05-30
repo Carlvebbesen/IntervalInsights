@@ -1,8 +1,7 @@
-import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { describeRoute, resolver } from "hono-openapi";
 import { z } from "zod";
-import { activities, intervalStructures } from "../schema";
+import * as intervalStructureController from "../controllers/interval_structure_controller";
 import { ErrorSchema, IntervalStructureSchema } from "../schemas/api_schemas";
 import type { TGlobalEnv } from "../types/IRouters";
 
@@ -24,23 +23,8 @@ intervalStructureRouter.get(
     },
   }),
   async (c) => {
-    try {
-      const userId = c.get("userId");
-      const result = await c.env.db
-        .selectDistinct({
-          id: intervalStructures.id,
-          name: intervalStructures.name,
-          signature: intervalStructures.signature,
-        })
-        .from(intervalStructures)
-        .innerJoin(activities, eq(activities.intervalStructureId, intervalStructures.id))
-        .where(eq(activities.userId, userId));
-
-      return c.json(result);
-    } catch (err) {
-      c.var.logger.error({ err }, "Error fetching interval structures");
-      return c.json({ error: "Internal Server Error" }, 500);
-    }
+    const result = await intervalStructureController.listUsedStructures(c.env.db, c.get("userId"));
+    return c.json(result);
   },
 );
 

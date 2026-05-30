@@ -1,14 +1,15 @@
 import { createClerkClient } from "@clerk/backend";
-import { env } from "bun";
 import { eq } from "drizzle-orm";
+import { config } from "../config";
 import { logger } from "../logger";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
-import { activities, getDbInsertActivity, users } from "../schema";
+import { activities, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
 import { triggerAnalysisByStravaId } from "./analysis_service";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { stravaApiService } from "./strava_api_service";
+import { getDbInsertActivity } from "./strava_mappers";
 import { shouldAnalyze } from "./utils";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -17,7 +18,7 @@ const INACTIVITY_DROP_DAYS = 90;
 
 async function classifyUserActivity(clerkId: string): Promise<"active" | "skip" | "drop"> {
   try {
-    const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+    const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
     const clerkUser = await clerkClient.users.getUser(clerkId);
     const lastSignInMs = clerkUser.lastSignInAt;
     if (lastSignInMs == null) {
@@ -48,7 +49,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
     await context.db.update(users).set({ stravaId: null }).where(eq(users.id, user.id));
 
     // Clear Clerk metadata
-    const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+    const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
     await clerkClient.users.updateUserMetadata(user.clerkId, {
       privateMetadata: { strava: null },
       publicMetadata: { strava_connected: false },

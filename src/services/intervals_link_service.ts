@@ -1,6 +1,7 @@
 import { createClerkClient } from "@clerk/backend";
-import { env, sleep } from "bun";
+import { sleep } from "bun";
 import { and, desc, eq, gte, isNull, lte } from "drizzle-orm";
+import { config } from "../config";
 import { IntervalsError } from "../error";
 import { logger } from "../logger";
 import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
@@ -308,7 +309,7 @@ export async function disconnectIntervals(
   context: IGlobalBindings,
   clerkUserId: string,
 ): Promise<void> {
-  const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+  const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
   await clerkClient.users.updateUserMetadata(clerkUserId, {
     privateMetadata: { intervals: null },
     publicMetadata: { intervals_connected: false },

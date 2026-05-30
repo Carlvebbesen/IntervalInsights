@@ -38,6 +38,7 @@ export const userRoleEnum = pgEnum("user_role_enum", ["guest", "premium", "admin
 export const targetTypeEnum = pgEnum("target_type_enum", ["time", "distance", "custom"]);
 
 export type TargetTypeEnum = (typeof targetTypeEnum.enumValues)[number];
+export type UserRole = (typeof userRoleEnum.enumValues)[number];
 export type TrainingType = (typeof trainingTypeEnum.enumValues)[number];
 export type AnalysisStatus = (typeof analysisStatusEnum.enumValues)[number];
 

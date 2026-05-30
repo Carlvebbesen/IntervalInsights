@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { StravaError } from "../error";
 import { logger } from "../logger";
 import { tracedFetch } from "../otel";
-import { activities, getDbInsertActivity } from "../schema";
+import { activities } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type {
   DetailedActivity,
@@ -13,6 +13,7 @@ import type {
 } from "../types/strava/IDetailedActivity";
 import type { StreamTypeMap } from "../types/strava/IStream";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
+import { getDbInsertActivity } from "./strava_mappers";
 
 async function fetchStrava<T>(
   endpoint: string,

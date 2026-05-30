@@ -1,13 +1,13 @@
 import { createClerkClient } from "@clerk/backend";
-import { env } from "bun";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { validator } from "hono-openapi";
 import z from "zod";
+import { config } from "../../config";
 import { IntervalsError } from "../../error";
 import { users } from "../../schema/users";
-import { intervalsApiService } from "../../services.ts/intervals_api_service";
-import { disconnectIntervals } from "../../services.ts/intervals_link_service";
+import { intervalsApiService } from "../../services/intervals_api_service";
+import { disconnectIntervals } from "../../services/intervals_link_service";
 import type { TGlobalEnv } from "../../types/IRouters";
 import type { IIntervalsTokenResponse } from "../../types/intervals/IIntervalsAuth";
 import {
@@ -70,7 +70,7 @@ intervalsAuthRouter.post("/exchange", validator("json", ExchangeBodySchema), asy
       ? { id: tokenData.athlete_id }
       : await intervalsApiService.getAthlete(tokenData.access_token);
 
-  const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+  const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
   await clerkClient.users.updateUserMetadata(clerkUserId, {
     privateMetadata: {
       intervals: {
@@ -111,7 +111,7 @@ intervalsAuthRouter.post("/disconnect", async (c) => {
 
 intervalsAuthRouter.get("/status", async (c) => {
   const clerkUserId = c.get("clerkUserId");
-  const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+  const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
   const user = await clerkClient.users.getUser(clerkUserId);
   const tokens = (user.privateMetadata as { intervals?: { access_token?: string } }).intervals;
   const connected = !!tokens?.access_token;

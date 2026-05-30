@@ -6,12 +6,12 @@ import { INTERVAL_TRAINING_TYPES } from "../../schema/enums";
 import {
   buildSegmentsFromLaps,
   structureShapeMatches,
-} from "../../services.ts/lap_derivation_service";
+} from "../../services/lap_derivation_service";
 import {
   calculateSegmentStats,
   needCompleteAnalysis,
   parsePaceStringToMetersPerSecond,
-} from "../../services.ts/utils";
+} from "../../services/utils";
 import type { StreamSet } from "../../types/strava/IStream";
 import { invokeCompleteActivityAnalysisAgent } from "../full_analysis_agent";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";

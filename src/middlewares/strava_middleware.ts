@@ -1,6 +1,6 @@
 import { createClerkClient } from "@clerk/backend";
-import { env } from "bun";
 import { createMiddleware } from "hono/factory";
+import { config } from "../config";
 import { StravaError } from "../error";
 import type { TStravaEnv } from "../types/IRouters";
 
@@ -21,7 +21,7 @@ type UserMetadata = {
   strava?: StravaClerkData;
 };
 export const getStravaAccessTokens = async (clerkUserId: string) => {
-  const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+  const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
   const user = await clerkClient.users.getUser(clerkUserId);
   const metadata = user.privateMetadata as UserMetadata;
   let tokens = metadata.strava;
@@ -34,8 +34,8 @@ export const getStravaAccessTokens = async (clerkUserId: string) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        client_id: env.STRAVA_CLIENT_ID,
-        client_secret: env.STRAVA_CLIENT_SECRET,
+        client_id: config.STRAVA_CLIENT_ID,
+        client_secret: config.STRAVA_CLIENT_SECRET,
         grant_type: "refresh_token",
         refresh_token: tokens.refresh_token,
       }),

@@ -15,7 +15,7 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { Pool } from "pg";
-import { IntervalsError, StravaError } from "../../src/error";
+import { AppError, IntervalsError, StravaError } from "../../src/error";
 import { logger } from "../../src/logger";
 import activitiesRouter, {
   stravaActivitiesRouter,
@@ -99,6 +99,14 @@ export function buildTestApp(pool: Pool) {
 
   app.notFound((c) => c.json({ status: 404, message: "Not Found" }, 404));
   app.onError((err, c) => {
+    if (err instanceof AppError) {
+      return c.json(
+        err.details !== undefined
+          ? { error: err.message, details: err.details }
+          : { error: err.message },
+        err.status as ContentfulStatusCode,
+      );
+    }
     if (err instanceof StravaError) {
       return c.json(
         { error: "Strava API Error", details: err.details },

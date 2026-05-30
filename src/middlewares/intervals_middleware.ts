@@ -1,6 +1,6 @@
 import { createClerkClient } from "@clerk/backend";
-import { env } from "bun";
 import { createMiddleware } from "hono/factory";
+import { config } from "../config";
 import { IntervalsError } from "../error";
 import {
   INTERVALS_CLIENT_ID,
@@ -22,7 +22,7 @@ type UserMetadata = {
 };
 
 export const getIntervalsAccessToken = async (clerkUserId: string): Promise<string> => {
-  const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
+  const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
   const user = await clerkClient.users.getUser(clerkUserId);
   const metadata = user.privateMetadata as UserMetadata;
   let tokens = metadata.intervals;

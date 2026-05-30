@@ -30,7 +30,7 @@ for (const [key, value] of Object.entries(ENV_DEFAULTS)) {
 // Each test file may override these per-test via mock.module again, but the
 // defaults are sensible no-ops / empty data so endpoints just return.
 
-mock.module("../src/services.ts/strava_api_service.ts", () => ({
+mock.module("../src/services/strava_api_service.ts", () => ({
   stravaApiService: {
     getActivity: async () => ({ id: 1, splits_metric: [] }),
     getGear: async (_t: string, id: string) => ({
@@ -47,7 +47,7 @@ mock.module("../src/services.ts/strava_api_service.ts", () => ({
   },
 }));
 
-mock.module("../src/services.ts/intervals_api_service.ts", () => ({
+mock.module("../src/services/intervals_api_service.ts", () => ({
   intervalsApiService: {
     getAthlete: async () => ({ id: "i12345" }),
     getWellness: async () => [],
@@ -56,20 +56,20 @@ mock.module("../src/services.ts/intervals_api_service.ts", () => ({
   },
 }));
 
-mock.module("../src/services.ts/intervals_wellness_service.ts", () => ({
+mock.module("../src/services/intervals_wellness_service.ts", () => ({
   fetchWellnessSummary: async () => null,
   fetchTrainingSummary: async () => ({ status: "not_linked", data: null }),
   fetchWellnessSeries: async () => ({ status: "not_linked", data: null }),
   fetchWeekWellnessStats: async () => null,
 }));
 
-mock.module("../src/services.ts/intervals_link_service.ts", () => ({
+mock.module("../src/services/intervals_link_service.ts", () => ({
   enrichActivityFromIntervalsIcu: async () => {},
   syncUnlinkedActivities: async () => ({ linked: 0, skipped: 0, errors: 0 }),
   disconnectIntervals: async () => {},
 }));
 
-mock.module("../src/services.ts/analysis_service.ts", () => {
+mock.module("../src/services/analysis_service.ts", () => {
   class ResumeValidationError extends Error {
     constructor(message: string) {
       super(message);
@@ -84,24 +84,24 @@ mock.module("../src/services.ts/analysis_service.ts", () => {
   };
 });
 
-mock.module("../src/services.ts/requeue_service.ts", () => ({
+mock.module("../src/services/requeue_service.ts", () => ({
   requeueStaleActivities: async () => {},
 }));
 
-mock.module("../src/services.ts/process_strava_event.ts", () => ({
+mock.module("../src/services/process_strava_event.ts", () => ({
   processStravaWebhook: async () => {},
 }));
 
-mock.module("../src/services.ts/process_intervals_event.ts", () => ({
+mock.module("../src/services/process_intervals_event.ts", () => ({
   processIntervalsWebhook: async () => {},
 }));
 
-mock.module("../src/services.ts/pace_service.ts", () => ({
+mock.module("../src/services/pace_service.ts", () => ({
   getProposedPaceForStructure: async () => [],
   getProposedPaceFromLaps: () => null,
 }));
 
-mock.module("../src/services.ts/lap_derivation_service.ts", () => ({
+mock.module("../src/services/lap_derivation_service.ts", () => ({
   getSegmentsForActivity: async () => [],
   matchLapsToExpandedSteps: () => [],
 }));
