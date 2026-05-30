@@ -81,6 +81,19 @@ export const activities = pgTable(
     icuFtp: integer("icu_ftp"),
     icuCtl: doublePrecision("icu_ctl"),
     icuAtl: doublePrecision("icu_atl"),
+    // Heart-rate distribution stats computed from the HR stream. avg/max are
+    // already stored above (averageHeartRate/maxHeartRate); these add the
+    // histogram-derived metrics. `work*` variants restrict to work intervals
+    // (null when the activity has no stored work segments). `hrStatsComputedAt`
+    // marks that computation was attempted, so we don't refetch streams for
+    // activities that legitimately have no HR data.
+    medianHeartRate: integer("median_heart_rate"),
+    modeHeartRate: integer("mode_heart_rate"),
+    workAvgHeartRate: integer("work_avg_heart_rate"),
+    workMaxHeartRate: integer("work_max_heart_rate"),
+    workMedianHeartRate: integer("work_median_heart_rate"),
+    workModeHeartRate: integer("work_mode_heart_rate"),
+    hrStatsComputedAt: timestamp("hr_stats_computed_at"),
   },
   (table) => {
     return [

@@ -10,6 +10,7 @@ import {
   lte,
   or,
   type SQL,
+  sql,
 } from "drizzle-orm";
 import {
   type AnalysisStatus,
@@ -135,6 +136,75 @@ export async function listForUser(
     .orderBy(desc(activities.startDateLocal));
 }
 
+/** Columns the heart-rate analysis endpoint reads per matching activity. */
+const hrAnalysisColumns = {
+  id: activities.id,
+  startDateLocal: activities.startDateLocal,
+  title: activities.title,
+  trainingType: activities.trainingType,
+  stravaActivityId: activities.stravaActivityId,
+  intervalsIcuId: activities.intervalsIcuId,
+  hasHeartrate: activities.hasHeartrate,
+  averageHeartRate: activities.averageHeartRate,
+  maxHeartRate: activities.maxHeartRate,
+  medianHeartRate: activities.medianHeartRate,
+  modeHeartRate: activities.modeHeartRate,
+  workAvgHeartRate: activities.workAvgHeartRate,
+  workMaxHeartRate: activities.workMaxHeartRate,
+  workMedianHeartRate: activities.workMedianHeartRate,
+  workModeHeartRate: activities.workModeHeartRate,
+  hrStatsComputedAt: activities.hrStatsComputedAt,
+} as const;
+
+export type HrAnalysisRow = {
+  -readonly [K in keyof typeof hrAnalysisColumns]: SelectActivity[K & keyof SelectActivity];
+};
+
+export interface HrAnalysisFilters {
+  trainingType?: TrainingType[];
+  signatures?: string[];
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+/**
+ * All completed activities for a user matching the HR-analysis filters, with no
+ * pagination/cap (stats are read straight off the row, so this is a single
+ * cheap query). Mirrors the filter semantics of `listForUser`: AND across
+ * categories, OR within a category. Returns [] when the signature filter
+ * resolves to no structures.
+ */
+export async function listForHrAnalysis(
+  db: Db,
+  userId: string,
+  f: HrAnalysisFilters,
+): Promise<HrAnalysisRow[]> {
+  const filters: (SQL<unknown> | undefined)[] = [
+    eq(activities.userId, userId),
+    eq(activities.analysisStatus, "completed"),
+  ];
+
+  if (f.trainingType?.length) filters.push(inArray(activities.trainingType, f.trainingType));
+  if (f.dateFrom) filters.push(gte(activities.startDateLocal, new Date(f.dateFrom)));
+  if (f.dateTo) filters.push(lte(activities.startDateLocal, new Date(f.dateTo)));
+
+  if (f.signatures?.length) {
+    const structs = await db
+      .select({ id: intervalStructures.id })
+      .from(intervalStructures)
+      .where(inArray(intervalStructures.signature, f.signatures));
+    const ids = structs.map((s) => s.id);
+    if (ids.length === 0) return [];
+    filters.push(inArray(activities.intervalStructureId, ids));
+  }
+
+  return db
+    .select(hrAnalysisColumns)
+    .from(activities)
+    .where(and(...filters))
+    .orderBy(desc(activities.startDateLocal));
+}
+
 export function findByIdForUser(
   db: Db,
   userId: string,
@@ -216,6 +286,44 @@ export function getGearUsage(db: Db, userId: string) {
     .from(activities)
     .where(and(eq(activities.userId, userId), isNotNull(activities.gearId)))
     .groupBy(activities.gearId, activities.trainingType);
+}
+
+type HrStatValues = { avg: number; max: number; median: number; mode: number };
+
+/**
+ * Persist computed HR-distribution stats for an activity. Writes the
+ * histogram-derived whole-activity median/mode and the work-interval variants,
+ * and backfills averageHeartRate/maxHeartRate from the histogram only when they
+ * are currently null (COALESCE), so device/intervals.icu values win when present.
+ * `hrStatsComputedAt` is always set so we don't reattempt for activities that
+ * have no usable HR data.
+ */
+export async function updateHrStats(
+  db: Db,
+  activityId: number,
+  stats: { full: HrStatValues | null; work: HrStatValues | null },
+): Promise<void> {
+  const base = {
+    medianHeartRate: stats.full?.median ?? null,
+    modeHeartRate: stats.full?.mode ?? null,
+    workAvgHeartRate: stats.work?.avg ?? null,
+    workMaxHeartRate: stats.work?.max ?? null,
+    workMedianHeartRate: stats.work?.median ?? null,
+    workModeHeartRate: stats.work?.mode ?? null,
+    hrStatsComputedAt: new Date(),
+  };
+  await db
+    .update(activities)
+    .set(
+      stats.full
+        ? {
+            ...base,
+            averageHeartRate: sql`COALESCE(${activities.averageHeartRate}, ${stats.full.avg})`,
+            maxHeartRate: sql`COALESCE(${activities.maxHeartRate}, ${stats.full.max})`,
+          }
+        : base,
+    )
+    .where(eq(activities.id, activityId));
 }
 
 /** Delete all of a user's activities (interval_segments cascade via ON DELETE CASCADE). */

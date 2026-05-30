@@ -24,6 +24,7 @@ import adminRouter from "../../src/routers/admin_router";
 import agentsRouter from "../../src/routers/agents_router";
 import dashboardRouter from "../../src/routers/dashboard_router";
 import eventsRouter from "../../src/routers/events_router";
+import heartRateRouter from "../../src/routers/heart_rate_router";
 import intervalStructureRouter from "../../src/routers/interval_structure_router";
 import intervalsEntryRouter from "../../src/routers/intervals/intervals_entry_router";
 import publicRouter from "../../src/routers/public_router";
@@ -92,6 +93,7 @@ export function buildTestApp(pool: Pool) {
   app.route("/api/strava", stravaEntryRouter);
   app.route("/api/interval-structures", intervalStructureRouter);
   app.route("/api/dashboard", dashboardRouter);
+  app.route("/api/heart-rate", heartRateRouter);
   app.route("/api/events", eventsRouter);
   app.route("/api/admin", adminRouter);
   app.route("/api/user", userRouter);
