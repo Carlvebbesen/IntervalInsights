@@ -3,16 +3,18 @@ import type { GraphDb } from "../agent/graph_state";
 import { logger } from "../logger";
 import {
   activities,
-  determineIntervalType,
-  generateIntervalSignature,
-  generateStructureName,
   type InsertIntervalSegment,
   intervalSegments,
   intervalStructures,
-  mapSegmentsToComponents,
 } from "../schema";
 import type { DraftAnalysisResult } from "../schema/activities";
 import type { TrainingType } from "../schema/enums";
+import {
+  determineIntervalType,
+  generateIntervalSignature,
+  generateStructureName,
+  mapSegmentsToComponents,
+} from "./interval_structure_service";
 
 export type SignatureCheck = {
   useExisting: boolean;

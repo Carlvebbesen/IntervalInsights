@@ -8,8 +8,8 @@ import {
   StravaSummaryActivitySchema,
   SyncResultSchema,
 } from "../../schemas/api_schemas";
-import { startAnalysis } from "../../services.ts/analysis_service";
-import { stravaApiService } from "../../services.ts/strava_api_service";
+import { startAnalysis } from "../../services/analysis_service";
+import { stravaApiService } from "../../services/strava_api_service";
 import type { TStravaEnv } from "../../types/IRouters";
 
 const stravaApiRouter = new Hono<TStravaEnv>();

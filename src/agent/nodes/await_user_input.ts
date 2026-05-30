@@ -1,22 +1,38 @@
 import { interrupt } from "@langchain/langgraph";
+import { z } from "zod";
 import { logger } from "../../logger";
-import type { TrainingType } from "../../schema/enums";
-import { generateCompleteIntervalSet } from "../../services.ts/utils";
+import { trainingTypeEnum } from "../../schema/enums";
+import { ExpandedIntervalSetSchema } from "../../schemas/api_schemas";
+import { generateCompleteIntervalSet } from "../../services/utils";
 import type { ExpandedIntervalSet } from "../../types/ExpandedIntervalSet";
 import type { AnalysisState } from "../graph_state";
+
+// The resume payload is validated at the HTTP boundary (POST /agents/resume-analysis),
+// but `interrupt()` returns `unknown`, so re-validate here rather than trusting a cast —
+// a malformed/corrupted checkpoint payload should fail loudly, not corrupt the run.
+const resumePayloadSchema = z.object({
+  notes: z.string().optional(),
+  sets: z.array(ExpandedIntervalSetSchema).optional(),
+  trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),
+  feeling: z.number().nullable().optional(),
+});
 
 export async function awaitUserInput(state: AnalysisState): Promise<Partial<AnalysisState>> {
   const log = logger.child({ node: "awaitUserInput", activityId: state.activityId });
   log.info("entering interrupt (or resuming with payload)");
-  const userInput = interrupt({
+  const raw = interrupt({
     initialResult: state.initialResult,
     activityId: state.activityId,
-  }) as {
-    notes: string;
-    sets: ExpandedIntervalSet[];
-    trainingType: string | null;
-    feeling?: number | null;
-  };
+  });
+
+  const parsed = resumePayloadSchema.safeParse(raw);
+  if (!parsed.success) {
+    log.error({ issues: parsed.error.issues }, "invalid resume payload");
+    throw new Error(
+      `Invalid resume payload for activity ${state.activityId}: ${parsed.error.message}`,
+    );
+  }
+  const userInput = parsed.data;
 
   let userSets: ExpandedIntervalSet[] = userInput.sets ?? [];
   if (userSets.length === 0 && state.initialResult?.structure?.length) {
@@ -36,7 +52,7 @@ export async function awaitUserInput(state: AnalysisState): Promise<Partial<Anal
   return {
     userNotes: userInput.notes ?? "",
     userSets,
-    confirmedTrainingType: (userInput.trainingType as TrainingType | null) ?? null,
+    confirmedTrainingType: userInput.trainingType ?? null,
     feeling: userInput.feeling ?? null,
   };
 }

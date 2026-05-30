@@ -1,6 +1,6 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { logger } from "../../logger";
-import { detectAndPersistEvents } from "../../services.ts/event_detection_service";
+import { detectAndPersistEvents } from "../../services/event_detection_service";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";
 
 export async function detectEvents(

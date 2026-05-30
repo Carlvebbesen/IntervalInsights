@@ -78,7 +78,19 @@ Every activity flows through a single graph, paused mid-way for user confirmatio
 
 **LLM:** GPT-4o-mini via `@langchain/openai`, zero temperature, defined in `src/agent/model.ts`. `invokeWithRateLimitRetry` honours OpenAI's `Retry-After` header with exponential backoff. `ANALYSIS_VERSION` constant tags every analysed activity.
 
-**Strava API service** (`src/services.ts/strava_api_service.ts`): thin wrapper around Strava v3 REST API. All methods accept an `accessToken` — never stored on the service itself.
+**Strava API service** (`src/services/strava_api_service.ts`): thin wrapper around Strava v3 REST API. All methods accept an `accessToken` — never stored on the service itself.
+
+## API Conventions
+
+**Validation:** every router uses `hono-openapi`'s `validator("json" | "query" | "param", zodSchema)` together with `describeRoute` + `resolver(...)` so request validation and the OpenAPI spec (`/api/docs`) come from the same Zod schemas. Reuse Drizzle enums in schemas (`z.enum(trainingTypeEnum.enumValues)`). Path params are validated with `validator("param", ...)` using a `z.coerce.number()` schema — never parse `c.req.param()` by hand.
+
+**Error responses:** the only error envelope is `{ error: string }` (plus optional `{ details }`). Don't wrap a handler in `try/catch` just to return a 500 — that duplicates `app.onError`. Instead:
+- For expected failures (not-found, forbidden, bad input that can't be expressed in the Zod schema), `throw new AppError(status, message, details?)` (`src/error.ts`); `app.onError` renders it. Integration failures use `StravaError` / `IntervalsError`.
+- `return c.json({ error }, status)` directly is fine for simple inline control flow (e.g. a 404 after a missing row).
+
+**Success responses:** the legacy endpoints use mixed shapes (bare arrays/objects, `{ success, message }`, `{ data, meta }` pagination wrappers, and `{ status: "ok" | ... }` discriminated unions). These can't be reshaped without breaking live app versions, so existing shapes are frozen. **New** list endpoints should use the `{ data, meta }` wrapper; new mutations should return the affected resource object. Document every response with a `resolver(Schema)` in `describeRoute`.
+
+**Deprecating a route shape:** when a route's path or request shape changes, keep the old route working alongside the new one. Mark the old handler with a `/** @deprecated ... */` JSDoc comment, set `deprecated: true` in its `describeRoute`, and prefix its description with `[DEPRECATED — use <new route>]`. Remove only once all clients have migrated. Example: `POST /api/activity/update` is deprecated in favour of `PATCH /api/activity/:id`.
 
 ## Observability (OpenTelemetry → Grafana Cloud)
 

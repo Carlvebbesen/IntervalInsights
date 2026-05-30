@@ -4,7 +4,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "../src/schema";
 import { activities } from "../src/schema";
-import { detectAndPersistEvents } from "../src/services.ts/event_detection_service";
+import { detectAndPersistEvents } from "../src/services/event_detection_service";
 
 const DELAY_MS = Number(process.env.DELAY_MS ?? 1500);
 const LIMIT = process.env.LIMIT ? Number(process.env.LIMIT) : null;

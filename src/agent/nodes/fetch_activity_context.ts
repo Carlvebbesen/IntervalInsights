@@ -2,8 +2,8 @@ import type { RunnableConfig } from "@langchain/core/runnables";
 import { eq } from "drizzle-orm";
 import { logger } from "../../logger";
 import { activities } from "../../schema";
-import { userHasHeartRateConsent } from "../../services.ts/heart_rate_consent_service";
-import { stravaApiService } from "../../services.ts/strava_api_service";
+import { userHasHeartRateConsent } from "../../services/heart_rate_consent_service";
+import { stravaApiService } from "../../services/strava_api_service";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";
 
 export async function fetchActivityContext(

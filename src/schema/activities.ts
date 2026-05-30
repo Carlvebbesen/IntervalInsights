@@ -1,4 +1,4 @@
-import { type InferInsertModel, relations } from "drizzle-orm";
+import { type InferInsertModel, type InferSelectModel, relations } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -15,7 +15,6 @@ import {
 import type { WorkoutAnalysisOutput } from "../agent/initial_analysis_agent";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
-import type { DetailedActivity } from "../types/strava/IDetailedActivity";
 import { analysisStatusEnum, type TrainingType, trainingTypeEnum } from "./enums";
 import { activityEvents } from "./events";
 import { intervalSegments } from "./interval_segments";
@@ -108,25 +107,4 @@ export const activitiesRelations = relations(activities, ({ one, many }) => ({
 }));
 
 export type InsertActivity = InferInsertModel<typeof activities>;
-
-export function getDbInsertActivity(
-  data: DetailedActivity,
-  userId: string,
-  processHeartRate: boolean,
-): InsertActivity {
-  return {
-    userId,
-    stravaActivityId: data.id,
-    title: data.name,
-    description: data.description,
-    sportType: data.sport_type || data.type,
-    distance: data.distance,
-    movingTime: data.moving_time,
-    totalElevationGain: data.total_elevation_gain,
-    averageHeartRate: processHeartRate ? data.average_heartrate : null,
-    startDateLocal: new Date(data.start_date_local),
-    hasHeartrate: processHeartRate ? data.has_heartrate : false,
-    gearId: data.gear_id,
-    indoor: data.trainer,
-  };
-}
+export type SelectActivity = InferSelectModel<typeof activities>;

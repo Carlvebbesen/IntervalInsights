@@ -9,7 +9,7 @@ import {
   formatRawPaceFromMps,
   normalizeActivityStreams,
   prepareDataForLLM,
-} from "../services.ts/utils";
+} from "../services/utils";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { Lap } from "../types/strava/IDetailedActivity";
 import type { StreamSet } from "../types/strava/IStream";

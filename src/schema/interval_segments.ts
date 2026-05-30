@@ -1,10 +1,10 @@
-import { type InferInsertModel, relations } from "drizzle-orm";
+import { type InferInsertModel, type InferSelectModel, relations } from "drizzle-orm";
 import { doublePrecision, integer, pgTable, serial } from "drizzle-orm/pg-core";
-import type { SplitMetrics } from "../types/strava/IDetailedActivity";
 import { activities } from "./activities";
 import { targetTypeEnum, workoutPartEnum } from "./enums";
 
 export type InsertIntervalSegment = InferInsertModel<typeof intervalSegments>;
+export type SelectIntervalSegment = InferSelectModel<typeof intervalSegments>;
 
 export const intervalSegments = pgTable("interval_segments", {
   id: serial("id").primaryKey(),
@@ -29,26 +29,3 @@ export const intervalSegmentsRelations = relations(intervalSegments, ({ one }) =
     references: [activities.id],
   }),
 }));
-
-export function getDbInsertIntervalSegmentsFromStravaMetrics(
-  activityId: number,
-  splits: SplitMetrics[],
-): InsertIntervalSegment[] {
-  let cumulativeTime = 0;
-  return splits.map((split) => {
-    cumulativeTime += split.elapsed_time;
-    return {
-      activityId: activityId,
-      segmentIndex: split.split,
-      setGroupIndex: 0,
-      type: "JOGGING",
-      targetValue: 1000,
-      targetType: "distance",
-      targetPace: null,
-      timeSeriesEndTime: cumulativeTime,
-      actualDistance: split.distance,
-      actualDuration: split.moving_time,
-      avgHeartRate: split.average_heartrate ? Math.round(split.average_heartrate) : null,
-    };
-  });
-}

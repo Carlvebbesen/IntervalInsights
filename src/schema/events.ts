@@ -1,4 +1,4 @@
-import { type InferInsertModel, relations } from "drizzle-orm";
+import { type InferInsertModel, type InferSelectModel, relations } from "drizzle-orm";
 import {
   index,
   integer,
@@ -110,3 +110,6 @@ export const eventAttributesRelations = relations(eventAttributes, ({ one }) => 
 export type InsertEvent = InferInsertModel<typeof events>;
 export type InsertActivityEvent = InferInsertModel<typeof activityEvents>;
 export type InsertEventAttribute = InferInsertModel<typeof eventAttributes>;
+export type SelectEvent = InferSelectModel<typeof events>;
+export type SelectActivityEvent = InferSelectModel<typeof activityEvents>;
+export type SelectEventAttribute = InferSelectModel<typeof eventAttributes>;
