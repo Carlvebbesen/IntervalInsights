@@ -55,6 +55,17 @@ export interface IIntervalsInterval {
   label: string | null;
 }
 
+// Per-sport zone configuration on the athlete. `hr_zones` is an ascending list
+// of upper-bound bpm values (e.g. [123, 142, 160, 178, 197]); `hr_zone_names`
+// labels them. Only the HR-relevant fields are listed.
+export interface IIntervalsSportSettings {
+  types: string[] | null;
+  hr_zones: number[] | null;
+  hr_zone_names: string[] | null;
+  lthr: number | null;
+  max_hr: number | null;
+}
+
 export interface IIntervalsAthlete {
   id: string;
   name: string | null;
@@ -63,4 +74,5 @@ export interface IIntervalsAthlete {
   ftp: number | null;
   lthr: number | null;
   timezone: string | null;
+  sportSettings: IIntervalsSportSettings[] | null;
 }

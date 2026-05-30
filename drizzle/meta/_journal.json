@@ -64,6 +64,13 @@
       "when": 1778749615980,
       "tag": "0008_ordinary_valeria_richards",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1780176641410,
+      "tag": "0009_wealthy_talos",
+      "breakpoints": true
     }
   ]
 }

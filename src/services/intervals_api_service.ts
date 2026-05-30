@@ -59,6 +59,14 @@ export const intervalsApiService = {
     return fetchIntervals<unknown>(`/activity/${activityId}/intervals`, accessToken);
   },
 
+  async getActivityStreams(accessToken: string, activityId: string) {
+    // intervals.icu returns an array of { type, data } stream objects — caller
+    // must normalize into the { heartrate, time } shape it needs.
+    return fetchIntervals<unknown>(`/activity/${activityId}/streams`, accessToken, {
+      types: "heartrate,time",
+    });
+  },
+
   async listActivities(accessToken: string, oldest: string, newest: string) {
     return fetchIntervals<IIntervalsActivity[]>("/athlete/0/activities", accessToken, {
       oldest,
