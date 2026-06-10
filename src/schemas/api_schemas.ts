@@ -838,53 +838,65 @@ export const ProposedPaceResponseSchema = z
 // Contract: docs/backend/heart_rate_analysis_contract.md in the app repo. The
 // app sends a partial body (omitted field = no constraint).
 
-export const HeartRateAnalysisRequestSchema = z.object({
-  trainingType: z.array(z.enum(trainingTypeEnum.enumValues)).optional(),
-  signatures: z.array(z.string()).optional(),
-  dateFrom: z.string().datetime().optional(),
-  dateTo: z.string().datetime().optional(),
-  intervalsOnly: z.boolean().optional(),
-});
+export const HeartRateAnalysisRequestSchema = z
+  .object({
+    trainingType: z.array(z.enum(trainingTypeEnum.enumValues)).optional(),
+    signatures: z.array(z.string()).optional(),
+    dateFrom: z.string().datetime().optional(),
+    dateTo: z.string().datetime().optional(),
+    intervalsOnly: z.boolean().optional(),
+  })
+  .openapi({ ref: "HeartRateAnalysisRequest" });
 
-export const HrAnalysisPointSchema = z.object({
-  activityId: z.number().int(),
-  date: z.string(),
-  name: z.string(),
-  trainingType: z.enum(trainingTypeEnum.enumValues).nullable(),
-  avgHr: z.number().nullable(),
-  maxHr: z.number().nullable(),
-  medianHr: z.number().nullable(),
-  modeHr: z.number().nullable(),
-});
+export const HrAnalysisPointSchema = z
+  .object({
+    activityId: z.number().int(),
+    date: z.string(),
+    name: z.string(),
+    trainingType: z.enum(trainingTypeEnum.enumValues).nullable(),
+    avgHr: z.number().nullable(),
+    maxHr: z.number().nullable(),
+    medianHr: z.number().nullable(),
+    modeHr: z.number().nullable(),
+  })
+  .openapi({ ref: "HrAnalysisPoint" });
 
-export const HrZoneSchema = z.object({
-  label: z.string(),
-  min: z.number(),
-  max: z.number(),
-  color: z.string(),
-});
+export const HrZoneSchema = z
+  .object({
+    label: z.string(),
+    min: z.number(),
+    max: z.number(),
+    color: z.string(),
+  })
+  .openapi({ ref: "HrZone" });
 
-const HrMetricExtremeSchema = z.object({
-  activityId: z.number().int(),
-  value: z.number(),
-});
+const HrMetricExtremeSchema = z
+  .object({
+    activityId: z.number().int(),
+    value: z.number(),
+  })
+  .openapi({ ref: "HrMetricExtreme" });
 
-export const HrMetricSummarySchema = z.object({
-  min: HrMetricExtremeSchema.nullable(),
-  max: HrMetricExtremeSchema.nullable(),
-  mean: z.number().nullable(),
-});
+export const HrMetricSummarySchema = z
+  .object({
+    min: HrMetricExtremeSchema.nullable(),
+    max: HrMetricExtremeSchema.nullable(),
+    mean: z.number().nullable(),
+  })
+  .openapi({ ref: "HrMetricSummary" });
 
 // NOTE: for status:"ok" the parser reads points/zones/summaries from the TOP
 // LEVEL alongside status — they are NOT nested under a `data` envelope (unlike
 // the wellness/fitness series). `summaries` is keyed by metric api-key.
-export const HeartRateAnalysisResponseSchema = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("ok"),
-    points: z.array(HrAnalysisPointSchema),
-    zones: z.array(HrZoneSchema),
-    summaries: z.record(z.string(), HrMetricSummarySchema),
-  }),
-  z.object({ status: z.literal("no_data") }),
-  z.object({ status: z.literal("not_linked") }),
-]);
+export const HeartRateAnalysisResponseSchema = z
+  .discriminatedUnion("status", [
+    z.object({
+      status: z.literal("ok"),
+      points: z.array(HrAnalysisPointSchema),
+      zones: z.array(HrZoneSchema),
+      summaries: z.record(z.string(), HrMetricSummarySchema),
+    }),
+    z.object({ status: z.literal("no_data") }),
+    z.object({ status: z.literal("not_linked") }),
+  ])
+  .openapi({ ref: "HeartRateAnalysisResponse" });

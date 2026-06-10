@@ -572,6 +572,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/heart-rate/analysis": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Heart-rate analysis series for the filtered set of the user's activities. Always HTTP 200 with a `status`-discriminated body: `ok` (top-level `points` + `zones` + `summaries`), `no_data` (filter matched nothing), or `not_linked` (intervals.icu not connected — zones come from there). Each point carries avg/max/median/mode HR; `intervalsOnly` restricts every metric to the work intervals. Returns 403 if the user has not enabled heart-rate processing. */
+    post: operations["postApiHeartRateAnalysis"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/events": {
     parameters: {
       query?: never;
@@ -1384,6 +1401,85 @@ export interface components {
         form: number | null;
         totalLoad: number | null;
       } | null;
+    };
+    HeartRateAnalysisResponse:
+      | {
+          /** @constant */
+          status: "ok";
+          points: components["schemas"]["HrAnalysisPoint"][];
+          zones: components["schemas"]["HrZone"][];
+          summaries: {
+            [key: string]: components["schemas"]["HrMetricSummary"];
+          };
+        }
+      | {
+          /** @constant */
+          status: "no_data";
+        }
+      | {
+          /** @constant */
+          status: "not_linked";
+        };
+    HrAnalysisPoint: {
+      activityId: number;
+      date: string;
+      name: string;
+      /** @enum {string|null} */
+      trainingType:
+        | "LONG"
+        | "EASY"
+        | "RECOVERY"
+        | "SHORT_INTERVALS"
+        | "HILL_SPRINTS"
+        | "LONG_INTERVALS"
+        | "SPRINTS"
+        | "FARTLEK"
+        | "PROGRESSIVE_LONG"
+        | "RACE"
+        | "TEMPO"
+        | "OTHER"
+        | null;
+      avgHr: number | null;
+      maxHr: number | null;
+      medianHr: number | null;
+      modeHr: number | null;
+    };
+    HrZone: {
+      label: string;
+      min: number;
+      max: number;
+      color: string;
+    };
+    HrMetricSummary: {
+      min: components["schemas"]["HrMetricExtreme"] | null;
+      max: components["schemas"]["HrMetricExtreme"] | null;
+      mean: number | null;
+    };
+    HrMetricExtreme: {
+      activityId: number;
+      value: number;
+    };
+    HeartRateAnalysisRequest: {
+      trainingType?: (
+        | "LONG"
+        | "EASY"
+        | "RECOVERY"
+        | "SHORT_INTERVALS"
+        | "HILL_SPRINTS"
+        | "LONG_INTERVALS"
+        | "SPRINTS"
+        | "FARTLEK"
+        | "PROGRESSIVE_LONG"
+        | "RACE"
+        | "TEMPO"
+        | "OTHER"
+      )[];
+      signatures?: string[];
+      /** Format: date-time */
+      dateFrom?: string;
+      /** Format: date-time */
+      dateTo?: string;
+      intervalsOnly?: boolean;
     };
     EventListResponse: {
       events: components["schemas"]["EventListItem"][];
@@ -3083,6 +3179,39 @@ export interface operations {
       };
       /** @description Internal server error */
       500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  postApiHeartRateAnalysis: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["HeartRateAnalysisRequest"];
+      };
+    };
+    responses: {
+      /** @description Discriminated heart-rate analysis result */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HeartRateAnalysisResponse"];
+        };
+      };
+      /** @description Heart-rate processing not enabled for this account */
+      403: {
         headers: {
           [name: string]: unknown;
         };
