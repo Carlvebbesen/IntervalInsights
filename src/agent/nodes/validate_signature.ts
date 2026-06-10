@@ -21,11 +21,7 @@ export async function validateSignature(
 
   const intervalsCount = state.computedSegments.filter((s) => s.type === "INTERVALS").length;
   log.info(
-    {
-      segments: state.computedSegments.length,
-      intervalsTyped: intervalsCount,
-      segmentsFromLaps: state.segmentsFromLaps,
-    },
+    { segments: state.computedSegments.length, intervalsTyped: intervalsCount },
     "validating",
   );
   if (intervalsCount === 0 && state.computedSegments.length > 0) {

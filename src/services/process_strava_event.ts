@@ -13,25 +13,17 @@ import { getDbInsertActivity } from "./strava_mappers";
 import { shouldAnalyze } from "./utils";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const INACTIVITY_SKIP_DAYS = 14;
+const INACTIVITY_SKIP_DAYS = 60;
 const INACTIVITY_DROP_DAYS = 90;
 
-async function classifyUserActivity(clerkId: string): Promise<"active" | "skip" | "drop"> {
-  try {
-    const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
-    const clerkUser = await clerkClient.users.getUser(clerkId);
-    const lastSignInMs = clerkUser.lastSignInAt;
-    if (lastSignInMs == null) {
-      return "active";
-    }
-    const daysSince = (Date.now() - lastSignInMs) / MS_PER_DAY;
-    if (daysSince > INACTIVITY_DROP_DAYS) return "drop";
-    if (daysSince > INACTIVITY_SKIP_DAYS) return "skip";
-    return "active";
-  } catch (err) {
-    logger.warn({ err }, "Failed to fetch Clerk user for inactivity check — defaulting to active");
+function classifyUserActivity(lastSeenAt: Date | null): "active" | "skip" | "drop" {
+  if (lastSeenAt == null) {
     return "active";
   }
+  const daysSince = (Date.now() - lastSeenAt.getTime()) / MS_PER_DAY;
+  if (daysSince > INACTIVITY_DROP_DAYS) return "drop";
+  if (daysSince > INACTIVITY_SKIP_DAYS) return "skip";
+  return "active";
 }
 
 export async function processStravaWebhook(body: IStravaWebhookEvent, context: IGlobalBindings) {
@@ -89,7 +81,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
   const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
   const activity = getDbInsertActivity(data, user.id, processHeartRate);
 
-  const activityClass = await classifyUserActivity(user.clerkId);
+  const activityClass = classifyUserActivity(user.lastSeenAt);
 
   if (activityClass === "drop") {
     logger.info(

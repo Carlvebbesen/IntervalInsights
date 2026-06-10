@@ -7,9 +7,13 @@ import { eventTypeEnum, trainingTypeEnum } from "../schema";
 import {
   ActivityListResponseSchema,
   ActivitySchema,
+  DraftSegmentsResponseSchema,
+  EditSegmentsRequestSchema,
   ErrorSchema,
   GearStatsResponseSchema,
   IntervalSegmentSchema,
+  PatchSegmentSchema,
+  SegmentsResponseSchema,
   SplitMetricSchema,
   StravaLapSchema,
 } from "../schemas/api_schemas";
@@ -33,6 +37,11 @@ const bodySchema = z.object({
 
 const activityIdParamSchema = z.object({
   id: z.coerce.number().int().positive(),
+});
+
+const segmentParamSchema = z.object({
+  id: z.coerce.number().int().positive(),
+  segmentId: z.coerce.number().int().positive(),
 });
 
 activitiesRouter.post(
@@ -317,6 +326,120 @@ stravaActivitiesRouter.get(
       id,
     );
     return c.json(streams);
+  },
+);
+
+stravaActivitiesRouter.get(
+  "/:id/draft-segments",
+  describeRoute({
+    description:
+      "Get the proposed draft segments + HR/pace streams for the visual segment editor (activity must be in 'initial' status).",
+    responses: {
+      200: {
+        description: "Draft segments and streams",
+        content: { "application/json": { schema: resolver(DraftSegmentsResponseSchema) } },
+      },
+      404: {
+        description: "Activity not found",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("param", activityIdParamSchema),
+  async (c) => {
+    const { id } = c.req.valid("param");
+    const result = await activityController.getDraftSegments(
+      c.env.db,
+      c.get("userId"),
+      c.get("stravaAccessToken"),
+      id,
+    );
+    return c.json(result);
+  },
+);
+
+stravaActivitiesRouter.put(
+  "/:id/segments",
+  describeRoute({
+    description:
+      "Replace all interval segments for an activity (post-analysis edit). Recomputes actual stats from Strava streams over the supplied boundaries.",
+    responses: {
+      200: {
+        description: "Updated interval segments",
+        content: { "application/json": { schema: resolver(SegmentsResponseSchema) } },
+      },
+      400: {
+        description: "Bad request",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      404: {
+        description: "Activity not found",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("param", activityIdParamSchema),
+  validator("json", EditSegmentsRequestSchema),
+  async (c) => {
+    const { id } = c.req.valid("param");
+    const { segments } = c.req.valid("json");
+    const result = await activityController.editSegments(
+      c.env.db,
+      c.get("userId"),
+      c.get("stravaAccessToken"),
+      id,
+      segments,
+    );
+    return c.json(result);
+  },
+);
+
+stravaActivitiesRouter.patch(
+  "/:id/segments/:segmentId",
+  describeRoute({
+    description:
+      "Edit a single interval segment (post-analysis). Recomputes stats for the whole activity since boundaries are contiguous.",
+    responses: {
+      200: {
+        description: "Updated interval segments",
+        content: { "application/json": { schema: resolver(SegmentsResponseSchema) } },
+      },
+      400: {
+        description: "Bad request",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      404: {
+        description: "Activity or segment not found",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("param", segmentParamSchema),
+  validator("json", PatchSegmentSchema),
+  async (c) => {
+    const { id, segmentId } = c.req.valid("param");
+    const patch = c.req.valid("json");
+    const result = await activityController.editSingleSegment(
+      c.env.db,
+      c.get("userId"),
+      c.get("stravaAccessToken"),
+      id,
+      segmentId,
+      patch,
+    );
+    return c.json(result);
   },
 );
 

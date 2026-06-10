@@ -20,7 +20,7 @@ export async function setUserRole(
 
   const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
   await clerkClient.users.updateUserMetadata(updated.clerkId, {
-    publicMetadata: { user_id: updated.id, role },
+    publicMetadata: { role },
   });
 
   return { id: updated.id, role };

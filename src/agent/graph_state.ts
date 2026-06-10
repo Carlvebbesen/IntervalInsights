@@ -2,7 +2,7 @@ import { Annotation } from "@langchain/langgraph";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "../schema";
 import type { IntervalsIcuPrediction } from "../schema/activities";
-import type { TrainingType } from "../schema/enums";
+import type { TrainingType, WorkoutPartType } from "../schema/enums";
 import type { InsertIntervalSegment } from "../schema/interval_segments";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { Lap } from "../types/strava/IDetailedActivity";
@@ -10,6 +10,12 @@ import type { StreamSet } from "../types/strava/IStream";
 import type { WorkoutAnalysisOutput } from "./initial_analysis_agent";
 
 export type GraphDb = NodePgDatabase<typeof schema>;
+
+export type SegmentBoundary = {
+  type: WorkoutPartType;
+  setGroupIndex: number;
+  timeSeriesEndTime: number;
+};
 
 export type GraphConfigurable = {
   db: GraphDb;
@@ -53,11 +59,19 @@ export const AnalysisStateAnnotation = Annotation.Root({
   }),
   feeling: Annotation<number | null>({ reducer: overwrite, default: () => null }),
 
+  proposedSegments: Annotation<InsertIntervalSegment[]>({
+    reducer: overwrite,
+    default: () => [],
+  }),
+  userEditedSegments: Annotation<SegmentBoundary[]>({
+    reducer: overwrite,
+    default: () => [],
+  }),
+
   computedSegments: Annotation<InsertIntervalSegment[]>({
     reducer: overwrite,
     default: () => [],
   }),
-  segmentsFromLaps: Annotation<boolean>({ reducer: overwrite, default: () => false }),
 
   signatureCheck: Annotation<{
     useExisting: boolean;

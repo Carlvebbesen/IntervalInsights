@@ -16,6 +16,7 @@ export const users = pgTable("users", {
   termsOfServiceAcceptedAt: timestamp("terms_of_service_accepted_at"),
   termsOfServiceVersion: text("terms_of_service_version"),
   intervalsAthleteId: text("intervals_athlete_id").unique(),
+  lastSeenAt: timestamp("last_seen_at"),
 });
 
 export const usersRelations = relations(users, ({ many }) => ({

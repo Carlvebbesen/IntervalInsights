@@ -121,7 +121,8 @@ export interface paths {
     delete?: never;
     options?: never;
     head?: never;
-    patch?: never;
+    /** @description Update activity metadata (trainingType, notes, feeling) */
+    patch: operations["patchApiActivityById"];
     trace?: never;
   };
   "/api/activity/{id}/segments": {
@@ -133,7 +134,8 @@ export interface paths {
     };
     /** @description Get interval segments for an activity */
     get: operations["getApiActivityByIdSegments"];
-    put?: never;
+    /** @description Replace all interval segments for an activity (post-analysis edit). Recomputes actual stats from Strava streams over the supplied boundaries. */
+    put: operations["putApiActivityByIdSegments"];
     post?: never;
     delete?: never;
     options?: never;
@@ -150,7 +152,10 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** @description Update activity metadata (trainingType, notes, feeling) */
+    /**
+     * @deprecated
+     * @description [DEPRECATED — use PATCH /activity/:id] Update activity metadata (trainingType, notes, feeling)
+     */
     post: operations["postApiActivityUpdate"];
     delete?: never;
     options?: never;
@@ -224,6 +229,40 @@ export interface paths {
     options?: never;
     head?: never;
     patch?: never;
+    trace?: never;
+  };
+  "/api/activity/{id}/draft-segments": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Get the proposed draft segments + HR/pace streams for the visual segment editor (activity must be in 'initial' status). */
+    get: operations["getApiActivityByIdDraftSegments"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/activity/{id}/segments/{segmentId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** @description Edit a single interval segment (post-analysis). Recomputes stats for the whole activity since boundaries are contiguous. */
+    patch: operations["patchApiActivityByIdSegmentsBySegmentId"];
     trace?: never;
   };
   "/api/agents/pending": {
@@ -569,6 +608,23 @@ export interface paths {
     patch: operations["patchApiEventsById"];
     trace?: never;
   };
+  "/api/admin/users/{id}/role": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** @description Set a user's role (admin only). Invalidates the user's Clerk public-metadata cache. */
+    patch: operations["patchApiAdminUsersByIdRole"];
+    trace?: never;
+  };
   "/api/user": {
     parameters: {
       query?: never;
@@ -654,10 +710,888 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/chat": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** @description Streaming training-coach chat (Server-Sent Events). Answers questions about the athlete's own training data, analyses it, and suggests workouts (read-only). Emits `status`, `token`, `artifact` (rendered cards: workout/chart/table/stat cards/weekly plan), `done` and `error` events. */
+    post: operations["postApiChat"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/conversations": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description List the current user's past chat conversations, most recent first (paginated). */
+    get: operations["getApiChatConversations"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/conversations/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Fetch one conversation's full transcript (ownership-checked). */
+    get: operations["getApiChatConversationsById"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
-  schemas: never;
+  schemas: {
+    Error: {
+      error: string;
+    };
+    ActivityListResponse: {
+      data: components["schemas"]["ActivityListItem"][];
+      meta: {
+        page: number;
+        pageSize: number;
+        filterApplied: {
+          search?: string;
+          trainingType?: (
+            | "LONG"
+            | "EASY"
+            | "RECOVERY"
+            | "SHORT_INTERVALS"
+            | "HILL_SPRINTS"
+            | "LONG_INTERVALS"
+            | "SPRINTS"
+            | "FARTLEK"
+            | "PROGRESSIVE_LONG"
+            | "RACE"
+            | "TEMPO"
+            | "OTHER"
+          )[];
+          distance?: number;
+          intervalStructureId?: number;
+          sportTypes?: string[];
+          signatures?: string[];
+          dateFrom?: string;
+          dateTo?: string;
+          eventTypes?: ("INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER")[];
+          eventIds?: number[];
+        };
+      };
+    };
+    ActivityListItem: {
+      id: number;
+      title: string;
+      startDateLocal: string;
+      distance: number;
+      sportType: string;
+      indoor: boolean;
+      /** @enum {string|null} */
+      trainingType:
+        | "LONG"
+        | "EASY"
+        | "RECOVERY"
+        | "SHORT_INTERVALS"
+        | "HILL_SPRINTS"
+        | "LONG_INTERVALS"
+        | "SPRINTS"
+        | "FARTLEK"
+        | "PROGRESSIVE_LONG"
+        | "RACE"
+        | "TEMPO"
+        | "OTHER"
+        | null;
+      trainingLoad: number | null;
+      icuTrainingLoad: number | null;
+      averageHeartRate: number | null;
+    };
+    Activity: {
+      id: number;
+      userId: string;
+      /** @enum {string|null} */
+      trainingType:
+        | "LONG"
+        | "EASY"
+        | "RECOVERY"
+        | "SHORT_INTERVALS"
+        | "HILL_SPRINTS"
+        | "LONG_INTERVALS"
+        | "SPRINTS"
+        | "FARTLEK"
+        | "PROGRESSIVE_LONG"
+        | "RACE"
+        | "TEMPO"
+        | "OTHER"
+        | null;
+      intervalStructureId: number | null;
+      analyzedAt: string | null;
+      /** @enum {string|null} */
+      analysisStatus:
+        | "pending"
+        | "ongoing_init"
+        | "initial"
+        | "ongoing_completed"
+        | "completed"
+        | "error"
+        | "skipped_inactive"
+        | null;
+      draftAnalysisResult?: null;
+      analysisVersion: string | null;
+      stravaActivityId: number;
+      gearId: string | null;
+      hasHeartrate: boolean | null;
+      title: string;
+      description: string | null;
+      sportType: string;
+      distance: number;
+      movingTime: number;
+      totalElevationGain: number | null;
+      averageHeartRate: number | null;
+      startDateLocal: string;
+      feeling: number | null;
+      notes: string | null;
+      createdAt: string | null;
+      indoor: boolean;
+      intervalsIcuId?: string | null;
+      intervalsAnalyzed?: boolean | null;
+      intervalsIcuEnrichedAt?: string | null;
+      elapsedTime?: number | null;
+      maxHeartRate?: number | null;
+      averagePower?: number | null;
+      weightedAveragePower?: number | null;
+      calories?: number | null;
+      deviceName?: string | null;
+      trainingLoad?: number | null;
+      icuTrainingLoad?: number | null;
+      icuIntensity?: number | null;
+      relativeIntensity?: number | null;
+      decoupling?: number | null;
+      polarizationIndex?: number | null;
+      icuFtp?: number | null;
+      icuCtl?: number | null;
+      icuAtl?: number | null;
+      events?: components["schemas"]["ActivityEvent"][];
+    };
+    ActivityEvent: {
+      id: number;
+      /** @enum {string} */
+      eventType: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
+      bodyLocation: string | null;
+      description: string;
+      startTime: string;
+      lastOccurrence: string;
+      /** @enum {string} */
+      status: "active" | "resolved";
+      resolvedAt: string | null;
+    };
+    IntervalSegment: {
+      id: number;
+      activityId: number;
+      segmentIndex: number;
+      setGroupIndex: number;
+      /** @enum {string} */
+      type: "INTERVALS" | "REST" | "ACTIVE_REST" | "WARMUP" | "COOL_DOWN" | "JOGGING";
+      targetValue: number;
+      /** @enum {string} */
+      targetType: "time" | "distance" | "custom";
+      targetPace: number | null;
+      timeSeriesEndTime: number;
+      actualDistance: number;
+      actualDuration: number;
+      avgHeartRate: number | null;
+    };
+    GearStatsResponse: {
+      stats: components["schemas"]["GearStatsItem"][];
+    };
+    GearStatsItem: {
+      gearId: string;
+      gearName: string;
+      activityCount: number;
+      trainingTypeCounts: {
+        [key: string]: number;
+      };
+      distanceKm: number;
+    };
+    StravaLap: {
+      id: number;
+      resource_state: number;
+      name: string;
+      activity: {
+        id: number;
+        resource_state: number;
+      };
+      athlete: {
+        id: number;
+        resource_state: number;
+      };
+      elapsed_time: number;
+      moving_time: number;
+      start_date: string;
+      start_date_local: string;
+      distance: number;
+      start_index: number;
+      end_index: number;
+      total_elevation_gain: number;
+      average_speed: number;
+      max_speed: number;
+      average_cadence?: number;
+      device_watts?: boolean;
+      average_watts?: number;
+      average_heartrate?: number;
+      max_heartrate?: number;
+      lap_index: number;
+      split: number;
+    };
+    SplitMetric: {
+      distance: number;
+      elapsed_time: number;
+      elevation_difference: number;
+      moving_time: number;
+      split: number;
+      average_speed: number;
+      average_grade_adjusted_speed?: number;
+      average_heartrate?: number;
+      pace_zone: number;
+    };
+    DraftSegmentsResponse: {
+      proposedSegments: components["schemas"]["ProposedSegment"][];
+      streams: {
+        time: number[];
+        heartrate: number[] | null;
+        velocity: number[];
+      };
+    };
+    ProposedSegment: {
+      segmentIndex: number;
+      setGroupIndex: number;
+      /** @enum {string} */
+      type: "INTERVALS" | "REST" | "ACTIVE_REST" | "WARMUP" | "COOL_DOWN" | "JOGGING";
+      timeSeriesEndTime: number;
+      actualDistance?: number;
+      actualDuration?: number;
+      avgHeartRate?: number | null;
+      /** @enum {string} */
+      targetType?: "time" | "distance" | "custom";
+      targetValue?: number;
+      targetPace?: number | null;
+    };
+    SegmentsResponse: {
+      intervalSegments: components["schemas"]["IntervalSegment"][];
+    };
+    EditSegmentsRequest: {
+      segments: components["schemas"]["EditSegmentInput"][];
+    };
+    EditSegmentInput: {
+      /** @enum {string} */
+      type: "INTERVALS" | "REST" | "ACTIVE_REST" | "WARMUP" | "COOL_DOWN" | "JOGGING";
+      setGroupIndex: number;
+      /** @enum {string} */
+      targetType: "time" | "distance" | "custom";
+      targetValue: number;
+      targetPace: number | null;
+      timeSeriesEndTime: number;
+    };
+    PatchSegment: {
+      /** @enum {string} */
+      type?: "INTERVALS" | "REST" | "ACTIVE_REST" | "WARMUP" | "COOL_DOWN" | "JOGGING";
+      setGroupIndex?: number;
+      /** @enum {string} */
+      targetType?: "time" | "distance" | "custom";
+      targetValue?: number;
+      targetPace?: number | null;
+      timeSeriesEndTime?: number;
+    };
+    PendingActivity: {
+      id: number;
+      stravaId: number;
+      /** @enum {string|null} */
+      trainingType:
+        | "LONG"
+        | "EASY"
+        | "RECOVERY"
+        | "SHORT_INTERVALS"
+        | "HILL_SPRINTS"
+        | "LONG_INTERVALS"
+        | "SPRINTS"
+        | "FARTLEK"
+        | "PROGRESSIVE_LONG"
+        | "RACE"
+        | "TEMPO"
+        | "OTHER"
+        | null;
+      /** @enum {string|null} */
+      analysisStatus:
+        | "pending"
+        | "ongoing_init"
+        | "initial"
+        | "ongoing_completed"
+        | "completed"
+        | "error"
+        | "skipped_inactive"
+        | null;
+      draftAnalysisResult?: null;
+      title: string;
+      notes: string | null;
+      distance: number;
+      movingTime: number;
+      description: string | null;
+      indoor: boolean;
+      feeling: number | null;
+    };
+    ExpandedIntervalSet: {
+      set_recovery?: number | null;
+      steps: components["schemas"]["ExpandedIntervalStep"][];
+    };
+    ExpandedIntervalStep: {
+      /** @enum {string} */
+      work_type: "DISTANCE" | "TIME";
+      work_value: number;
+      /** @enum {string|null} */
+      recovery_type?: "DISTANCE" | "TIME" | null;
+      recovery_value?: number | null;
+      target_pace: number | null;
+    };
+    EditedSegment: {
+      /** @enum {string} */
+      type: "INTERVALS" | "REST" | "ACTIVE_REST" | "WARMUP" | "COOL_DOWN" | "JOGGING";
+      setGroupIndex: number;
+      timeSeriesEndTime: number;
+    };
+    ProposedPaceResponse: components["schemas"]["ExpandedIntervalSet"][];
+    StravaSummaryActivity: {
+      id: number;
+      name: string;
+      distance: number;
+      moving_time: number;
+      elapsed_time: number;
+      total_elevation_gain: number;
+      type: string;
+      sport_type: string;
+      start_date: string;
+      start_date_local: string;
+      timezone: string;
+      utc_offset: number;
+      trainer: boolean;
+      commute: boolean;
+      manual: boolean;
+      private: boolean;
+      average_speed: number;
+      max_speed: number;
+      has_heartrate: boolean;
+      average_heartrate?: number;
+      max_heartrate?: number;
+      elev_high?: number;
+      elev_low?: number;
+      gear_id?: string | null;
+    } & {
+      [key: string]: unknown;
+    };
+    SyncResult: {
+      id: number;
+      /** @enum {string} */
+      status: "success" | "failed";
+      error?: unknown;
+    };
+    IntervalStructure: {
+      id: number;
+      name: string;
+      signature: string | null;
+    };
+    DashboardResponse: {
+      summary: {
+        thisWeekKm: number;
+        prevWeekKm: number;
+        last7DaysKm: number;
+        prev7DaysKm: number;
+        weekPercentChange: number;
+        sevenDayPercentChange: number;
+        weightedWeekPercentChange: number;
+        avgKmByThisPointInWeek: number;
+        thisWeekElevationGain: number;
+        thisWeekMovingTimeSec: number;
+        thisWeekAvgHeartRate: number | null;
+      };
+      graph: {
+        date: string;
+        runKm: number;
+        otherKm: number;
+        otherBreakdown: {
+          [key: string]: number;
+        };
+        totalKm: number;
+      }[];
+      averages: {
+        avgSessionsPerWeek: number;
+        avgIntervalsPerWeek: number;
+        avgFeelingWeek: number | null;
+        avgFeelingMonth: number | null;
+        avgElevationPerRun: number | null;
+        avgDistancePerRunKm: number | null;
+      };
+      wellness: {
+        ctl: number | null;
+        atl: number | null;
+        tsb: number | null;
+        avgHrv: number | null;
+        avgSleepQuality: number | null;
+        restingHr: number | null;
+      } | null;
+    };
+    TrainingSummaryResponse:
+      | {
+          /** @constant */
+          status: "ok";
+          data: components["schemas"]["TrainingSummaryData"];
+        }
+      | {
+          /** @constant */
+          status: "not_linked";
+          data: null;
+        }
+      | {
+          /** @constant */
+          status: "no_recent_data";
+          data: null;
+        };
+    TrainingSummaryData: {
+      date: string;
+      fitness: {
+        ctl: number | null;
+        atl: number | null;
+        rampRate: number | null;
+        ctlLoad: number | null;
+        atlLoad: number | null;
+      };
+      sleep: {
+        sleepSecs: number | null;
+        sleepScore: number | null;
+      };
+      recovery: {
+        restingHR: number | null;
+        hrv: number | null;
+        readiness: number | null;
+        baevskySI: number | null;
+        spO2: number | null;
+        respiration: number | null;
+      };
+      body: {
+        weight: number | null;
+        vo2max: number | null;
+      };
+    };
+    WellnessSeriesResponse:
+      | {
+          /** @constant */
+          status: "ok";
+          data: components["schemas"]["WellnessSeriesData"];
+        }
+      | {
+          /** @constant */
+          status: "not_linked";
+          data: null;
+        }
+      | {
+          /** @constant */
+          status: "no_data";
+          data: null;
+        };
+    WellnessSeriesData: {
+      range: {
+        oldest: string;
+        newest: string;
+      };
+      metricsAvailable: string[];
+      summary: {
+        [key: string]: components["schemas"]["MetricStats"];
+      };
+      points: components["schemas"]["WellnessSeriesPoint"][];
+    };
+    MetricStats: {
+      latest: number | null;
+      min: number | null;
+      max: number | null;
+      avg: number | null;
+    };
+    WellnessSeriesPoint: {
+      date: string;
+      fitness: {
+        ctl: number | null;
+        atl: number | null;
+        tsb: number | null;
+        rampRate: number | null;
+        ctlLoad: number | null;
+        atlLoad: number | null;
+      };
+      sleep: {
+        sleepSecs: number | null;
+        sleepScore: number | null;
+        sleepQuality: number | null;
+      };
+      recovery: {
+        restingHR: number | null;
+        hrv: number | null;
+        readiness: number | null;
+        baevskySI: number | null;
+        spO2: number | null;
+        respiration: number | null;
+      };
+      subjective: {
+        soreness: number | null;
+        fatigue: number | null;
+        stress: number | null;
+        mood: number | null;
+        motivation: number | null;
+      };
+      health: {
+        injury: number | null;
+        sickness: number | null;
+      };
+      body: {
+        weight: number | null;
+        bodyFat: number | null;
+        vo2max: number | null;
+      };
+      comments: string | null;
+    };
+    FitnessSeriesResponse:
+      | {
+          /** @constant */
+          status: "ok";
+          data: {
+            range: {
+              oldest: string;
+              newest: string;
+            };
+            points: components["schemas"]["FitnessPoint"][];
+          };
+        }
+      | {
+          /** @constant */
+          status: "not_linked";
+          data: null;
+        }
+      | {
+          /** @constant */
+          status: "no_data";
+          data: null;
+        };
+    FitnessPoint: {
+      date: string;
+      ctl: number | null;
+      atl: number | null;
+      tsb: number | null;
+      ctlLoad: number | null;
+      atlLoad: number | null;
+      hrv: number | null;
+      hrv7dAvg: number | null;
+      /** @enum {string|null} */
+      hrvStatus: "balanced" | "unbalanced" | "low" | null;
+      /** @enum {string|null} */
+      hrvNightlyStatus: "balanced" | "unbalanced" | "low" | null;
+      hrvBaseline: {
+        mean: number;
+        lowerBalanced: number;
+        upperBalanced: number;
+      } | null;
+      sleepScore: number | null;
+    };
+    FitnessDayResponse: {
+      date: string;
+      fitness: components["schemas"]["FitnessPoint"] | null;
+      activities: components["schemas"]["FitnessDayActivity"][];
+    };
+    FitnessDayActivity: {
+      id: number;
+      title: string;
+      sportType: string;
+      /** @enum {string|null} */
+      trainingType:
+        | "LONG"
+        | "EASY"
+        | "RECOVERY"
+        | "SHORT_INTERVALS"
+        | "HILL_SPRINTS"
+        | "LONG_INTERVALS"
+        | "SPRINTS"
+        | "FARTLEK"
+        | "PROGRESSIVE_LONG"
+        | "RACE"
+        | "TEMPO"
+        | "OTHER"
+        | null;
+      distance: number;
+      movingTime: number;
+      averageHeartRate: number | null;
+      trainingLoad: number | null;
+      icuTrainingLoad: number | null;
+    };
+    WeekDetailResponse: {
+      weekStart: string;
+      running: {
+        totalKm: number;
+        totalElevationGain: number;
+        totalMovingTimeSec: number;
+        avgHeartRate: number | null;
+        avgPaceMinPerKm: number | null;
+        numSessions: number;
+        indoorSessions: number;
+        outdoorSessions: number;
+        avgFeeling: number | null;
+        percentChangeVsPrevWeek: number | null;
+        percentChangeVsSameWeek1MonthAgo: number | null;
+        prevWeekKm: number;
+        monthAgoWeekKm: number;
+        trainingTypeBreakdown: {
+          [key: string]: number;
+        };
+      };
+      intervals: {
+        count: number;
+      };
+      otherActivities: {
+        combinedKm: number;
+        breakdown: {
+          sportType: string;
+          km: number;
+          movingTimeSec: number;
+        }[];
+      };
+      wellness: {
+        avgSleepScore: number | null;
+        avgFatigue: number | null;
+        fitness: number | null;
+        form: number | null;
+        totalLoad: number | null;
+      } | null;
+    };
+    EventListResponse: {
+      events: components["schemas"]["EventListItem"][];
+    };
+    EventListItem: {
+      createdAt: string;
+      updatedAt: string;
+    } & components["schemas"]["ActivityEvent"];
+    DeleteEventResponse: {
+      unlinked: boolean;
+      deleted: boolean;
+    };
+    User: {
+      id: string;
+      clerkId: string;
+      stravaId: string | null;
+      /** @enum {string|null} */
+      role: "guest" | "premium" | "admin" | null;
+      maxHeartRate: number | null;
+      processHeartRate: boolean;
+      privacyPolicyAcceptedAt: string | null;
+      privacyPolicyVersion: string | null;
+      currentPrivacyPolicyVersion: string;
+      termsOfServiceAcceptedAt: string | null;
+      termsOfServiceVersion: string | null;
+      currentTermsOfServiceVersion: string;
+    };
+    DeleteAccountResponse: {
+      success: boolean;
+      message: string;
+    };
+    CoachChatRequest: {
+      /**
+       * Format: uuid
+       * @description Stable id for the conversation thread (persisted).
+       */
+      conversationId: string;
+      message: string;
+      /** @description Athlete's current local time (ISO 8601). */
+      userTime: string;
+      weather?: {
+        temperatureC?: number;
+        condition?: string;
+        windKph?: number;
+        humidity?: number;
+      };
+    };
+    ChatConversationList: {
+      data: components["schemas"]["ChatConversationSummary"][];
+      meta: {
+        page: number;
+        pageSize: number;
+      };
+    };
+    ChatConversationSummary: {
+      id: string;
+      title: string;
+      createdAt: string;
+      updatedAt: string;
+    };
+    ChatConversationDetail: {
+      messages: components["schemas"]["ChatMessage"][];
+    } & components["schemas"]["ChatConversationSummary"];
+    ChatMessage: {
+      id: number;
+      /** @enum {string} */
+      role: "user" | "assistant";
+      content: string;
+      artifacts?: components["schemas"]["CoachArtifact"][] | null;
+      createdAt: string;
+    };
+    CoachArtifact:
+      | components["schemas"]["ProposedTrainingArtifact"]
+      | components["schemas"]["ChartArtifact"]
+      | components["schemas"]["TableArtifact"]
+      | components["schemas"]["StatCardsArtifact"]
+      | components["schemas"]["WeeklyPlanArtifact"];
+    ProposedTrainingArtifact: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "proposed_training";
+      id: string;
+      title: string;
+      /** @enum {string|null} */
+      trainingType?:
+        | "LONG"
+        | "EASY"
+        | "RECOVERY"
+        | "SHORT_INTERVALS"
+        | "HILL_SPRINTS"
+        | "LONG_INTERVALS"
+        | "SPRINTS"
+        | "FARTLEK"
+        | "PROGRESSIVE_LONG"
+        | "RACE"
+        | "TEMPO"
+        | "OTHER"
+        | null;
+      notes?: string | null;
+      structure: components["schemas"]["WorkoutStructureSet"][];
+    };
+    WorkoutStructureSet: {
+      set_reps: number;
+      set_recovery?: number | null;
+      steps: components["schemas"]["WorkoutStructureStep"][];
+    };
+    WorkoutStructureStep: {
+      reps: number;
+      /** @enum {string} */
+      work_type: "DISTANCE" | "TIME";
+      work_value: number;
+      /** @enum {string|null} */
+      recovery_type?: "DISTANCE" | "TIME" | null;
+      recovery_value?: number | null;
+      target_pace: number | null;
+    };
+    ChartArtifact: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "chart";
+      id: string;
+      /** @enum {string} */
+      chartType: "line" | "bar" | "area" | "scatter";
+      title: string;
+      xLabel?: string;
+      yLabel?: string;
+      /** @enum {string} */
+      xType?: "number" | "category" | "time";
+      series: {
+        name: string;
+        points: {
+          x: number;
+          y: number;
+          label?: string;
+        }[];
+      }[];
+    };
+    TableArtifact: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "table";
+      id: string;
+      title?: string;
+      columns: {
+        key: string;
+        label: string;
+        /** @enum {string} */
+        align?: "left" | "right" | "center";
+      }[];
+      rows: {
+        [key: string]: string | number | null;
+      }[];
+    };
+    StatCardsArtifact: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "stat_cards";
+      id: string;
+      title?: string;
+      cards: {
+        label: string;
+        value: string | number;
+        unit?: string;
+        /** @enum {string} */
+        trend?: "up" | "down" | "flat";
+        hint?: string;
+      }[];
+    };
+    WeeklyPlanArtifact: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "weekly_plan";
+      id: string;
+      title: string;
+      days: {
+        /** @enum {string} */
+        day: "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+        /** @enum {string|null} */
+        sessionType?:
+          | "LONG"
+          | "EASY"
+          | "RECOVERY"
+          | "SHORT_INTERVALS"
+          | "HILL_SPRINTS"
+          | "LONG_INTERVALS"
+          | "SPRINTS"
+          | "FARTLEK"
+          | "PROGRESSIVE_LONG"
+          | "RACE"
+          | "TEMPO"
+          | "OTHER"
+          | null;
+        title: string;
+        description?: string;
+        isRest?: boolean;
+      }[];
+    };
+  };
   responses: never;
   parameters: never;
   requestBodies: never;
@@ -696,9 +1630,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -938,63 +1870,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            data: {
-              id: number;
-              title: string;
-              startDateLocal: string;
-              distance: number;
-              sportType: string;
-              indoor: boolean;
-              /** @enum {string|null} */
-              trainingType:
-                | "LONG"
-                | "EASY"
-                | "RECOVERY"
-                | "SHORT_INTERVALS"
-                | "HILL_SPRINTS"
-                | "LONG_INTERVALS"
-                | "SPRINTS"
-                | "FARTLEK"
-                | "PROGRESSIVE_LONG"
-                | "RACE"
-                | "TEMPO"
-                | "OTHER"
-                | null;
-              trainingLoad: number | null;
-              icuTrainingLoad: number | null;
-              averageHeartRate: number | null;
-            }[];
-            meta: {
-              page: number;
-              pageSize: number;
-              filterApplied: {
-                search?: string;
-                /** @enum {string} */
-                trainingType?:
-                  | "LONG"
-                  | "EASY"
-                  | "RECOVERY"
-                  | "SHORT_INTERVALS"
-                  | "HILL_SPRINTS"
-                  | "LONG_INTERVALS"
-                  | "SPRINTS"
-                  | "FARTLEK"
-                  | "PROGRESSIVE_LONG"
-                  | "RACE"
-                  | "TEMPO"
-                  | "OTHER";
-                distance?: number;
-                intervalStructureId?: number;
-                sportTypes?: string[];
-                signatures?: string[];
-                dateFrom?: string;
-                dateTo?: string;
-                eventTypes?: ("INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER")[];
-                eventIds?: number[];
-              };
-            };
-          };
+          "application/json": components["schemas"]["ActivityListResponse"];
         };
       };
       /** @description Internal server error */
@@ -1003,9 +1879,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -1015,7 +1889,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        id: string;
+        id: number;
       };
       cookie?: never;
     };
@@ -1027,84 +1901,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            id: number;
-            userId: string;
-            /** @enum {string|null} */
-            trainingType:
-              | "LONG"
-              | "EASY"
-              | "RECOVERY"
-              | "SHORT_INTERVALS"
-              | "HILL_SPRINTS"
-              | "LONG_INTERVALS"
-              | "SPRINTS"
-              | "FARTLEK"
-              | "PROGRESSIVE_LONG"
-              | "RACE"
-              | "TEMPO"
-              | "OTHER"
-              | null;
-            intervalStructureId: number | null;
-            analyzedAt: string | null;
-            /** @enum {string|null} */
-            analysisStatus:
-              | "pending"
-              | "ongoing_init"
-              | "initial"
-              | "ongoing_completed"
-              | "completed"
-              | "error"
-              | "skipped_inactive"
-              | null;
-            draftAnalysisResult?: null;
-            analysisVersion: string | null;
-            stravaActivityId: number;
-            gearId: string | null;
-            hasHeartrate: boolean | null;
-            title: string;
-            description: string | null;
-            sportType: string;
-            distance: number;
-            movingTime: number;
-            totalElevationGain: number | null;
-            averageHeartRate: number | null;
-            startDateLocal: string;
-            feeling: number | null;
-            notes: string | null;
-            createdAt: string | null;
-            indoor: boolean;
-            intervalsIcuId?: string | null;
-            intervalsAnalyzed?: boolean | null;
-            intervalsIcuEnrichedAt?: string | null;
-            elapsedTime?: number | null;
-            maxHeartRate?: number | null;
-            averagePower?: number | null;
-            weightedAveragePower?: number | null;
-            calories?: number | null;
-            deviceName?: string | null;
-            trainingLoad?: number | null;
-            icuTrainingLoad?: number | null;
-            icuIntensity?: number | null;
-            relativeIntensity?: number | null;
-            decoupling?: number | null;
-            polarizationIndex?: number | null;
-            icuFtp?: number | null;
-            icuCtl?: number | null;
-            icuAtl?: number | null;
-            events?: {
-              id: number;
-              /** @enum {string} */
-              eventType: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
-              bodyLocation: string | null;
-              description: string;
-              startTime: string;
-              lastOccurrence: string;
-              /** @enum {string} */
-              status: "active" | "resolved";
-              resolvedAt: string | null;
-            }[];
-          };
+          "application/json": components["schemas"]["Activity"];
         };
       };
       /** @description Invalid activity ID */
@@ -1113,9 +1910,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
       /** @description Activity not found */
@@ -1124,9 +1919,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
       /** @description Internal server error */
@@ -1135,74 +1928,23 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
   };
-  getApiActivityByIdSegments: {
+  patchApiActivityById: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        id: string;
+        id: number;
       };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Interval segments */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": {
-            intervalSegments: {
-              id: number;
-              activityId: number;
-              segmentIndex: number;
-              setGroupIndex: number;
-              /** @enum {string} */
-              type: "INTERVALS" | "REST" | "ACTIVE_REST" | "WARMUP" | "COOL_DOWN" | "JOGGING";
-              targetValue: number;
-              /** @enum {string} */
-              targetType: "time" | "distance" | "custom";
-              targetPace: number | null;
-              timeSeriesEndTime: number;
-              actualDistance: number;
-              actualDuration: number;
-              avgHeartRate: number | null;
-            }[];
-          };
-        };
-      };
-      /** @description Internal server error */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": {
-            error: string;
-          };
-        };
-      };
-    };
-  };
-  postApiActivityUpdate: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
       cookie?: never;
     };
     requestBody: {
       content: {
         "application/json": {
-          id: number;
           /** @enum {string|null} */
           trainingType?:
             | "LONG"
@@ -1230,84 +1972,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            id: number;
-            userId: string;
-            /** @enum {string|null} */
-            trainingType:
-              | "LONG"
-              | "EASY"
-              | "RECOVERY"
-              | "SHORT_INTERVALS"
-              | "HILL_SPRINTS"
-              | "LONG_INTERVALS"
-              | "SPRINTS"
-              | "FARTLEK"
-              | "PROGRESSIVE_LONG"
-              | "RACE"
-              | "TEMPO"
-              | "OTHER"
-              | null;
-            intervalStructureId: number | null;
-            analyzedAt: string | null;
-            /** @enum {string|null} */
-            analysisStatus:
-              | "pending"
-              | "ongoing_init"
-              | "initial"
-              | "ongoing_completed"
-              | "completed"
-              | "error"
-              | "skipped_inactive"
-              | null;
-            draftAnalysisResult?: null;
-            analysisVersion: string | null;
-            stravaActivityId: number;
-            gearId: string | null;
-            hasHeartrate: boolean | null;
-            title: string;
-            description: string | null;
-            sportType: string;
-            distance: number;
-            movingTime: number;
-            totalElevationGain: number | null;
-            averageHeartRate: number | null;
-            startDateLocal: string;
-            feeling: number | null;
-            notes: string | null;
-            createdAt: string | null;
-            indoor: boolean;
-            intervalsIcuId?: string | null;
-            intervalsAnalyzed?: boolean | null;
-            intervalsIcuEnrichedAt?: string | null;
-            elapsedTime?: number | null;
-            maxHeartRate?: number | null;
-            averagePower?: number | null;
-            weightedAveragePower?: number | null;
-            calories?: number | null;
-            deviceName?: string | null;
-            trainingLoad?: number | null;
-            icuTrainingLoad?: number | null;
-            icuIntensity?: number | null;
-            relativeIntensity?: number | null;
-            decoupling?: number | null;
-            polarizationIndex?: number | null;
-            icuFtp?: number | null;
-            icuCtl?: number | null;
-            icuAtl?: number | null;
-            events?: {
-              id: number;
-              /** @enum {string} */
-              eventType: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
-              bodyLocation: string | null;
-              description: string;
-              startTime: string;
-              lastOccurrence: string;
-              /** @enum {string} */
-              status: "active" | "resolved";
-              resolvedAt: string | null;
-            }[];
-          };
+          "application/json": components["schemas"]["Activity"];
         };
       };
       /** @description Bad request */
@@ -1316,9 +1981,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
       /** @description Activity not found */
@@ -1327,8 +1990,39 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  getApiActivityByIdSegments: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Interval segments */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
           "application/json": {
-            error: string;
+            intervalSegments: components["schemas"]["IntervalSegment"][];
           };
         };
       };
@@ -1338,9 +2032,130 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  putApiActivityByIdSegments: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EditSegmentsRequest"];
+      };
+    };
+    responses: {
+      /** @description Updated interval segments */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SegmentsResponse"];
+        };
+      };
+      /** @description Bad request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Activity not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  postApiActivityUpdate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          /** @enum {string|null} */
+          trainingType?:
+            | "LONG"
+            | "EASY"
+            | "RECOVERY"
+            | "SHORT_INTERVALS"
+            | "HILL_SPRINTS"
+            | "LONG_INTERVALS"
+            | "SPRINTS"
+            | "FARTLEK"
+            | "PROGRESSIVE_LONG"
+            | "RACE"
+            | "TEMPO"
+            | "OTHER"
+            | null;
+          notes?: string | null;
+          feeling?: number | null;
+          id: number;
+        };
+      };
+    };
+    responses: {
+      /** @description Updated activity */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Activity"];
+        };
+      };
+      /** @description Bad request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Activity not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -1360,17 +2175,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            stats: {
-              gearId: string;
-              gearName: string;
-              activityCount: number;
-              trainingTypeCounts: {
-                [key: string]: number;
-              };
-              distanceKm: number;
-            }[];
-          };
+          "application/json": components["schemas"]["GearStatsResponse"];
         };
       };
       /** @description Internal server error */
@@ -1379,9 +2184,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -1404,36 +2207,7 @@ export interface operations {
         };
         content: {
           "application/json": {
-            laps: {
-              id: number;
-              resource_state: number;
-              name: string;
-              activity: {
-                id: number;
-                resource_state: number;
-              };
-              athlete: {
-                id: number;
-                resource_state: number;
-              };
-              elapsed_time: number;
-              moving_time: number;
-              start_date: string;
-              start_date_local: string;
-              distance: number;
-              start_index: number;
-              end_index: number;
-              total_elevation_gain: number;
-              average_speed: number;
-              max_speed: number;
-              average_cadence?: number;
-              device_watts?: boolean;
-              average_watts?: number;
-              average_heartrate?: number;
-              max_heartrate?: number;
-              lap_index: number;
-              split: number;
-            }[];
+            laps: components["schemas"]["StravaLap"][];
           };
         };
       };
@@ -1443,9 +2217,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -1468,17 +2240,7 @@ export interface operations {
         };
         content: {
           "application/json": {
-            splits_metric: {
-              distance: number;
-              elapsed_time: number;
-              elevation_difference: number;
-              moving_time: number;
-              split: number;
-              average_speed: number;
-              average_grade_adjusted_speed?: number;
-              average_heartrate?: number;
-              pace_zone: number;
-            }[];
+            splits_metric: components["schemas"]["SplitMetric"][];
           };
         };
       };
@@ -1488,9 +2250,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -1521,9 +2281,101 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  getApiActivityByIdDraftSegments: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Draft segments and streams */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DraftSegmentsResponse"];
+        };
+      };
+      /** @description Activity not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  patchApiActivityByIdSegmentsBySegmentId: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: number;
+        segmentId: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PatchSegment"];
+      };
+    };
+    responses: {
+      /** @description Updated interval segments */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SegmentsResponse"];
+        };
+      };
+      /** @description Bad request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Activity or segment not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Internal server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -1543,43 +2395,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            id: number;
-            stravaId: number;
-            /** @enum {string|null} */
-            trainingType:
-              | "LONG"
-              | "EASY"
-              | "RECOVERY"
-              | "SHORT_INTERVALS"
-              | "HILL_SPRINTS"
-              | "LONG_INTERVALS"
-              | "SPRINTS"
-              | "FARTLEK"
-              | "PROGRESSIVE_LONG"
-              | "RACE"
-              | "TEMPO"
-              | "OTHER"
-              | null;
-            /** @enum {string|null} */
-            analysisStatus:
-              | "pending"
-              | "ongoing_init"
-              | "initial"
-              | "ongoing_completed"
-              | "completed"
-              | "error"
-              | "skipped_inactive"
-              | null;
-            draftAnalysisResult?: null;
-            title: string;
-            notes: string | null;
-            distance: number;
-            movingTime: number;
-            description: string | null;
-            indoor: boolean;
-            feeling: number | null;
-          }[];
+          "application/json": components["schemas"]["PendingActivity"][];
         };
       };
     };
@@ -1617,9 +2433,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
       /** @description Internal server error */
@@ -1628,9 +2442,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -1647,20 +2459,24 @@ export interface operations {
         "application/json": {
           activityId: number;
           notes: string;
-          sets?: {
-            set_recovery?: number | null;
-            steps: {
-              /** @enum {string} */
-              work_type: "DISTANCE" | "TIME";
-              work_value: number;
-              /** @enum {string|null} */
-              recovery_type?: "DISTANCE" | "TIME" | null;
-              recovery_value?: number | null;
-              target_pace: number | null;
-            }[];
-          }[];
-          trainingType?: string | null;
+          sets?: components["schemas"]["ExpandedIntervalSet"][];
+          /** @enum {string|null} */
+          trainingType?:
+            | "LONG"
+            | "EASY"
+            | "RECOVERY"
+            | "SHORT_INTERVALS"
+            | "HILL_SPRINTS"
+            | "LONG_INTERVALS"
+            | "SPRINTS"
+            | "FARTLEK"
+            | "PROGRESSIVE_LONG"
+            | "RACE"
+            | "TEMPO"
+            | "OTHER"
+            | null;
           feeling?: number | null;
+          editedSegments?: components["schemas"]["EditedSegment"][];
         };
       };
     };
@@ -1682,9 +2498,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
       /** @description Internal server error */
@@ -1693,9 +2507,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -1711,16 +2523,22 @@ export interface operations {
       content: {
         "application/json": {
           structure: {
+            /** @description How many times the sequence of steps is repeated. Default to 1 if not a repeating series. */
             set_reps: number;
+            /** @description The individual work segments within this set. */
             steps: {
+              /** @description How many times this specific step is repeated within the set/series. */
               reps: number;
               /** @enum {string} */
               work_type: "DISTANCE" | "TIME";
+              /** @description The duration (seconds) or distance (meters). */
               work_value: number;
               /** @enum {string|null} */
               recovery_type?: "DISTANCE" | "TIME" | null;
+              /** @description Rest after each rep in this step (seconds or meters). */
               recovery_value?: number | null;
             }[];
+            /** @description The rest Period between sets, could be TIME or DISTANCE value, could be same as between reps */
             set_recovery?: number | null;
           }[];
           activityId?: number;
@@ -1734,18 +2552,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            set_recovery?: number | null;
-            steps: {
-              /** @enum {string} */
-              work_type: "DISTANCE" | "TIME";
-              work_value: number;
-              /** @enum {string|null} */
-              recovery_type?: "DISTANCE" | "TIME" | null;
-              recovery_value?: number | null;
-              target_pace: number | null;
-            }[];
-          }[];
+          "application/json": components["schemas"]["ProposedPaceResponse"];
         };
       };
       /** @description Internal server error */
@@ -1754,9 +2561,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -1797,18 +2602,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            set_recovery?: number | null;
-            steps: {
-              /** @enum {string} */
-              work_type: "DISTANCE" | "TIME";
-              work_value: number;
-              /** @enum {string|null} */
-              recovery_type?: "DISTANCE" | "TIME" | null;
-              recovery_value?: number | null;
-              target_pace: number | null;
-            }[];
-          }[];
+          "application/json": components["schemas"]["ProposedPaceResponse"];
         };
       };
       /** @description Bad request */
@@ -1817,9 +2611,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
       /** @description Internal server error */
@@ -1828,9 +2620,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -1891,9 +2681,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
       /** @description Not signed in to Clerk, or Strava rejected the code */
@@ -1902,9 +2690,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
       /** @description Internal server error */
@@ -1913,9 +2699,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -1940,34 +2724,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": ({
-            id: number;
-            name: string;
-            distance: number;
-            moving_time: number;
-            elapsed_time: number;
-            total_elevation_gain: number;
-            type: string;
-            sport_type: string;
-            start_date: string;
-            start_date_local: string;
-            timezone: string;
-            utc_offset: number;
-            trainer: boolean;
-            commute: boolean;
-            manual: boolean;
-            private: boolean;
-            average_speed: number;
-            max_speed: number;
-            has_heartrate: boolean;
-            average_heartrate?: number;
-            max_heartrate?: number;
-            elev_high?: number;
-            elev_low?: number;
-            gear_id?: string | null;
-          } & {
-            [key: string]: unknown;
-          })[];
+          "application/json": components["schemas"]["StravaSummaryActivity"][];
         };
       };
       /** @description Missing Strava access token or user */
@@ -1976,9 +2733,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2004,12 +2759,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            id: number;
-            /** @enum {string} */
-            status: "success" | "failed";
-            error?: unknown;
-          }[];
+          "application/json": components["schemas"]["SyncResult"][];
         };
       };
       /** @description Missing Strava access token or user */
@@ -2018,9 +2768,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2146,11 +2894,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            id: number;
-            name: string;
-            signature: string | null;
-          }[];
+          "application/json": components["schemas"]["IntervalStructure"][];
         };
       };
       /** @description Internal server error */
@@ -2159,9 +2903,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2181,46 +2923,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            summary: {
-              thisWeekKm: number;
-              prevWeekKm: number;
-              last7DaysKm: number;
-              prev7DaysKm: number;
-              weekPercentChange: number;
-              sevenDayPercentChange: number;
-              weightedWeekPercentChange: number;
-              avgKmByThisPointInWeek: number;
-              thisWeekElevationGain: number;
-              thisWeekMovingTimeSec: number;
-              thisWeekAvgHeartRate: number | null;
-            };
-            graph: {
-              date: string;
-              runKm: number;
-              otherKm: number;
-              otherBreakdown: {
-                [key: string]: number;
-              };
-              totalKm: number;
-            }[];
-            averages: {
-              avgSessionsPerWeek: number;
-              avgIntervalsPerWeek: number;
-              avgFeelingWeek: number | null;
-              avgFeelingMonth: number | null;
-              avgElevationPerRun: number | null;
-              avgDistancePerRunKm: number | null;
-            };
-            wellness: {
-              ctl: number | null;
-              atl: number | null;
-              tsb: number | null;
-              avgHrv: number | null;
-              avgSleepQuality: number | null;
-              restingHr: number | null;
-            } | null;
-          };
+          "application/json": components["schemas"]["DashboardResponse"];
         };
       };
       /** @description Internal server error */
@@ -2229,9 +2932,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2251,47 +2952,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json":
-            | {
-                /** @constant */
-                status: "ok";
-                data: {
-                  date: string;
-                  fitness: {
-                    ctl: number | null;
-                    atl: number | null;
-                    rampRate: number | null;
-                    ctlLoad: number | null;
-                    atlLoad: number | null;
-                  };
-                  sleep: {
-                    sleepSecs: number | null;
-                    sleepScore: number | null;
-                  };
-                  recovery: {
-                    restingHR: number | null;
-                    hrv: number | null;
-                    readiness: number | null;
-                    baevskySI: number | null;
-                    spO2: number | null;
-                    respiration: number | null;
-                  };
-                  body: {
-                    weight: number | null;
-                    vo2max: number | null;
-                  };
-                };
-              }
-            | {
-                /** @constant */
-                status: "not_linked";
-                data: null;
-              }
-            | {
-                /** @constant */
-                status: "no_recent_data";
-                data: null;
-              };
+          "application/json": components["schemas"]["TrainingSummaryResponse"];
         };
       };
     };
@@ -2314,77 +2975,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json":
-            | {
-                /** @constant */
-                status: "ok";
-                data: {
-                  range: {
-                    oldest: string;
-                    newest: string;
-                  };
-                  metricsAvailable: string[];
-                  summary: {
-                    [key: string]: {
-                      latest: number | null;
-                      min: number | null;
-                      max: number | null;
-                      avg: number | null;
-                    };
-                  };
-                  points: {
-                    date: string;
-                    fitness: {
-                      ctl: number | null;
-                      atl: number | null;
-                      tsb: number | null;
-                      rampRate: number | null;
-                      ctlLoad: number | null;
-                      atlLoad: number | null;
-                    };
-                    sleep: {
-                      sleepSecs: number | null;
-                      sleepScore: number | null;
-                      sleepQuality: number | null;
-                    };
-                    recovery: {
-                      restingHR: number | null;
-                      hrv: number | null;
-                      readiness: number | null;
-                      baevskySI: number | null;
-                      spO2: number | null;
-                      respiration: number | null;
-                    };
-                    subjective: {
-                      soreness: number | null;
-                      fatigue: number | null;
-                      stress: number | null;
-                      mood: number | null;
-                      motivation: number | null;
-                    };
-                    health: {
-                      injury: number | null;
-                      sickness: number | null;
-                    };
-                    body: {
-                      weight: number | null;
-                      bodyFat: number | null;
-                      vo2max: number | null;
-                    };
-                    comments: string | null;
-                  }[];
-                };
-              }
-            | {
-                /** @constant */
-                status: "not_linked";
-                data: null;
-              }
-            | {
-                /** @constant */
-                status: "no_data";
-                data: null;
-              };
+          "application/json": components["schemas"]["WellnessSeriesResponse"];
         };
       };
       /** @description Invalid date range */
@@ -2393,9 +2984,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2418,47 +3007,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json":
-            | {
-                /** @constant */
-                status: "ok";
-                data: {
-                  range: {
-                    oldest: string;
-                    newest: string;
-                  };
-                  points: {
-                    date: string;
-                    ctl: number | null;
-                    atl: number | null;
-                    tsb: number | null;
-                    ctlLoad: number | null;
-                    atlLoad: number | null;
-                    hrv: number | null;
-                    hrv7dAvg: number | null;
-                    /** @enum {string|null} */
-                    hrvStatus: "balanced" | "unbalanced" | "low" | null;
-                    /** @enum {string|null} */
-                    hrvNightlyStatus: "balanced" | "unbalanced" | "low" | null;
-                    hrvBaseline: {
-                      mean: number;
-                      lowerBalanced: number;
-                      upperBalanced: number;
-                    } | null;
-                    sleepScore: number | null;
-                  }[];
-                };
-              }
-            | {
-                /** @constant */
-                status: "not_linked";
-                data: null;
-              }
-            | {
-                /** @constant */
-                status: "no_data";
-                data: null;
-              };
+          "application/json": components["schemas"]["FitnessSeriesResponse"];
         };
       };
       /** @description Invalid date range */
@@ -2467,9 +3016,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2491,54 +3038,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            date: string;
-            fitness: {
-              date: string;
-              ctl: number | null;
-              atl: number | null;
-              tsb: number | null;
-              ctlLoad: number | null;
-              atlLoad: number | null;
-              hrv: number | null;
-              hrv7dAvg: number | null;
-              /** @enum {string|null} */
-              hrvStatus: "balanced" | "unbalanced" | "low" | null;
-              /** @enum {string|null} */
-              hrvNightlyStatus: "balanced" | "unbalanced" | "low" | null;
-              hrvBaseline: {
-                mean: number;
-                lowerBalanced: number;
-                upperBalanced: number;
-              } | null;
-              sleepScore: number | null;
-            } | null;
-            activities: {
-              id: number;
-              title: string;
-              sportType: string;
-              /** @enum {string|null} */
-              trainingType:
-                | "LONG"
-                | "EASY"
-                | "RECOVERY"
-                | "SHORT_INTERVALS"
-                | "HILL_SPRINTS"
-                | "LONG_INTERVALS"
-                | "SPRINTS"
-                | "FARTLEK"
-                | "PROGRESSIVE_LONG"
-                | "RACE"
-                | "TEMPO"
-                | "OTHER"
-                | null;
-              distance: number;
-              movingTime: number;
-              averageHeartRate: number | null;
-              trainingLoad: number | null;
-              icuTrainingLoad: number | null;
-            }[];
-          };
+          "application/json": components["schemas"]["FitnessDayResponse"];
         };
       };
       /** @description Invalid date */
@@ -2547,9 +3047,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2571,45 +3069,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            weekStart: string;
-            running: {
-              totalKm: number;
-              totalElevationGain: number;
-              totalMovingTimeSec: number;
-              avgHeartRate: number | null;
-              avgPaceMinPerKm: number | null;
-              numSessions: number;
-              indoorSessions: number;
-              outdoorSessions: number;
-              avgFeeling: number | null;
-              percentChangeVsPrevWeek: number | null;
-              percentChangeVsSameWeek1MonthAgo: number | null;
-              prevWeekKm: number;
-              monthAgoWeekKm: number;
-              trainingTypeBreakdown: {
-                [key: string]: number;
-              };
-            };
-            intervals: {
-              count: number;
-            };
-            otherActivities: {
-              combinedKm: number;
-              breakdown: {
-                sportType: string;
-                km: number;
-                movingTimeSec: number;
-              }[];
-            };
-            wellness: {
-              avgSleepScore: number | null;
-              avgFatigue: number | null;
-              fitness: number | null;
-              form: number | null;
-              totalLoad: number | null;
-            } | null;
-          };
+          "application/json": components["schemas"]["WeekDetailResponse"];
         };
       };
       /** @description Invalid weekStart */
@@ -2618,9 +3078,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
       /** @description Internal server error */
@@ -2629,9 +3087,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2654,22 +3110,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            events: {
-              id: number;
-              /** @enum {string} */
-              eventType: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
-              bodyLocation: string | null;
-              description: string;
-              startTime: string;
-              lastOccurrence: string;
-              /** @enum {string} */
-              status: "active" | "resolved";
-              resolvedAt: string | null;
-              createdAt: string;
-              updatedAt: string;
-            }[];
-          };
+          "application/json": components["schemas"]["EventListResponse"];
         };
       };
       /** @description Internal server error */
@@ -2678,9 +3119,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2714,20 +3153,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            id: number;
-            /** @enum {string} */
-            eventType: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
-            bodyLocation: string | null;
-            description: string;
-            startTime: string;
-            lastOccurrence: string;
-            /** @enum {string} */
-            status: "active" | "resolved";
-            resolvedAt: string | null;
-            createdAt: string;
-            updatedAt: string;
-          };
+          "application/json": components["schemas"]["EventListItem"];
         };
       };
       /** @description Activity not found or unauthorized */
@@ -2736,9 +3162,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
       /** @description Internal server error */
@@ -2747,9 +3171,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2773,10 +3195,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            unlinked: boolean;
-            deleted: boolean;
-          };
+          "application/json": components["schemas"]["DeleteEventResponse"];
         };
       };
       /** @description Event not found or unauthorized */
@@ -2785,9 +3204,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
       /** @description Internal server error */
@@ -2796,9 +3213,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2831,20 +3246,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            id: number;
-            /** @enum {string} */
-            eventType: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
-            bodyLocation: string | null;
-            description: string;
-            startTime: string;
-            lastOccurrence: string;
-            /** @enum {string} */
-            status: "active" | "resolved";
-            resolvedAt: string | null;
-            createdAt: string;
-            updatedAt: string;
-          };
+          "application/json": components["schemas"]["EventListItem"];
         };
       };
       /** @description Bad request */
@@ -2853,9 +3255,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
       /** @description Event not found or unauthorized */
@@ -2864,9 +3264,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
       /** @description Internal server error */
@@ -2875,9 +3273,49 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  patchApiAdminUsersByIdRole: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          /** @enum {string} */
+          role: "guest" | "premium" | "admin";
+        };
+      };
+    };
+    responses: {
+      /** @description Updated user role */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
           "application/json": {
-            error: string;
+            id: string;
+            /** @enum {string} */
+            role: "guest" | "premium" | "admin";
           };
+        };
+      };
+      /** @description User not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2897,21 +3335,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            id: string;
-            clerkId: string;
-            stravaId: string | null;
-            /** @enum {string|null} */
-            role: "guest" | "premium" | "admin" | null;
-            maxHeartRate: number | null;
-            processHeartRate: boolean;
-            privacyPolicyAcceptedAt: string | null;
-            privacyPolicyVersion: string | null;
-            currentPrivacyPolicyVersion: string;
-            termsOfServiceAcceptedAt: string | null;
-            termsOfServiceVersion: string | null;
-            currentTermsOfServiceVersion: string;
-          };
+          "application/json": components["schemas"]["User"];
         };
       };
       /** @description User not found */
@@ -2920,9 +3344,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2949,21 +3371,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            id: string;
-            clerkId: string;
-            stravaId: string | null;
-            /** @enum {string|null} */
-            role: "guest" | "premium" | "admin" | null;
-            maxHeartRate: number | null;
-            processHeartRate: boolean;
-            privacyPolicyAcceptedAt: string | null;
-            privacyPolicyVersion: string | null;
-            currentPrivacyPolicyVersion: string;
-            termsOfServiceAcceptedAt: string | null;
-            termsOfServiceVersion: string | null;
-            currentTermsOfServiceVersion: string;
-          };
+          "application/json": components["schemas"]["User"];
         };
       };
       /** @description Invalid body */
@@ -2972,9 +3380,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            error: string;
-          };
+          "application/json": components["schemas"]["Error"];
         };
       };
     };
@@ -2994,21 +3400,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            id: string;
-            clerkId: string;
-            stravaId: string | null;
-            /** @enum {string|null} */
-            role: "guest" | "premium" | "admin" | null;
-            maxHeartRate: number | null;
-            processHeartRate: boolean;
-            privacyPolicyAcceptedAt: string | null;
-            privacyPolicyVersion: string | null;
-            currentPrivacyPolicyVersion: string;
-            termsOfServiceAcceptedAt: string | null;
-            termsOfServiceVersion: string | null;
-            currentTermsOfServiceVersion: string;
-          };
+          "application/json": components["schemas"]["User"];
         };
       };
     };
@@ -3028,21 +3420,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            id: string;
-            clerkId: string;
-            stravaId: string | null;
-            /** @enum {string|null} */
-            role: "guest" | "premium" | "admin" | null;
-            maxHeartRate: number | null;
-            processHeartRate: boolean;
-            privacyPolicyAcceptedAt: string | null;
-            privacyPolicyVersion: string | null;
-            currentPrivacyPolicyVersion: string;
-            termsOfServiceAcceptedAt: string | null;
-            termsOfServiceVersion: string | null;
-            currentTermsOfServiceVersion: string;
-          };
+          "application/json": components["schemas"]["User"];
         };
       };
     };
@@ -3062,10 +3440,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            success: boolean;
-            message: string;
-          };
+          "application/json": components["schemas"]["DeleteAccountResponse"];
         };
       };
     };
@@ -3090,6 +3465,101 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+    };
+  };
+  postApiChat: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CoachChatRequest"];
+      };
+    };
+    responses: {
+      /** @description SSE stream of status/token/done events. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "text/event-stream": string;
+        };
+      };
+      /** @description Bad request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Forbidden (not a premium user / Strava not linked) */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  getApiChatConversations: {
+    parameters: {
+      query?: {
+        page?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Conversations page */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatConversationList"];
+        };
+      };
+    };
+  };
+  getApiChatConversationsById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Conversation transcript */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatConversationDetail"];
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
       };
     };
   };

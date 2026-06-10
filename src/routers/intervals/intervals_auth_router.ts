@@ -80,9 +80,6 @@ intervalsAuthRouter.post("/exchange", validator("json", ExchangeBodySchema), asy
         athlete_id: athlete.id,
       },
     },
-    publicMetadata: {
-      intervals_connected: true,
-    },
   });
 
   await c.env.db
@@ -109,17 +106,8 @@ intervalsAuthRouter.post("/disconnect", async (c) => {
   });
 });
 
-intervalsAuthRouter.get("/status", async (c) => {
-  const clerkUserId = c.get("clerkUserId");
-  const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
-  const user = await clerkClient.users.getUser(clerkUserId);
-  const tokens = (user.privateMetadata as { intervals?: { access_token?: string } }).intervals;
-  const connected = !!tokens?.access_token;
-  if (!connected && user.publicMetadata.intervals_connected === true) {
-    await clerkClient.users.updateUserMetadata(clerkUserId, {
-      publicMetadata: { intervals_connected: false },
-    });
-  }
+intervalsAuthRouter.get("/status", (c) => {
+  const connected = c.var.user.intervalsAthleteId != null;
   return c.json({ connected });
 });
 

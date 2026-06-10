@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { SegmentBoundary } from "../agent/graph_state";
 import type { workoutSet } from "../agent/initial_analysis_agent";
 import { invokeParseIntervalsAgent } from "../agent/parse_intervals_agent";
 import { AppError } from "../error";
@@ -51,6 +52,7 @@ export interface ResumeAnalysisInput {
   sets?: ExpandedIntervalSet[];
   trainingType?: TrainingType | null;
   feeling?: number | null;
+  editedSegments?: SegmentBoundary[];
 }
 
 export async function resumeActivityAnalysis(
@@ -59,7 +61,7 @@ export async function resumeActivityAnalysis(
   input: ResumeAnalysisInput,
   logger: Logger,
 ): Promise<{ success: true }> {
-  const { activityId, notes, sets, trainingType, feeling } = input;
+  const { activityId, notes, sets, trainingType, feeling, editedSegments } = input;
   logger.info(
     {
       activityId,
@@ -68,6 +70,7 @@ export async function resumeActivityAnalysis(
       notesLen: notes?.length ?? 0,
       trainingType,
       feeling,
+      editedSegments: editedSegments?.length ?? 0,
     },
     "resume-analysis payload",
   );
@@ -83,6 +86,7 @@ export async function resumeActivityAnalysis(
       sets ?? [],
       trainingType ?? null,
       feeling ?? null,
+      editedSegments ?? [],
     );
   } catch (err) {
     if (err instanceof ResumeValidationError) {

@@ -10,6 +10,7 @@
 // tokens. So routes protected by those middlewares just work.
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
@@ -57,6 +58,12 @@ const testAuthGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
   c.set("userId", identity.userId);
   c.set("clerkUserId", identity.clerkUserId);
   c.set("role", identity.role);
+  const dbUser = await c.env.db.query.users.findFirst({
+    where: eq(schema.users.id, identity.userId),
+  });
+  if (dbUser) {
+    c.set("user", dbUser);
+  }
   c.set("logger", logger);
   c.set("requestId", "test-req");
   await next();
@@ -73,15 +80,6 @@ export function buildTestApp(pool: Pool) {
   const app = new Hono<TGlobalEnv>();
 
   app.use("*", testLoggerMiddleware);
-  app.use("/api/*", async (c, next) => {
-    // app.fetch(req) called without a second-arg env leaves c.env undefined.
-    // Routers expect c.env.db to be writable, so make sure we have an object.
-    if (!c.env || typeof c.env !== "object") {
-      (c as { env: Record<string, unknown> }).env = {};
-    }
-    (c.env as { db: typeof db }).db = db;
-    await next();
-  });
 
   app.route("/api", publicRouter);
 
@@ -125,5 +123,7 @@ export function buildTestApp(pool: Pool) {
     return c.json({ error: "Internal Server Error" }, 500);
   });
 
-  return app;
+  return {
+    fetch: (request: Request) => app.fetch(request, { db }),
+  };
 }

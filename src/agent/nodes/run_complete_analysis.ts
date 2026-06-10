@@ -3,19 +3,11 @@ import { eq } from "drizzle-orm";
 import { logger } from "../../logger";
 import { activities } from "../../schema";
 import { INTERVAL_TRAINING_TYPES } from "../../schema/enums";
-import {
-  buildSegmentsFromLaps,
-  structureShapeMatches,
-} from "../../services/lap_derivation_service";
-import {
-  calculateSegmentStats,
-  needCompleteAnalysis,
-  parsePaceStringToMetersPerSecond,
-} from "../../services/utils";
+import { mapBoundariesToSegments, toBoundaries } from "../../services/segment_mapping_service";
+import { needCompleteAnalysis } from "../../services/utils";
 import type { StreamSet } from "../../types/strava/IStream";
-import { invokeCompleteActivityAnalysisAgent } from "../full_analysis_agent";
-import type { AnalysisState, GraphConfigurable } from "../graph_state";
-import { invokeWithRateLimitRetry } from "../model";
+import type { AnalysisState, GraphConfigurable, SegmentBoundary } from "../graph_state";
+import { produceSegments } from "../segment_production";
 
 export async function runCompleteAnalysis(
   state: AnalysisState,
@@ -30,7 +22,7 @@ export async function runCompleteAnalysis(
   }
 
   if (!needCompleteAnalysis(trainingType)) {
-    log.info({ trainingType }, "trainingType skips LLM segment breakdown");
+    log.info({ trainingType }, "trainingType skips segment breakdown");
     return { computedSegments: [] };
   }
 
@@ -46,18 +38,7 @@ export async function runCompleteAnalysis(
     );
   }
 
-  if (!state.streams) {
-    throw new Error(
-      `[runCompleteAnalysis activity=${state.activityId}] called without streams in state`,
-    );
-  }
-
-  await db
-    .update(activities)
-    .set({ analysisStatus: "ongoing_completed" })
-    .where(eq(activities.id, state.activityId));
-
-  if (!state.streams.time || !state.streams.distance) {
+  if (!state.streams?.time || !state.streams?.distance) {
     throw new Error(
       `[runCompleteAnalysis activity=${state.activityId}] streams missing time or distance — cannot compute segment stats`,
     );
@@ -65,73 +46,45 @@ export async function runCompleteAnalysis(
   const statsStreams = state.streams as Required<Pick<StreamSet, "time" | "distance">> &
     Pick<StreamSet, "heartrate">;
 
-  const shapeUnchanged = structureShapeMatches(state.initialResult?.structure, state.userSets);
-  if (shapeUnchanged && !state.isIndoor && state.laps.length > 0) {
-    log.info("structure unchanged + outdoor — attempting lap-derived segments");
-    const fromLaps = buildSegmentsFromLaps(
-      state.activityId,
-      state.laps,
-      state.userSets,
+  await db
+    .update(activities)
+    .set({ analysisStatus: "ongoing_completed" })
+    .where(eq(activities.id, state.activityId));
+
+  const boundaries: SegmentBoundary[] = state.userEditedSegments.length
+    ? state.userEditedSegments
+    : toBoundaries(state.proposedSegments);
+
+  if (boundaries.length === 0) {
+    log.warn("no edited or proposed segments — falling back to inline produceSegments (legacy)");
+    const fallback = await produceSegments({
+      activityId: state.activityId,
       statsStreams,
-      `[runCompleteAnalysis activity=${state.activityId}]`,
-    );
-    if (fromLaps) {
-      log.info(
-        { segments: fromLaps.length },
-        "lap-derived segments — skipping LLM and segment persistence",
-      );
-      return { computedSegments: fromLaps, segmentsFromLaps: true };
-    }
-    log.info("lap-derivation failed — falling back to LLM");
-  } else {
-    log.info(
-      { shapeUnchanged, indoor: state.isIndoor, laps: state.laps.length },
-      "skipping lap-derived path",
-    );
+      streams: state.streams,
+      laps: state.laps,
+      isIndoor: state.isIndoor,
+      userSets: state.userSets,
+      initialResult: state.initialResult,
+      userNotes: state.userNotes,
+      trainingType,
+      log,
+      tag: `[runCompleteAnalysis activity=${state.activityId}]`,
+    });
+    log.info({ computedSegments: fallback.length }, "computed segments (legacy fallback)");
+    return { computedSegments: fallback };
   }
 
-  log.info("invoking complete analysis LLM");
-  const segmentPlan = await invokeWithRateLimitRetry(() =>
-    invokeCompleteActivityAnalysisAgent(
-      state.streams as NonNullable<typeof state.streams>,
-      state.userNotes,
-      trainingType,
-      state.laps,
-      state.initialResult,
-      state.userSets,
-    ),
+  const computedSegments = mapBoundariesToSegments(
+    statsStreams,
+    boundaries,
+    state.userSets,
+    state.activityId,
+    `[runCompleteAnalysis activity=${state.activityId}]`,
   );
 
-  if (!segmentPlan) {
-    throw new Error("Complete analysis agent returned null");
-  }
-  log.info({ rawSegments: segmentPlan.segments.length }, "LLM returned segments");
-
-  let segmentIndexCounter = 0;
-  let droppedByStats = 0;
-  const computedSegments = segmentPlan.segments
-    .map((seg) => {
-      const stats = calculateSegmentStats(statsStreams, seg.start_time, seg.end_time);
-      if (!stats) {
-        droppedByStats += 1;
-        return null;
-      }
-      return {
-        activityId: state.activityId,
-        segmentIndex: segmentIndexCounter++,
-        setGroupIndex: seg.set_group_index ?? 0,
-        type: seg.type,
-        targetType: seg.target_type,
-        targetValue: seg.target_value,
-        targetPace: parsePaceStringToMetersPerSecond(seg.target_pace_string ?? ""),
-        timeSeriesEndTime: stats.timeSeriesEndTime,
-        actualDistance: stats.actualDistance,
-        actualDuration: stats.actualDuration,
-        avgHeartRate: stats.avgHeartRate,
-      };
-    })
-    .filter((s): s is NonNullable<typeof s> => s !== null);
-
-  log.info({ computedSegments: computedSegments.length, droppedByStats }, "computed segments");
+  log.info(
+    { computedSegments: computedSegments.length, fromEdits: state.userEditedSegments.length > 0 },
+    "computed segments (deterministic mapping)",
+  );
   return { computedSegments };
 }

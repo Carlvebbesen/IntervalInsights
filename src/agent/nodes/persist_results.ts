@@ -1,7 +1,6 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { logger } from "../../logger";
 import * as activityRepo from "../../repositories/activity_repository";
-import type { DraftAnalysisResult } from "../../schema/activities";
 import { computeActivityHrStats, computeWorkHrStats } from "../../services/hr_stats_service";
 import {
   completeWithoutSegments,
@@ -52,21 +51,6 @@ export async function persistResults(
     return {};
   }
 
-  let draftOverride: DraftAnalysisResult | null = null;
-  if (state.segmentsFromLaps && state.initialResult) {
-    draftOverride = {
-      ...state.initialResult,
-      acceptedSets: state.userSets,
-      segmentsFromLaps: true,
-    };
-    log.info(
-      { acceptedSets: state.userSets.length },
-      "preparing draftOverride: segmentsFromLaps=true (segments will NOT be persisted)",
-    );
-  } else {
-    log.info("normal LLM path: persisting segments to DB, draftAnalysisResult will be nulled");
-  }
-
   await persistSegmentsAndStructure(db, {
     activityId: state.activityId,
     userId: state.userId,
@@ -75,17 +59,10 @@ export async function persistResults(
     check: state.signatureCheck,
     userNotes: state.userNotes,
     feeling: state.feeling,
-    persistSegments: !state.segmentsFromLaps,
-    draftOverride,
+    persistSegments: true,
+    draftOverride: null,
   });
   await persistHrStats(db, state);
-  log.info(
-    {
-      segments: state.computedSegments.length,
-      segmentsFromLaps: state.segmentsFromLaps,
-      action: state.segmentsFromLaps ? "skipped" : "wrote",
-    },
-    "persisted segments, status=completed",
-  );
+  log.info({ segments: state.computedSegments.length }, "persisted segments, status=completed");
   return {};
 }

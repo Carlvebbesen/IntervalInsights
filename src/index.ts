@@ -6,14 +6,13 @@ import { httpInstrumentationMiddleware } from "@hono/otel";
 import { structuredLogger } from "@hono/structured-logger";
 import { swaggerUI } from "@hono/swagger-ui";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
-import { drizzle } from "drizzle-orm/node-postgres";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { requestId } from "hono/request-id";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { openAPIRouteHandler } from "hono-openapi";
-import { Pool } from "pg";
 import { config } from "./config";
+import { db } from "./db";
 import { AppError, IntervalsError, StravaError } from "./error";
 import { logger } from "./logger";
 import { authGuard } from "./middlewares/auth_middleware";
@@ -25,14 +24,12 @@ import eventsRouter from "./routers/events_router";
 import heartRateRouter from "./routers/heart_rate_router";
 import intervalStructureRouter from "./routers/interval_structure_router";
 import intervalsEntryRouter from "./routers/intervals/intervals_entry_router";
+import mcpRouter from "./routers/mcp_router";
 import publicRouter from "./routers/public_router";
 import stravaEntryRouter from "./routers/strava/strava_entry_router";
+import trainingRouter from "./routers/training_router";
 import userRouter from "./routers/user_router";
-import * as schema from "./schema";
 import type { TGlobalEnv } from "./types/IRouters";
-
-const pool = new Pool({ connectionString: config.DATABASE_URL });
-const db = drizzle({ client: pool, schema });
 
 const app = new Hono<TGlobalEnv>();
 
@@ -91,6 +88,7 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 app.route("/api", publicRouter);
+app.route("/", mcpRouter);
 if (process.env.NODE_ENV !== "production") {
   app.get(
     "/api/openapi.json",
@@ -124,6 +122,7 @@ app.route("/api/events", eventsRouter);
 app.route("/api/admin", adminRouter);
 app.route("/api/user", userRouter);
 app.route("/api/intervals", intervalsEntryRouter);
+app.route("/api/chat", trainingRouter);
 
 // 404 handler
 app.notFound((c) => {
@@ -162,6 +161,11 @@ app.onError((err, c) => {
       { error: "Intervals.icu API Error", details: err.details },
       err.status as ContentfulStatusCode,
     );
+  }
+  if ("clerkError" in err && err.clerkError === true) {
+    c.var.logger.error({ err }, "Clerk API error");
+    const status = "status" in err && err.status === 429 ? 429 : 502;
+    return c.json({ error: "Authentication service error" }, status);
   }
   c.var.logger.error({ err }, "Internal Error");
   return c.json({ error: "Internal Server Error" }, 500);

@@ -4,10 +4,13 @@ import { trace } from "@opentelemetry/api";
 import { eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
+import * as userRepo from "../repositories/user_repository";
 import { users } from "../schema";
 import type { IGlobalVariables, TGlobalEnv } from "../types/IRouters";
 
 type AuthIdentity = Pick<IGlobalVariables, "userId" | "clerkUserId" | "role">;
+
+const LAST_SEEN_THROTTLE_MS = 60 * 60 * 1000;
 
 const tagSpanWithUser = ({ userId, clerkUserId, role }: AuthIdentity) => {
   const span = trace.getActiveSpan();
@@ -29,25 +32,6 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
     return c.json({ error: "Unauthorized" }, 401);
   }
 
-  const metadata = auth.sessionClaims?.metadata as
-    | { user_id?: string; role?: "guest" | "premium" | "admin" }
-    | undefined;
-  if (metadata?.user_id && metadata?.role) {
-    const identity: AuthIdentity = {
-      userId: metadata.user_id,
-      clerkUserId: auth.userId,
-      role: metadata.role,
-    };
-    c.set("clerkUserId", identity.clerkUserId);
-    c.set("userId", identity.userId);
-    c.set("role", identity.role);
-    tagSpanWithUser(identity);
-    attachIdentityLogger(c, identity);
-    return next();
-  }
-
-  c.var.logger.info({ clerkUserId: auth.userId }, "Cache miss for user — syncing with DB");
-
   let dbUser = await c.env.db.query.users.findFirst({
     where: eq(users.clerkId, auth.userId),
   });
@@ -55,24 +39,22 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
   if (!dbUser) {
     const [newUser] = await c.env.db
       .insert(users)
-      .values({
-        clerkId: auth.userId,
-      })
+      .values({ clerkId: auth.userId, lastSeenAt: new Date() })
       .returning();
-
     dbUser = newUser;
     c.var.logger.info({ clerkUserId: auth.userId }, "Created new user record");
-  }
-
-  try {
-    await clerkClient.users.updateUserMetadata(auth.userId, {
-      publicMetadata: {
-        user_id: dbUser.id,
-        role: dbUser.role,
-      },
-    });
-  } catch (err) {
-    c.var.logger.error({ err }, "Failed to sync Clerk metadata");
+    clerkClient.users
+      .updateUserMetadata(auth.userId, {
+        publicMetadata: { role: newUser.role ?? "guest" },
+      })
+      .catch((err) => {
+        c.var.logger.error({ err, clerkUserId: auth.userId }, "Failed to sync Clerk metadata");
+      });
+  } else if (
+    !dbUser.lastSeenAt ||
+    Date.now() - dbUser.lastSeenAt.getTime() > LAST_SEEN_THROTTLE_MS
+  ) {
+    dbUser = (await userRepo.updateById(c.env.db, dbUser.id, { lastSeenAt: new Date() })) ?? dbUser;
   }
 
   const role = dbUser.role ?? "guest";
@@ -80,6 +62,7 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
   c.set("clerkUserId", identity.clerkUserId);
   c.set("userId", identity.userId);
   c.set("role", identity.role);
+  c.set("user", dbUser);
   tagSpanWithUser(identity);
   attachIdentityLogger(c, identity);
 

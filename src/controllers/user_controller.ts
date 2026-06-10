@@ -89,8 +89,6 @@ export async function deleteAccount(
     privateMetadata: { strava: null, intervals: null },
     publicMetadata: {
       strava_connected: false,
-      intervals_connected: false,
-      user_id: null,
       role: null,
     },
   });

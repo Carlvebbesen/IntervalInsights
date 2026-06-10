@@ -7,6 +7,7 @@ import { detectEvents } from "./nodes/detect_events";
 import { maybeEnrichWithIntervalsIcu } from "./nodes/enrich_intervals_icu";
 import { fetchActivityContext } from "./nodes/fetch_activity_context";
 import { persistResults } from "./nodes/persist_results";
+import { proposeSegments } from "./nodes/propose_segments";
 import { runCompleteAnalysis } from "./nodes/run_complete_analysis";
 import { runInitialAgent } from "./nodes/run_initial_agent";
 import { validateSignature } from "./nodes/validate_signature";
@@ -39,6 +40,7 @@ const workflow = new StateGraph(AnalysisStateAnnotation)
   .addNode("fetchActivityContext", fetchActivityContext)
   .addNode("maybeEnrichWithIntervalsIcu", maybeEnrichWithIntervalsIcu)
   .addNode("runInitialAgent", runInitialAgent)
+  .addNode("proposeSegments", proposeSegments)
   .addNode("awaitUserInput", awaitUserInput)
   .addNode("runCompleteAnalysis", runCompleteAnalysis)
   .addNode("validateSignature", validateSignature)
@@ -47,7 +49,8 @@ const workflow = new StateGraph(AnalysisStateAnnotation)
   .addEdge(START, "fetchActivityContext")
   .addEdge("fetchActivityContext", "maybeEnrichWithIntervalsIcu")
   .addEdge("maybeEnrichWithIntervalsIcu", "runInitialAgent")
-  .addEdge("runInitialAgent", "awaitUserInput")
+  .addEdge("runInitialAgent", "proposeSegments")
+  .addEdge("proposeSegments", "awaitUserInput")
   .addEdge("awaitUserInput", "runCompleteAnalysis")
   .addEdge("runCompleteAnalysis", "validateSignature")
   .addEdge("validateSignature", "persistResults")

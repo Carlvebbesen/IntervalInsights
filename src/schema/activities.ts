@@ -15,7 +15,13 @@ import {
 import type { WorkoutAnalysisOutput } from "../agent/initial_analysis_agent";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
-import { analysisStatusEnum, type TrainingType, trainingTypeEnum } from "./enums";
+import {
+  analysisStatusEnum,
+  type TargetTypeEnum,
+  type TrainingType,
+  trainingTypeEnum,
+  type WorkoutPartType,
+} from "./enums";
 import { activityEvents } from "./events";
 import { intervalSegments } from "./interval_segments";
 import { intervalStructures } from "./interval_structure";
@@ -27,11 +33,25 @@ export type IntervalsIcuPrediction = {
   intervals?: IIntervalsInterval[];
 };
 
+export type ProposedSegmentDraft = {
+  segmentIndex: number;
+  setGroupIndex: number;
+  type: WorkoutPartType;
+  timeSeriesEndTime: number;
+  actualDistance?: number;
+  actualDuration?: number;
+  avgHeartRate?: number | null;
+  targetType?: TargetTypeEnum;
+  targetValue?: number;
+  targetPace?: number | null;
+};
+
 export type DraftAnalysisResult = WorkoutAnalysisOutput & {
   lapsMatchStructure?: boolean;
   intervalsIcuPrediction?: IntervalsIcuPrediction | null;
   acceptedSets?: ExpandedIntervalSet[];
   segmentsFromLaps?: boolean;
+  proposedSegments?: ProposedSegmentDraft[];
 };
 
 export const activities = pgTable(

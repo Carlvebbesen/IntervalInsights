@@ -1,5 +1,6 @@
 import {
   and,
+  asc,
   count,
   desc,
   eq,
@@ -64,6 +65,9 @@ export interface ActivityListFilters {
   page: number;
   search?: string;
   distance?: number;
+  maxDistance?: number;
+  sortBy?: "date" | "distance" | "load";
+  order?: "asc" | "desc";
   trainingType?: TrainingType[];
   intervalStructureId?: number;
   sportTypes?: string[];
@@ -97,6 +101,7 @@ export async function listForUser(
   }
   if (f.trainingType?.length) filters.push(inArray(activities.trainingType, f.trainingType));
   if (f.distance) filters.push(gte(activities.distance, f.distance));
+  if (f.maxDistance) filters.push(lte(activities.distance, f.maxDistance));
   if (f.intervalStructureId)
     filters.push(eq(activities.intervalStructureId, f.intervalStructureId));
   if (f.sportTypes?.length) filters.push(inArray(activities.sportType, f.sportTypes));
@@ -127,13 +132,21 @@ export async function listForUser(
     filters.push(inArray(activities.id, linkedActivityIds));
   }
 
+  const dir = f.order === "asc" ? asc : desc;
+  const sortCol =
+    f.sortBy === "distance"
+      ? activities.distance
+      : f.sortBy === "load"
+        ? sql`COALESCE(${activities.trainingLoad}, ${activities.icuTrainingLoad})`
+        : activities.startDateLocal;
+
   return db
     .select(listColumns)
     .from(activities)
     .where(and(...filters))
     .limit(PAGE_SIZE)
     .offset((f.page - 1) * PAGE_SIZE)
-    .orderBy(desc(activities.startDateLocal));
+    .orderBy(dir(sortCol));
 }
 
 /** Columns the heart-rate analysis endpoint reads per matching activity. */

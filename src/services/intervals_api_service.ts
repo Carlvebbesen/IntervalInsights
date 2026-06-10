@@ -1,6 +1,10 @@
 import { IntervalsError } from "../error";
 import { tracedFetch } from "../otel";
-import type { IIntervalsActivity, IIntervalsAthlete } from "../types/intervals/IIntervalsActivity";
+import type {
+  IIntervalsActivity,
+  IIntervalsAthlete,
+  IIntervalsPowerCurve,
+} from "../types/intervals/IIntervalsActivity";
 import type { IIntervalsWellness } from "../types/intervals/IIntervalsWellness";
 
 const INTERVALS_BASE_URL = "https://intervals.icu/api/v1";
@@ -9,12 +13,16 @@ const INTERVALS_FETCH_TIMEOUT_MS = 8000;
 async function fetchIntervals<T>(
   endpoint: string,
   accessToken: string,
-  params?: Record<string, string>,
+  params?: Record<string, string | string[]>,
 ): Promise<T> {
   const url = new URL(`${INTERVALS_BASE_URL}${endpoint}`);
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
-      if (value) url.searchParams.append(key, value);
+      // intervals.icu accepts repeated query params (e.g. `curves`); an array
+      // value is appended once per element, a string once.
+      for (const v of Array.isArray(value) ? value : [value]) {
+        if (v) url.searchParams.append(key, v);
+      }
     });
   }
 
@@ -78,6 +86,16 @@ export const intervalsApiService = {
     return fetchIntervals<IIntervalsWellness[]>("/athlete/0/wellness", accessToken, {
       oldest,
       newest,
+    });
+  },
+
+  // Best-effort curves (power for cycling, pace/running-power where available)
+  // for the requested `curves` codes (e.g. `s0` = this season, `r.<from>.<to>`
+  // = a custom date range) and activity `type`.
+  async getPowerCurves(accessToken: string, curves: string[], type: string) {
+    return fetchIntervals<IIntervalsPowerCurve[]>("/athlete/0/power-curves", accessToken, {
+      curves,
+      type,
     });
   },
 };

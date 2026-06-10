@@ -1,3 +1,4 @@
+import { asc, eq } from "drizzle-orm";
 import type { z } from "zod";
 import { runInBackground } from "../background";
 import {
@@ -11,13 +12,26 @@ import { AppError } from "../error";
 import type { Logger } from "../logger";
 import * as activityRepo from "../repositories/activity_repository";
 import * as eventRepo from "../repositories/event_repository";
-import type { InsertActivity, TrainingType } from "../schema";
-import type { ActivityListResponseSchema } from "../schemas/api_schemas";
+import type {
+  InsertActivity,
+  InsertIntervalSegment,
+  SelectIntervalSegment,
+  TrainingType,
+} from "../schema";
+import { intervalSegments } from "../schema";
+import type { ActivityListResponseSchema, PatchSegmentSchema } from "../schemas/api_schemas";
 import { userHasHeartRateConsent } from "../services/heart_rate_consent_service";
 import { enrichActivityFromIntervalsIcu } from "../services/intervals_link_service";
 import { getSegmentsForActivity } from "../services/lap_derivation_service";
+import {
+  type FullSegmentSpec,
+  recomputeSegmentStats,
+  SegmentMappingError,
+} from "../services/segment_mapping_service";
+import { findMatchingStructure, persistSegmentsAndStructure } from "../services/signature_service";
 import { stravaApiService } from "../services/strava_api_service";
 import type { IGlobalBindings } from "../types/IRouters";
+import type { StreamSet } from "../types/strava/IStream";
 
 type Db = IGlobalBindings["db"];
 
@@ -81,6 +95,125 @@ export async function getActivityDetail(
 export async function getSegments(db: Db, clerkId: string, activityId: number) {
   const segments = await getSegmentsForActivity(db, clerkId, activityId);
   return { intervalSegments: segments };
+}
+
+type OwnedActivity = NonNullable<Awaited<ReturnType<typeof activityRepo.findByIdForUser>>>;
+
+async function applySegmentEdit(
+  db: Db,
+  userId: string,
+  accessToken: string,
+  activity: OwnedActivity,
+  specs: FullSegmentSpec[],
+): Promise<{ intervalSegments: SelectIntervalSegment[] }> {
+  if (!activity.trainingType) {
+    throw new AppError(400, "Activity has no training type — cannot edit segments");
+  }
+  const tag = `[applySegmentEdit activity=${activity.id}]`;
+
+  const consent = await userHasHeartRateConsent(db, userId);
+  const keys = consent
+    ? (["time", "distance", "heartrate"] as const)
+    : (["time", "distance"] as const);
+  const streams = await stravaApiService.getActivityStreams(
+    accessToken,
+    activity.stravaActivityId,
+    [...keys],
+  );
+  if (!streams?.time || !streams?.distance) {
+    throw new AppError(400, "Activity streams missing time/distance — cannot recompute stats");
+  }
+  const statsStreams = streams as Required<Pick<StreamSet, "time" | "distance">> &
+    Pick<StreamSet, "heartrate">;
+
+  let computed: InsertIntervalSegment[];
+  try {
+    computed = recomputeSegmentStats(statsStreams, specs, activity.id, tag);
+  } catch (err) {
+    if (err instanceof SegmentMappingError) {
+      throw new AppError(400, err.message);
+    }
+    throw err;
+  }
+
+  const check = await findMatchingStructure(db, computed, activity.trainingType, userId);
+  await persistSegmentsAndStructure(db, {
+    activityId: activity.id,
+    userId,
+    trainingType: activity.trainingType,
+    segments: computed,
+    check,
+    userNotes: activity.notes ?? "",
+    feeling: activity.feeling ?? null,
+    persistSegments: true,
+    draftOverride: null,
+  });
+
+  return { intervalSegments: await loadStoredSegments(db, activity.id) };
+}
+
+function loadStoredSegments(db: Db, activityId: number) {
+  return db
+    .select()
+    .from(intervalSegments)
+    .where(eq(intervalSegments.activityId, activityId))
+    .orderBy(asc(intervalSegments.segmentIndex));
+}
+
+export async function editSegments(
+  db: Db,
+  userId: string,
+  accessToken: string,
+  activityId: number,
+  specs: FullSegmentSpec[],
+) {
+  const activity = await activityRepo.findByIdForUser(db, userId, activityId);
+  if (!activity) {
+    throw new AppError(404, "Activity not found");
+  }
+  return applySegmentEdit(db, userId, accessToken, activity, specs);
+}
+
+export async function editSingleSegment(
+  db: Db,
+  userId: string,
+  accessToken: string,
+  activityId: number,
+  segmentId: number,
+  patch: z.infer<typeof PatchSegmentSchema>,
+) {
+  const activity = await activityRepo.findByIdForUser(db, userId, activityId);
+  if (!activity) {
+    throw new AppError(404, "Activity not found");
+  }
+
+  const existing = await loadStoredSegments(db, activityId);
+  if (!existing.some((s) => s.id === segmentId)) {
+    throw new AppError(404, "Segment not found for this activity");
+  }
+
+  const specs: FullSegmentSpec[] = existing.map((s) => {
+    if (s.id !== segmentId) {
+      return {
+        type: s.type,
+        setGroupIndex: s.setGroupIndex,
+        targetType: s.targetType,
+        targetValue: s.targetValue,
+        targetPace: s.targetPace,
+        timeSeriesEndTime: s.timeSeriesEndTime,
+      };
+    }
+    return {
+      type: patch.type ?? s.type,
+      setGroupIndex: patch.setGroupIndex ?? s.setGroupIndex,
+      targetType: patch.targetType ?? s.targetType,
+      targetValue: patch.targetValue ?? s.targetValue,
+      targetPace: patch.targetPace !== undefined ? patch.targetPace : s.targetPace,
+      timeSeriesEndTime: patch.timeSeriesEndTime ?? s.timeSeriesEndTime,
+    };
+  });
+
+  return applySegmentEdit(db, userId, accessToken, activity, specs);
 }
 
 export interface UpdateActivityInput {
@@ -187,4 +320,36 @@ export async function getHeartrateStream(
     "time",
     "distance",
   ]);
+}
+
+export async function getDraftSegments(
+  db: Db,
+  userId: string,
+  accessToken: string,
+  activityId: number,
+) {
+  const activity = await activityRepo.findByIdForUser(db, userId, activityId);
+  if (!activity) {
+    throw new AppError(404, "Activity not found");
+  }
+
+  const proposedSegments = activity.draftAnalysisResult?.proposedSegments ?? [];
+  const consent = await userHasHeartRateConsent(db, userId);
+
+  const keys = ["time", "velocity_smooth", "distance"] as const;
+  const streamKeys = consent ? ([...keys, "heartrate"] as const) : keys;
+  const streams = await stravaApiService.getActivityStreams(
+    accessToken,
+    activity.stravaActivityId,
+    [...streamKeys],
+  );
+
+  return {
+    proposedSegments,
+    streams: {
+      time: streams?.time?.data ?? [],
+      heartrate: consent ? (streams?.heartrate?.data ?? null) : null,
+      velocity: streams?.velocity_smooth?.data ?? [],
+    },
+  };
 }

@@ -66,6 +66,19 @@ export interface IIntervalsSportSettings {
   max_hr: number | null;
 }
 
+// Matches intervals.icu's `/athlete/{id}/power-curves` response. The payload
+// shape varies by sport and whether power is available; only the fields we
+// read are typed. `secs[i]` is the duration of `values[i]` (the best value
+// sustained for that duration — watts, or pace in m/s for runners without power).
+export interface IIntervalsPowerCurve {
+  type: string;
+  secs: number[];
+  values: (number | null)[] | null;
+  // Some payloads label the value array differently per sport; kept optional
+  // so the service layer can fall back without breaking.
+  watts?: (number | null)[] | null;
+}
+
 export interface IIntervalsAthlete {
   id: string;
   name: string | null;

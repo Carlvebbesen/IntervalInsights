@@ -2,7 +2,7 @@ import { interrupt } from "@langchain/langgraph";
 import { z } from "zod";
 import { logger } from "../../logger";
 import { trainingTypeEnum } from "../../schema/enums";
-import { ExpandedIntervalSetSchema } from "../../schemas/api_schemas";
+import { EditedSegmentSchema, ExpandedIntervalSetSchema } from "../../schemas/api_schemas";
 import { generateCompleteIntervalSet } from "../../services/utils";
 import type { ExpandedIntervalSet } from "../../types/ExpandedIntervalSet";
 import type { AnalysisState } from "../graph_state";
@@ -15,6 +15,7 @@ const resumePayloadSchema = z.object({
   sets: z.array(ExpandedIntervalSetSchema).optional(),
   trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),
   feeling: z.number().nullable().optional(),
+  editedSegments: z.array(EditedSegmentSchema).optional(),
 });
 
 export async function awaitUserInput(state: AnalysisState): Promise<Partial<AnalysisState>> {
@@ -46,6 +47,7 @@ export async function awaitUserInput(state: AnalysisState): Promise<Partial<Anal
       sets: userSets.length,
       trainingType: userInput?.trainingType,
       feeling: userInput?.feeling,
+      editedSegments: userInput.editedSegments?.length ?? 0,
     },
     "resumed",
   );
@@ -54,5 +56,6 @@ export async function awaitUserInput(state: AnalysisState): Promise<Partial<Anal
     userSets,
     confirmedTrainingType: userInput.trainingType ?? null,
     feeling: userInput.feeling ?? null,
+    userEditedSegments: userInput.editedSegments ?? [],
   };
 }

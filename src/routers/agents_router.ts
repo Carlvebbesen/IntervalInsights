@@ -6,6 +6,7 @@ import * as analysisController from "../controllers/analysis_controller";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
 import { trainingTypeEnum } from "../schema/enums";
 import {
+  EditedSegmentSchema,
   ErrorSchema,
   ExpandedIntervalSetSchema,
   PendingActivitySchema,
@@ -81,6 +82,7 @@ const resumeAnalysisSchema = z.object({
   sets: z.array(ExpandedIntervalSetSchema).optional(),
   trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),
   feeling: z.number().int().min(1).max(5).nullable().optional(),
+  editedSegments: z.array(EditedSegmentSchema).optional(),
 });
 
 agentsRouter.post(

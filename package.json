@@ -9,11 +9,14 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
+    "brain:sync": "rm -rf knowledge/brain && mkdir -p knowledge && cp -R ../interval-brain/brain knowledge/brain && rm -rf knowledge/brain/_templates && rm -f knowledge/brain/log.md",
     "types:api": "openapi-typescript http://127.0.0.1:3000/api/openapi.json -o src/types/api.d.ts"
   },
   "dependencies": {
     "@clerk/backend": "^2.29.0",
+    "@clerk/mcp-tools": "^0.5.0",
     "@hono/clerk-auth": "^3.0.3",
+    "@hono/mcp": "^0.3.0",
     "@hono/otel": "^1.1.2",
     "@hono/standard-validator": "^0.2.2",
     "@hono/structured-logger": "^0.1.0",
@@ -23,6 +26,7 @@
     "@langchain/langgraph": "^1.2.6",
     "@langchain/langgraph-checkpoint-postgres": "^1.0.1",
     "@langchain/openai": "^1.4.5",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/api-logs": "^0.217.0",
     "@opentelemetry/auto-instrumentations-node": "^0.75.0",

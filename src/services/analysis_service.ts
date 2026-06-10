@@ -1,6 +1,7 @@
 import { Command } from "@langchain/langgraph";
 import { eq } from "drizzle-orm";
 import { buildAnalysisGraph, resetAnalysisThread } from "../agent/analysis_graph";
+import type { SegmentBoundary } from "../agent/graph_state";
 import { logger } from "../logger";
 import { activities, users } from "../schema";
 import { SKIP_RESTART_STATUSES, SKIP_START_STATUSES, type TrainingType } from "../schema/enums";
@@ -94,9 +95,19 @@ export const resumeAnalysis = async (
   sets: ExpandedIntervalSet[],
   trainingType: TrainingType | null,
   feeling: number | null,
+  editedSegments: SegmentBoundary[] = [],
 ): Promise<void> => {
   const log = logger.child({ fn: "resumeAnalysis", activityId });
-  log.info({ notesLen: notes.length, sets: sets.length, trainingType, feeling }, "starting resume");
+  log.info(
+    {
+      notesLen: notes.length,
+      sets: sets.length,
+      trainingType,
+      feeling,
+      editedSegments: editedSegments.length,
+    },
+    "starting resume",
+  );
 
   const current = await db.query.activities.findFirst({
     where: eq(activities.id, activityId),
@@ -162,7 +173,9 @@ export const resumeAnalysis = async (
     }
 
     await graph.invoke(
-      new Command({ resume: { notes, sets, trainingType: finalTrainingType, feeling } }),
+      new Command({
+        resume: { notes, sets, trainingType: finalTrainingType, feeling, editedSegments },
+      }),
       graphConfig,
     );
     log.info("graph.invoke returned without throwing");

@@ -44,6 +44,14 @@ Routers that need Strava API access must use `TStravaEnv` and apply `stravaMiddl
 - `GET /api/strava/webhook/*` — manage Strava push subscriptions
 - `GET /api/dashboard`, `GET /api/interval-structures` — stats/filter helpers
 - `GET/POST /api/strava/event`, `GET /api/health` — public (no auth)
+- `POST /mcp` — remote MCP server for Claude/ChatGPT; OAuth-token auth, **not** under `/api/*` (see MCP section)
+
+**MCP server** (`src/mcp/`, mounted via `src/routers/mcp_router.ts` at the app root):
+A remote [Model Context Protocol](https://modelcontextprotocol.io) server that lets Claude/ChatGPT connect to an athlete's own training data as read-only tools. It deliberately sits **outside** the `/api/*` Clerk-session chain:
+- **Transport:** `@hono/mcp`'s `StreamableHTTPTransport` (`handleRequest(c)`), stateless — a fresh `McpServer` is built per request. No Node `req/res` bridge needed on Bun.
+- **Auth:** `src/mcp/auth.ts` verifies the Clerk-issued **OAuth access token** (`clerkClient.authenticateRequest(c.req.raw, { acceptsToken: 'oauth_token' })` → `verifyClerkToken`), then maps `clerkUserId` → internal user exactly like `authGuard`. A different token type from `/api/*` (session tokens) — same identity resolution. 401s carry a `WWW-Authenticate` header pointing at the protected-resource metadata.
+- **OAuth discovery:** Clerk is the Authorization Server. Two public routes serve the metadata: `GET /.well-known/oauth-protected-resource/mcp` (RFC 9728) and `GET /.well-known/oauth-authorization-server` (RFC 8414), via `@clerk/mcp-tools/server`. **Dynamic Client Registration must be toggled on** in the Clerk dashboard (OAuth applications) for Claude/ChatGPT to self-register.
+- **Tools:** `src/mcp/server.ts` reuses the coach `registry` (every coach tool is read-only) via `runTool`, gated by `requires` (`db` always; `strava`/`intervals` only when linked). Tools that make their own server-side OpenAI calls (`OPENAI_BACKED_TOOL_NAMES`, currently `parse_workout`) are excluded so external clients can't drive our model spend. The Strava access token is resolved lazily, only when a strava-backed tool is actually called.
 
 **Database (Drizzle + PostgreSQL):** Schema lives in `src/schema/`. Key tables:
 - `activities` — one row per Strava activity, stores `analysisStatus`, `trainingType`, `draftAnalysisResult` (JSON), and Strava metadata
@@ -108,8 +116,12 @@ The SDK only starts when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so local dev is s
 
 ## Environment Variables Required
 
-`DATABASE_URL`, `CLERK_SECRET_KEY`, `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `OPENAI_API_KEY` (for GPT-4o-mini).
+`DATABASE_URL`, `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` (used to derive the Clerk OAuth/FAPI URL for the MCP server), `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `OPENAI_API_KEY` (for GPT-4o-mini).
 
 Optional OTel: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` (default `intervals-backend`), `OTEL_SERVICE_VERSION` / `GIT_SHA`, `OTEL_DEPLOYMENT_ENVIRONMENT`.
 
 LangChain/LangGraph GenAI tracing (sends `gen_ai.*` spans through the existing OTLP pipeline to Grafana's GenAI view): set both `LANGSMITH_OTEL_ENABLED=true` and `LANGSMITH_TRACING=true`. `src/instrumentation.ts` calls `initializeOTEL({ globalTracerProvider })` so LangSmith reuses the NodeSDK tracer provider — no separate exporter is created.
+
+## Development brain
+
+This repo has a shared knowledge base at `~/Development/development-brain` (the IntervalInsights second brain): architecture notes, ADRs, gotchas, recipes, glossary, and agent messages/handoffs. At task start, use the `brain-recall` skill to check what the brain knows; when a session surfaces durable knowledge (non-obvious fix, decided tradeoff, cross-repo contract with the Flutter app), capture it with `brain-capture`. The brain's rules live in its own `CLAUDE.md`/`CONVENTIONS.md`.

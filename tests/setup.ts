@@ -104,6 +104,8 @@ mock.module("../src/services/pace_service.ts", () => ({
 mock.module("../src/services/lap_derivation_service.ts", () => ({
   getSegmentsForActivity: async () => [],
   matchLapsToExpandedSteps: () => [],
+  structureShapeMatches: () => false,
+  buildSegmentsFromLaps: () => null,
 }));
 
 mock.module("../src/agent/parse_intervals_agent.ts", () => ({

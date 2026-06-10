@@ -116,6 +116,57 @@ export function weeklyOtherSince(db: Db, userId: string, otherTypes: string[], s
     .orderBy(sql`DATE_TRUNC('week', ${activities.startDateLocal}) ASC`);
 }
 
+/**
+ * Weekly training-load rollup across the given sports since a date: one row per
+ * ISO week with session count, total load (athlete load, falling back to the
+ * intervals.icu load), distance and moving time. Backs load-ramp analytics.
+ */
+export function trainingLoadByWeek(db: Db, userId: string, sportTypes: string[], since: Date) {
+  return db
+    .select({
+      weekStart: sql<string>`DATE_TRUNC('week', ${activities.startDateLocal})::date`,
+      sessions: count(),
+      totalLoad: sum(sql`COALESCE(${activities.trainingLoad}, ${activities.icuTrainingLoad}, 0)`),
+      totalDistance: sum(activities.distance),
+      totalMovingTime: sum(activities.movingTime),
+    })
+    .from(activities)
+    .where(
+      and(
+        eq(activities.userId, userId),
+        inArray(activities.sportType, sportTypes),
+        gte(activities.startDateLocal, since),
+      ),
+    )
+    .groupBy(sql`DATE_TRUNC('week', ${activities.startDateLocal})`)
+    .orderBy(sql`DATE_TRUNC('week', ${activities.startDateLocal}) ASC`);
+}
+
+/**
+ * Training-type breakdown over a date window: count, distance, load and moving
+ * time per training type. Backs polarization / easy-hard balance analytics.
+ */
+export function trainingTypeDistribution(db: Db, userId: string, from: Date, to: Date) {
+  return db
+    .select({
+      trainingType: activities.trainingType,
+      sessions: count(),
+      totalLoad: sum(sql`COALESCE(${activities.trainingLoad}, ${activities.icuTrainingLoad}, 0)`),
+      totalDistance: sum(activities.distance),
+      totalMovingTime: sum(activities.movingTime),
+    })
+    .from(activities)
+    .where(
+      and(
+        eq(activities.userId, userId),
+        gte(activities.startDateLocal, from),
+        lte(activities.startDateLocal, to),
+      ),
+    )
+    .groupBy(activities.trainingType)
+    .orderBy(sql`SUM(COALESCE(${activities.trainingLoad}, ${activities.icuTrainingLoad}, 0)) DESC`);
+}
+
 export async function longTermRunStatsSince(
   db: Db,
   userId: string,

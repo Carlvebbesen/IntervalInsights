@@ -312,7 +312,6 @@ export async function disconnectIntervals(
   const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
   await clerkClient.users.updateUserMetadata(clerkUserId, {
     privateMetadata: { intervals: null },
-    publicMetadata: { intervals_connected: false },
   });
   await context.db
     .update(users)
