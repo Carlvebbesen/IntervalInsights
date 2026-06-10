@@ -21,6 +21,9 @@ mcpRouter.get("/.well-known/oauth-protected-resource/mcp", (c) =>
     generateClerkProtectedResourceMetadata({
       publishableKey: config.CLERK_PUBLISHABLE_KEY,
       resourceUrl: RESOURCE_URL,
+      properties: {
+        scopes_supported: ["profile", "email", "offline_access"],
+      },
     }),
   ),
 );
