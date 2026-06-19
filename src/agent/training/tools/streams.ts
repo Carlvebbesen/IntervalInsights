@@ -32,6 +32,9 @@ const getActivityStreamsSummary = defineTool({
   }),
   handler: async (ctx, args) => {
     const activity = await resolveOwnedActivity(ctx, args.activityId);
+    if (activity.stravaActivityId == null) {
+      return { error: "This activity has no Strava id, so time-series streams are unavailable." };
+    }
     const streams = await stravaApiService.getActivityStreams(
       ctx.stravaAccessToken,
       activity.stravaActivityId,

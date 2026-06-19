@@ -10,6 +10,18 @@ import type { IIntervalsWellness } from "../types/intervals/IIntervalsWellness";
 const INTERVALS_BASE_URL = "https://intervals.icu/api/v1";
 const INTERVALS_FETCH_TIMEOUT_MS = 8000;
 
+// intervals.icu stream `type` keys mirror Strava's. This is the full set the
+// analysis pipeline consumes; callers may override with a narrower list.
+export const DEFAULT_INTERVALS_STREAM_TYPES = [
+  "time",
+  "heartrate",
+  "watts",
+  "velocity_smooth",
+  "distance",
+  "altitude",
+  "cadence",
+] as const;
+
 async function fetchIntervals<T>(
   endpoint: string,
   accessToken: string,
@@ -67,11 +79,16 @@ export const intervalsApiService = {
     return fetchIntervals<unknown>(`/activity/${activityId}/intervals`, accessToken);
   },
 
-  async getActivityStreams(accessToken: string, activityId: string) {
+  async getActivityStreams(
+    accessToken: string,
+    activityId: string,
+    types: readonly string[] = DEFAULT_INTERVALS_STREAM_TYPES,
+  ) {
     // intervals.icu returns an array of { type, data } stream objects — caller
-    // must normalize into the { heartrate, time } shape it needs.
+    // must normalize into the internal StreamSet shape. Types absent for a
+    // given activity are simply omitted from the response array.
     return fetchIntervals<unknown>(`/activity/${activityId}/streams`, accessToken, {
-      types: "heartrate,time",
+      types: types.join(","),
     });
   },
 

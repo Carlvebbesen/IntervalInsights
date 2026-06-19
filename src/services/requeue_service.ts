@@ -49,13 +49,15 @@ export async function requeueStaleActivities(
   }
 
   for (const row of requeued) {
+    const stravaActivityId = row.stravaActivityId;
+    if (stravaActivityId == null) continue;
     runInBackground(
       "analysis.restart",
-      () => triggerAnalysisByStravaId(db, stravaAccessToken, row.stravaActivityId, userId),
+      () => triggerAnalysisByStravaId(db, stravaAccessToken, stravaActivityId, userId),
       {
         attributes: {
           "activity.id": row.id,
-          "strava.activity_id": row.stravaActivityId,
+          "strava.activity_id": stravaActivityId,
           "user.id": userId,
         },
       },

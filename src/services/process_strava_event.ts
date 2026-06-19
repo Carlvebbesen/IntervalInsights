@@ -8,6 +8,7 @@ import type { IGlobalBindings } from "../types/IRouters";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
 import { triggerAnalysisByStravaId } from "./analysis_service";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
+import { progressService } from "./progress_service";
 import { stravaApiService } from "./strava_api_service";
 import { getDbInsertActivity } from "./strava_mappers";
 import { shouldAnalyze } from "./utils";
@@ -102,7 +103,24 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
         "Storing as skipped_inactive — user inactive",
       );
     }
-    await context.db.insert(activities).values(payload).onConflictDoNothing();
+    const [inserted] = await context.db
+      .insert(activities)
+      .values(payload)
+      .onConflictDoNothing()
+      .returning({ id: activities.id });
+    if (activityClass === "active" && inserted) {
+      await progressService.publish(user.id, {
+        type: "progress",
+        data: {
+          id: inserted.id,
+          kind: "strava_ingest",
+          phase: "received",
+          analysisStatus: "pending",
+          title: activity.title ?? undefined,
+          startDateLocal: activity.startDateLocal?.toISOString(),
+        },
+      });
+    }
     return;
   }
 

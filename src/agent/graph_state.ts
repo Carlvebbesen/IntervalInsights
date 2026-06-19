@@ -28,7 +28,7 @@ const overwrite = <T>(_a: T, b: T): T => b;
 
 export const AnalysisStateAnnotation = Annotation.Root({
   activityId: Annotation<number>(),
-  stravaActivityId: Annotation<number>(),
+  stravaActivityId: Annotation<number | null>(),
   userId: Annotation<string>(),
 
   isIndoor: Annotation<boolean>({ reducer: overwrite, default: () => false }),

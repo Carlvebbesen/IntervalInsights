@@ -13,6 +13,7 @@ import type {
 } from "../types/strava/IDetailedActivity";
 import type { StreamTypeMap } from "../types/strava/IStream";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
+import { progressService } from "./progress_service";
 import { getDbInsertActivity } from "./strava_mappers";
 
 async function fetchStrava<T>(
@@ -86,9 +87,18 @@ export const stravaApiService = {
     onActivitySynced?: (internalId: number, stravaActivityId: number) => void,
   ) {
     const BATCH_SIZE = 5;
+    const PROGRESS_EVERY = 10;
     const results = [];
     const triggers: Array<{ internalId: number; stravaActivityId: number }> = [];
     const processHeartRate = await userHasHeartRateConsent(db, userId);
+
+    await progressService.publish(userId, {
+      type: "sync",
+      data: { kind: "strava_import", phase: "started", processed: 0, total: ids.length },
+    });
+
+    let processed = 0;
+    let failed = 0;
 
     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
       const batch = ids.slice(i, i + BATCH_SIZE);
@@ -116,7 +126,27 @@ export const stravaApiService = {
 
       const batchResults = await Promise.all(batchPromises);
       results.push(...batchResults);
+
+      processed += batchResults.length;
+      failed += batchResults.filter((r) => r.status === "failed").length;
+      if (processed % PROGRESS_EVERY < BATCH_SIZE && processed < ids.length) {
+        await progressService.publish(userId, {
+          type: "sync",
+          data: {
+            kind: "strava_import",
+            phase: "progress",
+            processed,
+            total: ids.length,
+            failed,
+          },
+        });
+      }
     }
+
+    await progressService.publish(userId, {
+      type: "sync",
+      data: { kind: "strava_import", phase: "completed", processed, total: ids.length, failed },
+    });
 
     // Stagger LLM-triggering analyses to avoid bursting Gemini's RPM quota on
     // large bulk imports. Fire-and-forget so the HTTP response returns promptly.

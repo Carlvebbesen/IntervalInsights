@@ -28,6 +28,7 @@ import eventsRouter from "../../src/routers/events_router";
 import heartRateRouter from "../../src/routers/heart_rate_router";
 import intervalStructureRouter from "../../src/routers/interval_structure_router";
 import intervalsEntryRouter from "../../src/routers/intervals/intervals_entry_router";
+import progressRouter from "../../src/routers/progress_router";
 import publicRouter from "../../src/routers/public_router";
 import stravaEntryRouter from "../../src/routers/strava/strava_entry_router";
 import userRouter from "../../src/routers/user_router";
@@ -96,6 +97,7 @@ export function buildTestApp(pool: Pool) {
   app.route("/api/admin", adminRouter);
   app.route("/api/user", userRouter);
   app.route("/api/intervals", intervalsEntryRouter);
+  app.route("/api/progress", progressRouter);
 
   app.notFound((c) => c.json({ status: 404, message: "Not Found" }, 404));
   app.onError((err, c) => {

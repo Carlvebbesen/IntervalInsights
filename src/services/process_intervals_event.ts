@@ -2,6 +2,7 @@ import { logger } from "../logger";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsWebhookEvent } from "../types/intervals/IIntervalsWebhookEvent";
 import { handleIntervalsScopeChange, linkFromIntervalsActivity } from "./intervals_link_service";
+import { progressService } from "./progress_service";
 
 export async function processIntervalsWebhook(
   event: IIntervalsWebhookEvent,
@@ -46,6 +47,15 @@ export async function processIntervalsWebhook(
       },
       "Linked Intervals.icu activity",
     );
+    await progressService.publish(user.id, {
+      type: "progress",
+      data: {
+        id: result.localActivityId,
+        kind: "intervals_sync",
+        phase: "received",
+        message: "intervals.icu activity linked",
+      },
+    });
     return;
   }
 

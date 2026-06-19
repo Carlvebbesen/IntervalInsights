@@ -1,4 +1,4 @@
-import { type InferInsertModel, type InferSelectModel, relations } from "drizzle-orm";
+import { type InferInsertModel, type InferSelectModel, relations, sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -10,6 +10,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import type { WorkoutAnalysisOutput } from "../agent/initial_analysis_agent";
@@ -68,7 +69,7 @@ export const activities = pgTable(
     analysisAttemptCount: integer("analysis_attempt_count").notNull().default(0),
     draftAnalysisResult: json("draft_analysis_result").$type<DraftAnalysisResult>(),
     analysisVersion: text("analysis_version").default("v1.0"),
-    stravaActivityId: bigint("strava_activity_id", { mode: "number" }).unique().notNull(),
+    stravaActivityId: bigint("strava_activity_id", { mode: "number" }),
     gearId: text("gear_id"),
     hasHeartrate: boolean("has_heart_rate"),
     title: text("title").notNull(),
@@ -122,6 +123,12 @@ export const activities = pgTable(
       index("date_idx").on(table.startDateLocal),
       index("type_idx").on(table.trainingType),
       index("interval_structure_idx").on(table.intervalStructureId),
+      uniqueIndex("strava_activity_id_unique")
+        .on(table.stravaActivityId)
+        .where(sql`strava_activity_id IS NOT NULL`),
+      uniqueIndex("intervals_icu_id_unique")
+        .on(table.intervalsIcuId)
+        .where(sql`intervals_icu_id IS NOT NULL`),
     ];
   },
 );

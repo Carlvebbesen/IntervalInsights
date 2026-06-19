@@ -40,7 +40,7 @@ agentsRouter.get(
 
 const startAnalysisSchema = z.object({
   activityId: z.number(),
-  stravaActivityId: z.number(),
+  stravaActivityId: z.number().nullish(),
 });
 
 agentsRouter.post(

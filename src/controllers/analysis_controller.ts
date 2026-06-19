@@ -28,14 +28,15 @@ export async function getPending(
   if (accessToken) {
     await requeueStaleActivities(db, userId, accessToken);
   }
-  return activityRepo.listPending(db, userId, PENDING_STATUSES);
+  const rows = await activityRepo.listPending(db, userId, PENDING_STATUSES);
+  return rows.map((r) => ({ ...r, startDateLocal: r.startDateLocal.toISOString() }));
 }
 
 export function startActivityAnalysis(
   db: Db,
   accessToken: string | undefined,
   activityId: number,
-  stravaActivityId: number,
+  stravaActivityId: number | null | undefined,
   userId: string,
 ): { success: true } {
   if (!accessToken) {
@@ -124,12 +125,10 @@ export async function getProposedPace(
         { found: !!activity, indoor: activity?.indoor, stravaId: activity?.stravaActivityId },
         "activity lookup",
       );
-      if (activity && !activity.indoor && accessToken) {
+      if (activity && !activity.indoor && accessToken && activity.stravaActivityId != null) {
+        const stravaActivityId = activity.stravaActivityId;
         try {
-          const laps = await stravaApiService.getActivityLaps(
-            accessToken,
-            activity.stravaActivityId,
-          );
+          const laps = await stravaApiService.getActivityLaps(accessToken, stravaActivityId);
           log.info({ lapCount: laps.length }, "fetched laps from Strava");
           const fromLaps = getProposedPaceFromLaps(laps, structure);
           if (fromLaps) {

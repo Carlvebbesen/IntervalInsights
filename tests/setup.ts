@@ -20,6 +20,7 @@ const ENV_DEFAULTS: Record<string, string> = {
   INTERVALS_WEBHOOK_SECRET: "intervals_webhook_secret_dummy",
   APP_BASE_URL: "http://localhost:3000/",
   OPENAI_API_KEY: "sk-test-openai-dummy",
+  PROGRESS_HEARTBEAT_MS: "200",
 };
 
 for (const [key, value] of Object.entries(ENV_DEFAULTS)) {
@@ -61,12 +62,6 @@ mock.module("../src/services/intervals_wellness_service.ts", () => ({
   fetchTrainingSummary: async () => ({ status: "not_linked", data: null }),
   fetchWellnessSeries: async () => ({ status: "not_linked", data: null }),
   fetchWeekWellnessStats: async () => null,
-}));
-
-mock.module("../src/services/intervals_link_service.ts", () => ({
-  enrichActivityFromIntervalsIcu: async () => {},
-  syncUnlinkedActivities: async () => ({ linked: 0, skipped: 0, errors: 0 }),
-  disconnectIntervals: async () => {},
 }));
 
 mock.module("../src/services/analysis_service.ts", () => {

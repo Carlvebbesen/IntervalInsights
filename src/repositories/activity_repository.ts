@@ -260,6 +260,7 @@ export function listPending(db: Db, userId: string, statuses: readonly AnalysisS
   return db
     .select({
       id: activities.id,
+      startDateLocal: activities.startDateLocal,
       stravaId: activities.stravaActivityId,
       trainingType: activities.trainingType,
       analysisStatus: activities.analysisStatus,
@@ -281,7 +282,7 @@ export async function findPaceContext(
   db: Db,
   userId: string,
   activityId: number,
-): Promise<{ indoor: boolean; stravaActivityId: number } | undefined> {
+): Promise<{ indoor: boolean; stravaActivityId: number | null } | undefined> {
   return db.query.activities.findFirst({
     where: (a, { eq, and }) => and(eq(a.id, activityId), eq(a.userId, userId)),
     columns: { indoor: true, stravaActivityId: true },

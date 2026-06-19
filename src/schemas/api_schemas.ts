@@ -264,7 +264,7 @@ export const ActivitySchema = z
     analysisStatus: z.enum(analysisStatusEnum.enumValues).nullable(),
     draftAnalysisResult: z.unknown().nullable(),
     analysisVersion: z.string().nullable(),
-    stravaActivityId: z.number(),
+    stravaActivityId: z.number().nullable(),
     gearId: z.string().nullable(),
     hasHeartrate: z.boolean().nullable(),
     title: z.string(),
@@ -730,7 +730,8 @@ export const GearStatsResponseSchema = z
 export const PendingActivitySchema = z
   .object({
     id: z.number(),
-    stravaId: z.number(),
+    startDateLocal: z.string(),
+    stravaId: z.number().nullable(),
     trainingType: z.enum(trainingTypeEnum.enumValues).nullable(),
     analysisStatus: z.enum(analysisStatusEnum.enumValues).nullable(),
     draftAnalysisResult: z.unknown().nullable(),
@@ -900,3 +901,65 @@ export const HeartRateAnalysisResponseSchema = z
     z.object({ status: z.literal("not_linked") }),
   ])
   .openapi({ ref: "HeartRateAnalysisResponse" });
+
+// ─── Progress SSE channel (GET /api/progress/stream) ──────────────────────────
+// Cross-repo contract: field names MUST stay in lock-step with the `ProgressEvent`
+// discriminated union in src/services/progress_service.ts (the Flutter app mirrors
+// these). Each event is serialised as an SSE frame whose `event:` is the `type`
+// and whose `data:` is the JSON-encoded payload below.
+
+export const ActivityProgressSchema = z
+  .object({
+    id: z.number().int(),
+    title: z.string(),
+    startDateLocal: z.string(),
+    analysisStatus: z.enum(analysisStatusEnum.enumValues),
+    kind: z.literal("analysis"),
+  })
+  .openapi({ ref: "ActivityProgress" });
+
+export const ProgressSnapshotEventSchema = z
+  .object({
+    activities: z.array(ActivityProgressSchema),
+  })
+  .openapi({ ref: "ProgressSnapshotEvent" });
+
+export const ProgressEventSchema = z
+  .object({
+    id: z.number().int(),
+    kind: z.enum(["strava_ingest", "intervals_sync", "analysis"]),
+    phase: z.enum(["received", "processing", "ready_for_review"]),
+    analysisStatus: z.enum(analysisStatusEnum.enumValues).optional(),
+    title: z.string().optional(),
+    startDateLocal: z.string().optional(),
+    message: z.string().optional(),
+  })
+  .openapi({ ref: "ProgressEvent" });
+
+export const ProgressDoneEventSchema = z
+  .object({
+    id: z.number().int(),
+    analysisStatus: z.enum(["completed", "initial", "error"]),
+    title: z.string().optional(),
+  })
+  .openapi({ ref: "ProgressDoneEvent" });
+
+export const SyncProgressEventSchema = z
+  .object({
+    kind: z.enum(["intervals_master_sync", "strava_import"]),
+    phase: z.enum(["started", "progress", "completed"]),
+    processed: z.number().int(),
+    total: z.number().int().optional(),
+    created: z.number().int().optional(),
+    linked: z.number().int().optional(),
+    failed: z.number().int().optional(),
+    message: z.string().optional(),
+  })
+  .openapi({ ref: "SyncProgressEvent" });
+
+export const ProgressErrorEventSchema = z
+  .object({
+    id: z.number().int().optional(),
+    message: z.string(),
+  })
+  .openapi({ ref: "ProgressErrorEvent" });

@@ -2,15 +2,15 @@
 // we actually read are listed — the real payload has ~170 fields.
 export interface IIntervalsActivity {
   id: string;
-  name: string;
+  name: string | null;
   description: string | null;
   type: string;
   sub_type: string | null;
   start_date: string;
   start_date_local: string;
-  moving_time: number;
+  moving_time: number | null;
   elapsed_time: number | null;
-  distance: number;
+  distance: number | null;
   total_elevation_gain: number | null;
   average_heartrate: number | null;
   max_heartrate: number | null;

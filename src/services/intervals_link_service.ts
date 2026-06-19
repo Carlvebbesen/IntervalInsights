@@ -1,6 +1,6 @@
 import { createClerkClient } from "@clerk/backend";
 import { sleep } from "bun";
-import { and, desc, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, eq, gte, isNull, lte } from "drizzle-orm";
 import { config } from "../config";
 import { IntervalsError } from "../error";
 import { logger } from "../logger";
@@ -9,6 +9,8 @@ import { activities, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsActivity } from "../types/intervals/IIntervalsActivity";
 import { intervalsApiService } from "./intervals_api_service";
+import { mapIntervalsActivityToInsert } from "./intervals_mappers";
+import { progressService } from "./progress_service";
 
 type EnrichmentFields = Partial<
   Pick<
@@ -66,12 +68,13 @@ export interface LinkResult {
 
 function matchesByDistanceAndTime(
   intervalsStartMs: number,
-  intervalsDistance: number,
+  intervalsDistance: number | null,
   localStartMs: number,
   localDistance: number,
 ): boolean {
   const timeDelta = Math.abs(intervalsStartMs - localStartMs);
   if (timeDelta > TIME_TOLERANCE_MS) return false;
+  if (intervalsDistance == null) return false;
 
   const minDistance = intervalsDistance * (1 - DISTANCE_TOLERANCE_RATIO);
   const maxDistance = intervalsDistance * (1 + DISTANCE_TOLERANCE_RATIO);
@@ -85,6 +88,7 @@ async function findLocalByFuzzyMatch(
 ): Promise<{ id: number } | null> {
   const startMs = parseIntervalsLocalStartMs(intervalsActivity.start_date_local);
   if (Number.isNaN(startMs)) return null;
+  if (intervalsActivity.distance == null) return null;
 
   const minTime = new Date(startMs - TIME_TOLERANCE_MS);
   const maxTime = new Date(startMs + TIME_TOLERANCE_MS);
@@ -262,7 +266,6 @@ export async function enrichActivityFromIntervalsIcu(
   return "enriched";
 }
 
-const SYNC_BATCH_LIMIT = 100;
 const SYNC_THROTTLE_MS = 100;
 
 export interface SyncIntervalsResult {
@@ -272,35 +275,183 @@ export interface SyncIntervalsResult {
   failed: number;
 }
 
-export async function syncUnlinkedActivities(
+// Cost safety: historical activities pulled by the master sync must never
+// trigger LLM analysis. Flip this to opt the import path back into analysis.
+const AUTO_ANALYZE_ON_IMPORT = false;
+
+const MASTER_WINDOW_MS = 6 * 30 * 24 * 60 * 60 * 1000;
+const MASTER_HISTORY_FLOOR_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+const MASTER_PROGRESS_EVERY = 25;
+
+export interface MasterSyncResult extends SyncIntervalsResult {
+  created: number;
+  processed: number;
+}
+
+type FuzzyLocal = { id: number; startMs: number; distance: number };
+
+function findUniqueInMemoryMatch(
+  intervalsActivity: IIntervalsActivity,
+  locals: FuzzyLocal[],
+): FuzzyLocal | null {
+  const startMs = parseIntervalsLocalStartMs(intervalsActivity.start_date_local);
+  if (Number.isNaN(startMs)) return null;
+
+  let found: FuzzyLocal | null = null;
+  for (const local of locals) {
+    if (
+      matchesByDistanceAndTime(startMs, intervalsActivity.distance, local.startMs, local.distance)
+    ) {
+      if (found) return null;
+      found = local;
+    }
+  }
+  return found;
+}
+
+export async function syncAllFromIntervals(
   context: IGlobalBindings,
   user: { id: string; clerkId: string },
-): Promise<SyncIntervalsResult> {
-  const rows = await context.db
-    .select({ id: activities.id })
-    .from(activities)
-    .where(and(eq(activities.userId, user.id), isNull(activities.intervalsIcuId)))
-    .orderBy(desc(activities.startDateLocal))
-    .limit(SYNC_BATCH_LIMIT);
+): Promise<MasterSyncResult> {
+  const accessToken = await getIntervalsAccessToken(user.clerkId);
 
-  const result: SyncIntervalsResult = {
-    candidates: rows.length,
+  const localRows = await context.db
+    .select({
+      id: activities.id,
+      startDateLocal: activities.startDateLocal,
+      distance: activities.distance,
+      intervalsIcuId: activities.intervalsIcuId,
+    })
+    .from(activities)
+    .where(eq(activities.userId, user.id));
+
+  const knownIntervalsIds = new Set<string>();
+  const unlinkedLocals: FuzzyLocal[] = [];
+  for (const row of localRows) {
+    if (row.intervalsIcuId) {
+      knownIntervalsIds.add(row.intervalsIcuId);
+    } else {
+      unlinkedLocals.push({
+        id: row.id,
+        startMs: row.startDateLocal.getTime(),
+        distance: row.distance,
+      });
+    }
+  }
+
+  const result: MasterSyncResult = {
+    candidates: 0,
     linked: 0,
     noMatch: 0,
     failed: 0,
+    created: 0,
+    processed: 0,
   };
 
-  for (const row of rows) {
+  await progressService.publish(user.id, {
+    type: "sync",
+    data: { kind: "intervals_master_sync", phase: "started", processed: 0 },
+  });
+
+  const seen = new Set<string>();
+  const floorMs = Date.now() - MASTER_HISTORY_FLOOR_MS;
+  let windowNewestMs = Date.now();
+
+  while (windowNewestMs > floorMs) {
+    const windowOldestMs = windowNewestMs - MASTER_WINDOW_MS;
+    const oldest = new Date(windowOldestMs).toISOString().slice(0, 10);
+    const newest = new Date(windowNewestMs).toISOString().slice(0, 10);
+
+    let windowActivities: IIntervalsActivity[];
     try {
-      const link = await linkFromLocalActivity(context, user, row.id);
-      if (link) result.linked++;
-      else result.noMatch++;
+      windowActivities = await intervalsApiService.listActivities(accessToken, oldest, newest);
     } catch (err) {
+      logger.error({ err, oldest, newest }, "intervals.icu master sync window failed");
       result.failed++;
-      logger.error({ err, activityId: row.id }, "intervals.icu sync failed for activity");
+      windowNewestMs = windowOldestMs;
+      await sleep(SYNC_THROTTLE_MS);
+      continue;
     }
+
+    if (windowActivities.length === 0) break;
+
+    for (const intervalsActivity of windowActivities) {
+      if (seen.has(intervalsActivity.id)) continue;
+      seen.add(intervalsActivity.id);
+
+      if (knownIntervalsIds.has(intervalsActivity.id)) continue;
+      result.candidates++;
+
+      try {
+        const localMatch = findUniqueInMemoryMatch(intervalsActivity, unlinkedLocals);
+        if (localMatch) {
+          let full = intervalsActivity;
+          try {
+            full = await intervalsApiService.getActivity(accessToken, intervalsActivity.id);
+          } catch (err) {
+            logger.warn(
+              { err, intervalsActivityId: intervalsActivity.id },
+              "intervals.icu getActivity failed during master sync — using list payload",
+            );
+          }
+          await commitLink(context, localMatch.id, full);
+          knownIntervalsIds.add(intervalsActivity.id);
+          const idx = unlinkedLocals.indexOf(localMatch);
+          if (idx >= 0) unlinkedLocals.splice(idx, 1);
+          result.linked++;
+        } else {
+          const payload: InsertActivity = {
+            ...mapIntervalsActivityToInsert(intervalsActivity, user.id),
+            intervalsAnalyzed: true,
+            intervalsIcuEnrichedAt: new Date(),
+            analysisStatus: AUTO_ANALYZE_ON_IMPORT ? "pending" : "completed",
+            ...buildEnrichment(intervalsActivity),
+          };
+          await context.db.insert(activities).values(payload).onConflictDoNothing();
+          knownIntervalsIds.add(intervalsActivity.id);
+          result.created++;
+        }
+      } catch (err) {
+        result.failed++;
+        logger.error(
+          { err, intervalsActivityId: intervalsActivity.id },
+          "intervals.icu master sync failed for activity",
+        );
+      }
+
+      result.processed++;
+      if (result.processed % MASTER_PROGRESS_EVERY === 0) {
+        await progressService.publish(user.id, {
+          type: "sync",
+          data: {
+            kind: "intervals_master_sync",
+            phase: "progress",
+            processed: result.processed,
+            created: result.created,
+            linked: result.linked,
+            failed: result.failed,
+          },
+        });
+      }
+    }
+
+    windowNewestMs = windowOldestMs;
     await sleep(SYNC_THROTTLE_MS);
   }
+
+  result.noMatch = result.candidates - result.linked - result.created;
+
+  await progressService.publish(user.id, {
+    type: "sync",
+    data: {
+      kind: "intervals_master_sync",
+      phase: "completed",
+      processed: result.processed,
+      created: result.created,
+      linked: result.linked,
+      failed: result.failed,
+    },
+  });
 
   return result;
 }

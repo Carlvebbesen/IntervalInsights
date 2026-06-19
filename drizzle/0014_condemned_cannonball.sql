@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "intervals_icu_id_unique" ON "activities" USING btree ("intervals_icu_id") WHERE intervals_icu_id IS NOT NULL;

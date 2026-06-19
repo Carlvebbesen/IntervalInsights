@@ -92,6 +92,20 @@
       "when": 1780995076962,
       "tag": "0012_condemned_trish_tilby",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1781873513650,
+      "tag": "0013_nappy_gauntlet",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1781875602643,
+      "tag": "0014_condemned_cannonball",
+      "breakpoints": true
     }
   ]
 }

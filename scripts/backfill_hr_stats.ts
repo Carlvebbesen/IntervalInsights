@@ -87,6 +87,10 @@ async function main() {
         skipped += 1;
         continue;
       }
+      if (r.stravaActivityId == null) {
+        skipped += 1;
+        continue;
+      }
       const streams = await stravaApiService.getActivityStreams(token, r.stravaActivityId, [
         "heartrate",
         "time",

@@ -25,6 +25,7 @@ import {
   type WorkWindowSegment,
 } from "./hr_stats_service";
 import { intervalsApiService } from "./intervals_api_service";
+import { mapIntervalsStreamsToStreamSet } from "./intervals_mappers";
 import { stravaApiService } from "./strava_api_service";
 
 type Db = IGlobalBindings["db"];
@@ -182,14 +183,17 @@ async function resolveStreams(
   if (row.intervalsIcuId) {
     try {
       const normalized = normalizeIntervalsStreams(
-        await intervalsApiService.getActivityStreams(intervalsToken, row.intervalsIcuId),
+        await intervalsApiService.getActivityStreams(intervalsToken, row.intervalsIcuId, [
+          "heartrate",
+          "time",
+        ]),
       );
       if (normalized.heartrate) return normalized;
     } catch {
       // fall through to Strava
     }
   }
-  if (stravaToken) {
+  if (stravaToken && row.stravaActivityId != null) {
     return stravaApiService.getActivityStreams(stravaToken, row.stravaActivityId, [
       "heartrate",
       "time",
@@ -200,15 +204,8 @@ async function resolveStreams(
 
 // Exported for unit testing.
 export function normalizeIntervalsStreams(raw: unknown): Pick<StreamSet, "time" | "heartrate"> {
-  const out: { time?: { data: number[] }; heartrate?: { data: number[] } } = {};
-  if (!Array.isArray(raw)) return out;
-  for (const entry of raw) {
-    const stream = entry as { type?: unknown; data?: unknown };
-    if (!Array.isArray(stream.data)) continue;
-    if (stream.type === "heartrate") out.heartrate = { data: stream.data as number[] };
-    else if (stream.type === "time") out.time = { data: stream.data as number[] };
-  }
-  return out;
+  const { time, heartrate } = mapIntervalsStreamsToStreamSet(raw);
+  return { time, heartrate };
 }
 
 /**

@@ -5,7 +5,8 @@ import { logger } from "../../logger";
 import { getIntervalsAccessToken } from "../../middlewares/intervals_middleware";
 import { activities, type IntervalsIcuPrediction } from "../../schema";
 import { intervalsApiService } from "../../services/intervals_api_service";
-import type { IIntervalsInterval } from "../../types/intervals/IIntervalsActivity";
+import { linkFromLocalActivity } from "../../services/intervals_link_service";
+import { extractIntervalsList } from "../../services/intervals_mappers";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";
 
 const POLL_TICKS = 3;
@@ -44,6 +45,25 @@ export async function maybeEnrichWithIntervalsIcu(
   }
 
   if (!intervalsIcuId) {
+    // The intervals.icu webhook may never arrive (not configured, or its own
+    // analysis stalled). Proactively GET activities by date and link directly
+    // before giving up. Best-effort: on failure, proceed without enrichment.
+    try {
+      const link = await linkFromLocalActivity(
+        { db },
+        { id: state.userId, clerkId: clerkUserId },
+        state.activityId,
+      );
+      if (link) {
+        intervalsIcuId = link.intervalsActivityId;
+        log.info({ intervalsIcuId }, "linked via GET-by-date fallback");
+      }
+    } catch (err) {
+      log.warn({ err }, "intervals.icu GET-by-date fallback failed");
+    }
+  }
+
+  if (!intervalsIcuId) {
     log.info("no intervals.icu link after poll — proceeding without it");
     return {};
   }
@@ -55,18 +75,7 @@ export async function maybeEnrichWithIntervalsIcu(
       intervalsApiService.getActivityIntervals(accessToken, intervalsIcuId),
     ]);
 
-    // intervals.icu's /activity/{id}/intervals returns a wrapper object
-    // (e.g. { icu_intervals: [...], icu_groups: [...] }) rather than the bare
-    // array the TS type claims. Normalize defensively so a shape change can
-    // never crash the analysis again.
-    let intervals: IIntervalsInterval[] = [];
-    if (Array.isArray(intervalsRaw)) {
-      intervals = intervalsRaw;
-    } else if (intervalsRaw && typeof intervalsRaw === "object") {
-      const wrapper = intervalsRaw as Record<string, unknown>;
-      const candidate = wrapper.icu_intervals ?? wrapper.intervals;
-      if (Array.isArray(candidate)) intervals = candidate as IIntervalsInterval[];
-    }
+    const intervals = extractIntervalsList(intervalsRaw);
 
     const prediction: IntervalsIcuPrediction = {
       subType: intervalsMeta.sub_type ?? null,

@@ -25,6 +25,7 @@ import heartRateRouter from "./routers/heart_rate_router";
 import intervalStructureRouter from "./routers/interval_structure_router";
 import intervalsEntryRouter from "./routers/intervals/intervals_entry_router";
 import mcpRouter from "./routers/mcp_router";
+import progressRouter from "./routers/progress_router";
 import publicRouter from "./routers/public_router";
 import stravaEntryRouter from "./routers/strava/strava_entry_router";
 import trainingRouter from "./routers/training_router";
@@ -123,6 +124,7 @@ app.route("/api/admin", adminRouter);
 app.route("/api/user", userRouter);
 app.route("/api/intervals", intervalsEntryRouter);
 app.route("/api/chat", trainingRouter);
+app.route("/api/progress", progressRouter);
 
 // 404 handler
 app.notFound((c) => {

@@ -67,7 +67,7 @@ export async function insertActivity(
       gearId: overrides.gearId ?? null,
     })
     .returning();
-  return { id: row.id, stravaActivityId: row.stravaActivityId };
+  return { id: row.id, stravaActivityId: row.stravaActivityId as number };
 }
 
 export async function insertEvent(

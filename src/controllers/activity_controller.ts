@@ -109,6 +109,9 @@ async function applySegmentEdit(
   if (!activity.trainingType) {
     throw new AppError(400, "Activity has no training type — cannot edit segments");
   }
+  if (activity.stravaActivityId == null) {
+    throw new AppError(400, "Activity has no Strava id");
+  }
   const tag = `[applySegmentEdit activity=${activity.id}]`;
 
   const consent = await userHasHeartRateConsent(db, userId);
@@ -331,6 +334,9 @@ export async function getDraftSegments(
   const activity = await activityRepo.findByIdForUser(db, userId, activityId);
   if (!activity) {
     throw new AppError(404, "Activity not found");
+  }
+  if (activity.stravaActivityId == null) {
+    throw new AppError(400, "Activity has no Strava id");
   }
 
   const proposedSegments = activity.draftAnalysisResult?.proposedSegments ?? [];

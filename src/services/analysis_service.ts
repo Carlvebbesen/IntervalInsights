@@ -4,9 +4,15 @@ import { buildAnalysisGraph, resetAnalysisThread } from "../agent/analysis_graph
 import type { SegmentBoundary } from "../agent/graph_state";
 import { logger } from "../logger";
 import { activities, users } from "../schema";
-import { SKIP_RESTART_STATUSES, SKIP_START_STATUSES, type TrainingType } from "../schema/enums";
+import {
+  type AnalysisStatus,
+  SKIP_RESTART_STATUSES,
+  SKIP_START_STATUSES,
+  type TrainingType,
+} from "../schema/enums";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
+import { progressService } from "./progress_service";
 import { needCompleteAnalysis } from "./utils";
 
 // Thrown for user-input validation problems in the resume flow. Distinct from
@@ -16,6 +22,13 @@ export class ResumeValidationError extends Error {
     super(message);
     this.name = "ResumeValidationError";
   }
+}
+
+type DoneStatus = "completed" | "initial" | "error";
+
+function toDoneStatus(status: AnalysisStatus | null | undefined, fallback: DoneStatus): DoneStatus {
+  if (status === "completed" || status === "initial" || status === "error") return status;
+  return fallback;
 }
 
 async function getUserContext(
@@ -34,7 +47,7 @@ export const startAnalysis = async (
   db: IGlobalBindings["db"],
   stravaAccessToken: string,
   activityId: number,
-  stravaActivityId: number,
+  stravaActivityId: number | null | undefined,
   userId: string,
 ): Promise<void> => {
   const log = logger.child({ fn: "startAnalysis", activityId });
@@ -60,10 +73,15 @@ export const startAnalysis = async (
   // thread exists, so this is safe to call unconditionally here.
   await resetAnalysisThread(activityId);
 
+  await progressService.publish(userId, {
+    type: "progress",
+    data: { id: activityId, kind: "analysis", phase: "processing", analysisStatus: "ongoing_init" },
+  });
+
   try {
     const graph = await buildAnalysisGraph();
     await graph.invoke(
-      { activityId, stravaActivityId, userId },
+      { activityId, stravaActivityId: stravaActivityId ?? null, userId },
       {
         configurable: {
           thread_id: String(activityId),
@@ -74,6 +92,15 @@ export const startAnalysis = async (
         },
       },
     );
+
+    const final = await db.query.activities.findFirst({
+      where: eq(activities.id, activityId),
+      columns: { analysisStatus: true },
+    });
+    await progressService.publish(userId, {
+      type: "done",
+      data: { id: activityId, analysisStatus: toDoneStatus(final?.analysisStatus, "initial") },
+    });
   } catch (err) {
     log.error({ err }, "Error in startAnalysis");
     try {
@@ -84,6 +111,10 @@ export const startAnalysis = async (
     } catch (dbErr) {
       log.error({ err: dbErr }, "Could not set error status in DB");
     }
+    await progressService.publish(userId, {
+      type: "done",
+      data: { id: activityId, analysisStatus: "error" },
+    });
   }
 };
 
@@ -172,6 +203,11 @@ export const resumeAnalysis = async (
       );
     }
 
+    await progressService.publish(current.userId, {
+      type: "progress",
+      data: { id: activityId, kind: "analysis", phase: "processing" },
+    });
+
     await graph.invoke(
       new Command({
         resume: { notes, sets, trainingType: finalTrainingType, feeling, editedSegments },
@@ -187,6 +223,15 @@ export const resumeAnalysis = async (
         `Graph resume did not progress activity ${activityId} — still paused at interrupt (next=[${after.next.join(",")}])`,
       );
     }
+
+    const final = await db.query.activities.findFirst({
+      where: eq(activities.id, activityId),
+      columns: { analysisStatus: true },
+    });
+    await progressService.publish(current.userId, {
+      type: "done",
+      data: { id: activityId, analysisStatus: toDoneStatus(final?.analysisStatus, "completed") },
+    });
   } catch (err) {
     log.error({ err }, "FAILED");
     try {
@@ -197,6 +242,10 @@ export const resumeAnalysis = async (
     } catch (dbErr) {
       log.error({ err: dbErr }, "Could not set error status in DB");
     }
+    await progressService.publish(current.userId, {
+      type: "done",
+      data: { id: activityId, analysisStatus: "error" },
+    });
     throw err;
   }
 };

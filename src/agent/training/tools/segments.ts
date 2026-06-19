@@ -26,6 +26,9 @@ const getActivityLaps = defineTool({
   params: z.object({ activityId: z.number().int() }),
   handler: async (ctx, args) => {
     const activity = await resolveOwnedActivity(ctx, args.activityId);
+    if (activity.stravaActivityId == null) {
+      return { error: "This activity has no Strava id, so Strava laps are unavailable." };
+    }
     return stravaApiService.getActivityLaps(ctx.stravaAccessToken, activity.stravaActivityId);
   },
 });

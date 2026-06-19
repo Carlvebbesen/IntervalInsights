@@ -2,6 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import type z from "zod";
 import type { workoutSet } from "../agent/initial_analysis_agent";
 import { logger } from "../logger";
+import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import { activities, intervalSegments } from "../schema";
 import type { InsertIntervalSegment } from "../schema/interval_segments";
@@ -9,6 +10,8 @@ import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { Lap } from "../types/strava/IDetailedActivity";
 import type { StreamSet } from "../types/strava/IStream";
+import { intervalsApiService } from "./intervals_api_service";
+import { mapIntervalsRawToLaps, mapIntervalsStreamsToStreamSet } from "./intervals_mappers";
 import { stravaApiService } from "./strava_api_service";
 import { calculateSegmentStats, generateCompleteIntervalSet } from "./utils";
 
@@ -294,14 +297,17 @@ export async function getSegmentsForActivity(
     where: eq(activities.id, activityId),
     columns: {
       stravaActivityId: true,
+      intervalsIcuId: true,
       draftAnalysisResult: true,
       indoor: true,
     },
   });
   const draft = activity?.draftAnalysisResult;
+  const hasSource = activity?.intervalsIcuId != null || activity?.stravaActivityId != null;
   if (
     !activity ||
     activity.indoor ||
+    !hasSource ||
     !draft?.segmentsFromLaps ||
     !draft.acceptedSets ||
     draft.acceptedSets.length === 0
@@ -309,6 +315,8 @@ export async function getSegmentsForActivity(
     log.info(
       {
         indoor: activity?.indoor,
+        hasStravaId: activity?.stravaActivityId != null,
+        hasIntervalsId: activity?.intervalsIcuId != null,
         segmentsFromLaps: draft?.segmentsFromLaps,
         acceptedSets: draft?.acceptedSets?.length ?? 0,
       },
@@ -318,15 +326,11 @@ export async function getSegmentsForActivity(
   }
 
   try {
-    const tokens = await getStravaAccessTokens(clerkUserId);
-    const [laps, streams] = await Promise.all([
-      stravaApiService.getActivityLaps(tokens.access_token, activity.stravaActivityId),
-      stravaApiService.getActivityStreams(tokens.access_token, activity.stravaActivityId, [
-        ...STREAM_KEYS,
-      ]),
-    ]);
+    const { laps, streams } = activity.intervalsIcuId
+      ? await fetchIntervalsLapsAndStreams(clerkUserId, activity.intervalsIcuId)
+      : await fetchStravaLapsAndStreams(clerkUserId, activity.stravaActivityId as number);
     if (!streams?.time || !streams?.distance) {
-      log.info("re-derivation skipped: Strava streams missing time/distance");
+      log.info("re-derivation skipped: streams missing time/distance");
       return [];
     }
     const statsStreams = streams as Required<Pick<StreamSet, "time" | "distance">> &
@@ -336,10 +340,40 @@ export async function getSegmentsForActivity(
       log.info("buildSegmentsFromLaps returned null on re-derivation");
       return [];
     }
-    log.info({ segments: derived.length }, "re-derived segments from Strava");
+    log.info(
+      { segments: derived.length, source: activity.intervalsIcuId ? "intervals.icu" : "strava" },
+      "re-derived segments",
+    );
     return derived.map((seg, idx) => ({ ...seg, id: -(idx + 1) }));
   } catch (err) {
     log.error({ err }, "re-derivation failed");
     return [];
   }
+}
+
+async function fetchStravaLapsAndStreams(
+  clerkUserId: string,
+  stravaActivityId: number,
+): Promise<{ laps: Lap[]; streams: StreamSet }> {
+  const tokens = await getStravaAccessTokens(clerkUserId);
+  const [laps, streams] = await Promise.all([
+    stravaApiService.getActivityLaps(tokens.access_token, stravaActivityId),
+    stravaApiService.getActivityStreams(tokens.access_token, stravaActivityId, [...STREAM_KEYS]),
+  ]);
+  return { laps, streams };
+}
+
+async function fetchIntervalsLapsAndStreams(
+  clerkUserId: string,
+  intervalsIcuId: string,
+): Promise<{ laps: Lap[]; streams: StreamSet }> {
+  const accessToken = await getIntervalsAccessToken(clerkUserId);
+  const [rawStreams, rawIntervals] = await Promise.all([
+    intervalsApiService.getActivityStreams(accessToken, intervalsIcuId, [...STREAM_KEYS]),
+    intervalsApiService.getActivityIntervals(accessToken, intervalsIcuId),
+  ]);
+  return {
+    laps: mapIntervalsRawToLaps(rawIntervals),
+    streams: mapIntervalsStreamsToStreamSet(rawStreams),
+  };
 }
