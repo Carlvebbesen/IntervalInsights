@@ -40,6 +40,9 @@ export type ProgressEvent =
         descriptionsUpdated?: number;
         descriptionsRemaining?: number;
         failed?: number;
+        // Epoch ms after which the user may retry; set when a rate limit was
+        // hit (or the budget was exhausted) so the client can show a cooldown.
+        retryAt?: number;
         message?: string;
       };
     }

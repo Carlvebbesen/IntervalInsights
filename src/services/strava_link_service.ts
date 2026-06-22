@@ -71,6 +71,13 @@ function overBudget(rateLimit: StravaRateLimit | null): boolean {
   return rateLimit.shortTermUsage >= rateLimit.shortTermLimit - SHORT_TERM_SAFETY_MARGIN;
 }
 
+// Strava's 15-minute budget resets on the wall-clock quarter hour, so the
+// earliest a retry can succeed is the next :00/:15/:30/:45.
+const FIFTEEN_MIN_MS = 15 * 60 * 1000;
+function nextStravaWindowMs(): number {
+  return (Math.floor(Date.now() / FIFTEEN_MIN_MS) + 1) * FIFTEEN_MIN_MS;
+}
+
 export async function syncAllFromStrava(
   context: IGlobalBindings,
   accessToken: string,
@@ -85,6 +92,7 @@ export async function syncAllFromStrava(
     descriptionsRemaining: 0,
     failed: 0,
   };
+  let retryAt: number | undefined;
 
   await progressService.publish(user.id, {
     type: "sync",
@@ -141,6 +149,7 @@ export async function syncAllFromStrava(
       } catch (err) {
         logger.error({ err, page }, "Strava master sync list page failed");
         result.failed++;
+        if (err instanceof StravaError && err.status === 429) retryAt = nextStravaWindowMs();
         break;
       }
 
@@ -244,6 +253,7 @@ export async function syncAllFromStrava(
       } catch (err) {
         if (err instanceof StravaError && err.status === 429) {
           logger.warn({ stravaActivityId: item.stravaId }, "Strava 429 — stopping description pass");
+          retryAt = nextStravaWindowMs();
           break;
         }
         result.failed++;
@@ -252,6 +262,11 @@ export async function syncAllFromStrava(
       await sleep(DETAIL_THROTTLE_MS);
     }
     result.descriptionsRemaining = descriptionQueue.length - i;
+    // Stopped proactively because the budget was nearly spent — same cooldown
+    // as a hard 429 so the client doesn't immediately retry into one.
+    if (result.descriptionsRemaining > 0 && overBudget(lastRateLimit)) {
+      retryAt ??= nextStravaWindowMs();
+    }
   } catch (err) {
     result.failed++;
     logger.error({ err, userId: user.id }, "Strava master sync failed");
@@ -268,6 +283,7 @@ export async function syncAllFromStrava(
         descriptionsUpdated: result.descriptionsUpdated,
         descriptionsRemaining: result.descriptionsRemaining,
         failed: result.failed,
+        retryAt,
       },
     });
   }

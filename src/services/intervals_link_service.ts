@@ -267,6 +267,9 @@ export async function enrichActivityFromIntervalsIcu(
 }
 
 const SYNC_THROTTLE_MS = 100;
+// intervals.icu doesn't publish a fixed reset boundary like Strava, so on a 429
+// we ask the client to wait a conservative minute before retrying.
+const INTERVALS_RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
 
 export interface SyncIntervalsResult {
   candidates: number;
@@ -325,6 +328,8 @@ export async function syncAllFromIntervals(
   // Runs in the background (fire-and-forget); the client follows the SSE
   // progress channel. Always emits `started` then `completed` so the client's
   // live toast never hangs, and never throws.
+  let retryAt: number | undefined;
+
   await progressService.publish(user.id, {
     type: "sync",
     data: { kind: "intervals_master_sync", phase: "started", processed: 0 },
@@ -372,6 +377,11 @@ export async function syncAllFromIntervals(
     } catch (err) {
       logger.error({ err, oldest, newest }, "intervals.icu master sync window failed");
       result.failed++;
+      // Back off on rate limit instead of hammering the next window into another 429.
+      if (err instanceof IntervalsError && err.status === 429) {
+        retryAt = Date.now() + INTERVALS_RATE_LIMIT_COOLDOWN_MS;
+        break;
+      }
       windowNewestMs = windowOldestMs;
       await sleep(SYNC_THROTTLE_MS);
       continue;
@@ -457,6 +467,7 @@ export async function syncAllFromIntervals(
         created: result.created,
         linked: result.linked,
         failed: result.failed,
+        retryAt,
       },
     });
   }
