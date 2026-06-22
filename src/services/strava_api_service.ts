@@ -16,11 +16,33 @@ import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { progressService } from "./progress_service";
 import { getDbInsertActivity } from "./strava_mappers";
 
-async function fetchStrava<T>(
+/**
+ * Strava's rate-limit budget, parsed from the read-specific headers when
+ * present (falling back to the overall limit headers). Each pair is
+ * `15-minute,daily`.
+ */
+export interface StravaRateLimit {
+  shortTermUsage: number;
+  shortTermLimit: number;
+  dailyUsage: number;
+  dailyLimit: number;
+}
+
+function parseRateLimit(headers: Headers): StravaRateLimit | null {
+  const usage = headers.get("x-readratelimit-usage") ?? headers.get("x-ratelimit-usage");
+  const limit = headers.get("x-readratelimit-limit") ?? headers.get("x-ratelimit-limit");
+  if (!usage || !limit) return null;
+  const [su, du] = usage.split(",").map((v) => Number(v.trim()));
+  const [sl, dl] = limit.split(",").map((v) => Number(v.trim()));
+  if ([su, du, sl, dl].some((n) => Number.isNaN(n))) return null;
+  return { shortTermUsage: su, shortTermLimit: sl, dailyUsage: du, dailyLimit: dl };
+}
+
+async function fetchStravaWithMeta<T>(
   endpoint: string,
   accessToken: string,
   params?: Record<string, string>,
-): Promise<T> {
+): Promise<{ data: T; rateLimit: StravaRateLimit | null }> {
   const url = new URL(`https://www.strava.com/api/v3${endpoint}`);
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
@@ -38,7 +60,19 @@ async function fetchStrava<T>(
     throw new StravaError(response.status, errorData);
   }
 
-  return response.json() as Promise<T>;
+  return {
+    data: (await response.json()) as T,
+    rateLimit: parseRateLimit(response.headers),
+  };
+}
+
+async function fetchStrava<T>(
+  endpoint: string,
+  accessToken: string,
+  params?: Record<string, string>,
+): Promise<T> {
+  const { data } = await fetchStravaWithMeta<T>(endpoint, accessToken, params);
+  return data;
 }
 
 export const stravaApiService = {
@@ -78,6 +112,15 @@ export const stravaApiService = {
     query: { before?: string; after?: string; page?: string; per_page?: string },
   ) {
     return fetchStrava<SummaryActivity[]>("/athlete/activities", accessToken, query);
+  },
+  async listAthleteActivitiesWithMeta(
+    accessToken: string,
+    query: { before?: string; after?: string; page?: string; per_page?: string },
+  ) {
+    return fetchStravaWithMeta<SummaryActivity[]>("/athlete/activities", accessToken, query);
+  },
+  async getActivityWithMeta(accessToken: string, id: number) {
+    return fetchStravaWithMeta<DetailedActivity>(`/activities/${id}`, accessToken, {});
   },
   async syncStravaActivities(
     accessToken: string,

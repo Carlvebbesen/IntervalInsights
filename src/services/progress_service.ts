@@ -30,12 +30,14 @@ export type ProgressEvent =
   | {
       type: "sync";
       data: {
-        kind: "intervals_master_sync" | "strava_import";
+        kind: "intervals_master_sync" | "strava_import" | "strava_master_sync";
         phase: "started" | "progress" | "completed";
         processed: number;
         total?: number;
         created?: number;
         linked?: number;
+        updated?: number;
+        descriptionsUpdated?: number;
         failed?: number;
         message?: string;
       };

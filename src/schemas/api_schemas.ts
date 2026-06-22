@@ -829,6 +829,18 @@ export const SyncResultSchema = z
   })
   .openapi({ ref: "SyncResult" });
 
+export const StravaSyncResultSchema = z
+  .object({
+    processed: z.number(),
+    created: z.number(),
+    linked: z.number(),
+    updated: z.number(),
+    descriptionsUpdated: z.number(),
+    descriptionsRemaining: z.number(),
+    failed: z.number(),
+  })
+  .openapi({ ref: "StravaSyncResult" });
+
 // ─── Proposed-pace response (POST /api/agents/proposed-pace) ──────────────────
 
 export const ProposedPaceResponseSchema = z

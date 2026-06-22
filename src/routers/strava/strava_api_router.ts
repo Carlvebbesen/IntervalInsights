@@ -6,10 +6,12 @@ import { activities } from "../../schema";
 import {
   ErrorSchema,
   StravaSummaryActivitySchema,
+  StravaSyncResultSchema,
   SyncResultSchema,
 } from "../../schemas/api_schemas";
 import { startAnalysis } from "../../services/analysis_service";
 import { stravaApiService } from "../../services/strava_api_service";
+import { syncAllFromStrava } from "../../services/strava_link_service";
 import type { TStravaEnv } from "../../types/IRouters";
 
 const stravaApiRouter = new Hono<TStravaEnv>();
@@ -130,6 +132,32 @@ stravaApiRouter.post(
         },
       ),
     );
+  },
+);
+
+stravaApiRouter.post(
+  "/sync",
+  describeRoute({
+    description:
+      "Master sync from Strava: backfill title + gear for the last 2 years (linking to existing activities or creating new ones), then fetch descriptions for activities missing one — throttled to respect Strava's rate limit. Re-runnable; `descriptionsRemaining` indicates work left for a subsequent run. Never triggers LLM analysis.",
+    responses: {
+      200: {
+        description: "Master sync result counts",
+        content: {
+          "application/json": { schema: resolver(StravaSyncResultSchema) },
+        },
+      },
+      401: {
+        description: "Missing Strava access token or user",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  async (c) => {
+    const accessToken = c.get("stravaAccessToken");
+    const userId = c.get("userId");
+    if (!accessToken || !userId) return c.json({ error: "Unauthorized" }, 401);
+    return c.json(await syncAllFromStrava(c.env, accessToken, { id: userId }));
   },
 );
 
