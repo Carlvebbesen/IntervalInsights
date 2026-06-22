@@ -313,32 +313,6 @@ export async function syncAllFromIntervals(
   context: IGlobalBindings,
   user: { id: string; clerkId: string },
 ): Promise<MasterSyncResult> {
-  const accessToken = await getIntervalsAccessToken(user.clerkId);
-
-  const localRows = await context.db
-    .select({
-      id: activities.id,
-      startDateLocal: activities.startDateLocal,
-      distance: activities.distance,
-      intervalsIcuId: activities.intervalsIcuId,
-    })
-    .from(activities)
-    .where(eq(activities.userId, user.id));
-
-  const knownIntervalsIds = new Set<string>();
-  const unlinkedLocals: FuzzyLocal[] = [];
-  for (const row of localRows) {
-    if (row.intervalsIcuId) {
-      knownIntervalsIds.add(row.intervalsIcuId);
-    } else {
-      unlinkedLocals.push({
-        id: row.id,
-        startMs: row.startDateLocal.getTime(),
-        distance: row.distance,
-      });
-    }
-  }
-
   const result: MasterSyncResult = {
     candidates: 0,
     linked: 0,
@@ -348,14 +322,44 @@ export async function syncAllFromIntervals(
     processed: 0,
   };
 
+  // Runs in the background (fire-and-forget); the client follows the SSE
+  // progress channel. Always emits `started` then `completed` so the client's
+  // live toast never hangs, and never throws.
   await progressService.publish(user.id, {
     type: "sync",
     data: { kind: "intervals_master_sync", phase: "started", processed: 0 },
   });
 
-  const seen = new Set<string>();
-  const floorMs = Date.now() - MASTER_HISTORY_FLOOR_MS;
-  let windowNewestMs = Date.now();
+  try {
+    const accessToken = await getIntervalsAccessToken(user.clerkId);
+
+    const localRows = await context.db
+      .select({
+        id: activities.id,
+        startDateLocal: activities.startDateLocal,
+        distance: activities.distance,
+        intervalsIcuId: activities.intervalsIcuId,
+      })
+      .from(activities)
+      .where(eq(activities.userId, user.id));
+
+    const knownIntervalsIds = new Set<string>();
+    const unlinkedLocals: FuzzyLocal[] = [];
+    for (const row of localRows) {
+      if (row.intervalsIcuId) {
+        knownIntervalsIds.add(row.intervalsIcuId);
+      } else {
+        unlinkedLocals.push({
+          id: row.id,
+          startMs: row.startDateLocal.getTime(),
+          distance: row.distance,
+        });
+      }
+    }
+
+    const seen = new Set<string>();
+    const floorMs = Date.now() - MASTER_HISTORY_FLOOR_MS;
+    let windowNewestMs = Date.now();
 
   while (windowNewestMs > floorMs) {
     const windowOldestMs = windowNewestMs - MASTER_WINDOW_MS;
@@ -439,19 +443,23 @@ export async function syncAllFromIntervals(
     await sleep(SYNC_THROTTLE_MS);
   }
 
-  result.noMatch = result.candidates - result.linked - result.created;
-
-  await progressService.publish(user.id, {
-    type: "sync",
-    data: {
-      kind: "intervals_master_sync",
-      phase: "completed",
-      processed: result.processed,
-      created: result.created,
-      linked: result.linked,
-      failed: result.failed,
-    },
-  });
+    result.noMatch = result.candidates - result.linked - result.created;
+  } catch (err) {
+    result.failed++;
+    logger.error({ err, userId: user.id }, "intervals.icu master sync failed");
+  } finally {
+    await progressService.publish(user.id, {
+      type: "sync",
+      data: {
+        kind: "intervals_master_sync",
+        phase: "completed",
+        processed: result.processed,
+        created: result.created,
+        linked: result.linked,
+        failed: result.failed,
+      },
+    });
+  }
 
   return result;
 }

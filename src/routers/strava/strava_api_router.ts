@@ -3,11 +3,12 @@ import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
 import { activities } from "../../schema";
+import { logger } from "../../logger";
 import {
   ErrorSchema,
   StravaSummaryActivitySchema,
-  StravaSyncResultSchema,
   SyncResultSchema,
+  SyncStartedSchema,
 } from "../../schemas/api_schemas";
 import { startAnalysis } from "../../services/analysis_service";
 import { stravaApiService } from "../../services/strava_api_service";
@@ -139,12 +140,12 @@ stravaApiRouter.post(
   "/sync",
   describeRoute({
     description:
-      "Master sync from Strava: backfill title + gear for the last 2 years (linking to existing activities or creating new ones), then fetch descriptions for activities missing one — throttled to respect Strava's rate limit. Re-runnable; `descriptionsRemaining` indicates work left for a subsequent run. Never triggers LLM analysis.",
+      "Master sync from Strava: backfill title + gear for the last 2 years (linking to existing activities or creating new ones), then fetch descriptions for activities missing one — throttled to respect Strava's rate limit. Runs in the background and returns immediately; progress and final counts are pushed over the SSE progress channel (kind `strava_master_sync`). Re-runnable; the completed event's `descriptionsRemaining` indicates work left for a subsequent run. Never triggers LLM analysis.",
     responses: {
-      200: {
-        description: "Master sync result counts",
+      202: {
+        description: "Sync started; follow progress on the SSE channel",
         content: {
-          "application/json": { schema: resolver(StravaSyncResultSchema) },
+          "application/json": { schema: resolver(SyncStartedSchema) },
         },
       },
       401: {
@@ -157,7 +158,14 @@ stravaApiRouter.post(
     const accessToken = c.get("stravaAccessToken");
     const userId = c.get("userId");
     if (!accessToken || !userId) return c.json({ error: "Unauthorized" }, 401);
-    return c.json(await syncAllFromStrava(c.env, accessToken, { id: userId }));
+    // Fire-and-forget: the description pass can run long (and may sit near a
+    // rate-limit boundary), so don't hold the HTTP connection open. The service
+    // never throws and pushes its own started/completed events; this .catch is
+    // just a backstop against an unexpected rejection.
+    void syncAllFromStrava(c.env, accessToken, { id: userId }).catch((err) => {
+      logger.error({ err, userId }, "Strava master sync (background) failed");
+    });
+    return c.json({ status: "started" as const }, 202);
   },
 );
 

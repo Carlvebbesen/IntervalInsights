@@ -38,6 +38,7 @@ export type ProgressEvent =
         linked?: number;
         updated?: number;
         descriptionsUpdated?: number;
+        descriptionsRemaining?: number;
         failed?: number;
         message?: string;
       };
