@@ -389,6 +389,20 @@ export async function syncAllFromIntervals(
 
     if (windowActivities.length === 0) break;
 
+    // One event per window (in addition to the per-25 below) so the user sees
+    // the scan moving back through time even when a window adds nothing new.
+    await progressService.publish(user.id, {
+      type: "sync",
+      data: {
+        kind: "intervals_master_sync",
+        phase: "progress",
+        processed: result.processed,
+        created: result.created,
+        linked: result.linked,
+        message: `scanning ${newest.slice(0, 7)} — ${result.created} imported, ${result.linked} linked`,
+      },
+    });
+
     for (const intervalsActivity of windowActivities) {
       if (seen.has(intervalsActivity.id)) continue;
       seen.add(intervalsActivity.id);

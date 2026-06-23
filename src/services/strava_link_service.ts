@@ -32,7 +32,10 @@ const DETAIL_THROTTLE_MS = 250;
 const SHORT_TERM_SAFETY_MARGIN = 10;
 // Hard cap so a single run stays bounded in wall-clock time.
 const MAX_DESCRIPTION_FETCHES = 200;
-const PROGRESS_EVERY = 25;
+const PROGRESS_EVERY = 20;
+// Descriptions are the slow, throttled phase, so report often enough that the
+// user sees steady movement.
+const DESC_PROGRESS_EVERY = 5;
 
 const TIME_TOLERANCE_MS = 5 * 60 * 1000;
 const DISTANCE_TOLERANCE_RATIO = 0.03;
@@ -223,6 +226,7 @@ export async function syncAllFromStrava(
               linked: result.linked,
               updated: result.updated,
               failed: result.failed,
+              message: `scanning activities — ${result.created} new, ${result.linked + result.updated} updated`,
             },
           });
         }
@@ -233,6 +237,18 @@ export async function syncAllFromStrava(
     }
 
     // Second pass: descriptions (detail-only), bounded by the rate-limit budget.
+    const descTotal = Math.min(descriptionQueue.length, MAX_DESCRIPTION_FETCHES);
+    if (descTotal > 0) {
+      await progressService.publish(user.id, {
+        type: "sync",
+        data: {
+          kind: "strava_master_sync",
+          phase: "progress",
+          processed: result.processed,
+          message: `fetching descriptions 0/${descTotal}`,
+        },
+      });
+    }
     let i = 0;
     for (; i < descriptionQueue.length; i++) {
       if (i >= MAX_DESCRIPTION_FETCHES || overBudget(lastRateLimit)) break;
@@ -258,6 +274,17 @@ export async function syncAllFromStrava(
         }
         result.failed++;
         logger.error({ err, stravaActivityId: item.stravaId }, "Strava description fetch failed");
+      }
+      if ((i + 1) % DESC_PROGRESS_EVERY === 0) {
+        await progressService.publish(user.id, {
+          type: "sync",
+          data: {
+            kind: "strava_master_sync",
+            phase: "progress",
+            processed: result.processed,
+            message: `fetching descriptions ${i + 1}/${descTotal}`,
+          },
+        });
       }
       await sleep(DETAIL_THROTTLE_MS);
     }
