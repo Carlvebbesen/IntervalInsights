@@ -27,7 +27,7 @@ adminRouter.patch(
   "/users/:id/role",
   describeRoute({
     description:
-      "Set a user's role (admin only). Invalidates the user's Clerk public-metadata cache.",
+      "Set a user's role (admin only). Role is stored in the DB users table (source of truth); not mirrored to Clerk.",
     responses: {
       200: {
         description: "Updated user role",

@@ -7,6 +7,7 @@ import { eventTypeEnum, trainingTypeEnum } from "../schema";
 import {
   ActivityListResponseSchema,
   ActivitySchema,
+  ActivityStreamsSchema,
   DraftSegmentsResponseSchema,
   EditSegmentsRequestSchema,
   ErrorSchema,
@@ -249,10 +250,12 @@ stravaActivitiesRouter.get(
   },
 );
 
-stravaActivitiesRouter.get(
+// intervals.icu-preferred (falls back to Strava); on the global router so
+// intervals-only users (no Strava link) can reach it. Path id is the INTERNAL id.
+activitiesRouter.get(
   "/:id/laps",
   describeRoute({
-    description: "Get Strava laps for an activity",
+    description: "Get laps/intervals for an activity (intervals.icu-preferred, Strava fallback)",
     responses: {
       200: {
         description: "Activity laps",
@@ -269,15 +272,20 @@ stravaActivitiesRouter.get(
   validator("param", activityIdParamSchema),
   async (c) => {
     const { id } = c.req.valid("param");
-    const laps = await activityController.getLaps(c.get("stravaAccessToken"), id);
+    const laps = await activityController.getLaps(
+      c.env.db,
+      c.get("userId"),
+      c.get("clerkUserId"),
+      id,
+    );
     return c.json({ laps });
   },
 );
 
-stravaActivitiesRouter.get(
+activitiesRouter.get(
   "/:id/splits",
   describeRoute({
-    description: "Get Strava metric splits for an activity",
+    description: "Get metric splits for an activity (Strava; empty for intervals-only — app derives)",
     responses: {
       200: {
         description: "Activity splits",
@@ -296,7 +304,12 @@ stravaActivitiesRouter.get(
   validator("param", activityIdParamSchema),
   async (c) => {
     const { id } = c.req.valid("param");
-    const splits = await activityController.getSplits(c.get("stravaAccessToken"), id);
+    const splits = await activityController.getSplits(
+      c.env.db,
+      c.get("userId"),
+      c.get("clerkUserId"),
+      id,
+    );
     return c.json({ splits_metric: splits });
   },
 );
@@ -323,6 +336,35 @@ stravaActivitiesRouter.get(
       c.env.db,
       c.get("userId"),
       c.get("stravaAccessToken"),
+      id,
+    );
+    return c.json(streams);
+  },
+);
+
+activitiesRouter.get(
+  "/:id/streams",
+  describeRoute({
+    description:
+      "Time-series streams (time, distance, altitude, cadence, velocity, heartrate when consented), intervals.icu-preferred with Strava fallback. Path id is the INTERNAL id.",
+    responses: {
+      200: {
+        description: "Activity stream data",
+        content: { "application/json": { schema: resolver(ActivityStreamsSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("param", activityIdParamSchema),
+  async (c) => {
+    const { id } = c.req.valid("param");
+    const streams = await activityController.getStreams(
+      c.env.db,
+      c.get("userId"),
+      c.get("clerkUserId"),
       id,
     );
     return c.json(streams);
@@ -362,11 +404,11 @@ stravaActivitiesRouter.get(
   },
 );
 
-stravaActivitiesRouter.put(
+activitiesRouter.put(
   "/:id/segments",
   describeRoute({
     description:
-      "Replace all interval segments for an activity (post-analysis edit). Recomputes actual stats from Strava streams over the supplied boundaries.",
+      "Replace all interval segments for an activity (post-analysis edit). Recomputes actual stats from intervals.icu-preferred streams (Strava fallback) over the supplied boundaries.",
     responses: {
       200: {
         description: "Updated interval segments",
@@ -394,7 +436,7 @@ stravaActivitiesRouter.put(
     const result = await activityController.editSegments(
       c.env.db,
       c.get("userId"),
-      c.get("stravaAccessToken"),
+      c.get("clerkUserId"),
       id,
       segments,
     );
@@ -402,7 +444,7 @@ stravaActivitiesRouter.put(
   },
 );
 
-stravaActivitiesRouter.patch(
+activitiesRouter.patch(
   "/:id/segments/:segmentId",
   describeRoute({
     description:
@@ -434,7 +476,7 @@ stravaActivitiesRouter.patch(
     const result = await activityController.editSingleSegment(
       c.env.db,
       c.get("userId"),
-      c.get("stravaAccessToken"),
+      c.get("clerkUserId"),
       id,
       segmentId,
       patch,

@@ -70,6 +70,26 @@ app.use(
   "*",
   structuredLogger({
     createLogger: (c) => logger.child({ requestId: c.var.requestId }),
+    // Suppress the default "request start" line — it doubles log volume and the
+    // response line below carries everything it did.
+    onRequest: () => {},
+    onResponse: (log, c, elapsedMs) => {
+      const status = c.res.status;
+      const level = status >= 500 ? "error" : status >= 400 ? "warn" : "info";
+      // streamSSE resolves the handler at stream-open, so the elapsed here is the
+      // open time, not the connection lifetime — label it so it isn't misread.
+      const isStream = c.req.path === "/api/progress/stream";
+      log[level](
+        {
+          method: c.req.method,
+          path: c.req.path,
+          status,
+          elapsedMs: Math.round(elapsedMs),
+          userId: c.get("userId"),
+        },
+        isStream ? "sse stream opened" : "request",
+      );
+    },
   }),
 );
 app.use("/api/*", httpInstrumentationMiddleware({ captureRequestHeaders: ["user-agent"] }));

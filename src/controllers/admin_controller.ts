@@ -1,5 +1,3 @@
-import { createClerkClient } from "@clerk/backend";
-import { config } from "../config";
 import { AppError } from "../error";
 import * as userRepo from "../repositories/user_repository";
 import type { UserRole } from "../schema/enums";
@@ -7,7 +5,7 @@ import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
 
-/** Set a user's role and invalidate their Clerk public-metadata cache. */
+/** Set a user's role in the DB (source of truth for identity/role). */
 export async function setUserRole(
   db: Db,
   targetUserId: string,
@@ -17,11 +15,6 @@ export async function setUserRole(
   if (!updated) {
     throw new AppError(404, "User not found");
   }
-
-  const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
-  await clerkClient.users.updateUserMetadata(updated.clerkId, {
-    publicMetadata: { role },
-  });
 
   return { id: updated.id, role };
 }

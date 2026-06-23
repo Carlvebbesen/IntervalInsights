@@ -1,4 +1,3 @@
-import { createClerkClient } from "@clerk/backend";
 import { getAuth } from "@hono/clerk-auth";
 import { trace } from "@opentelemetry/api";
 import { eq } from "drizzle-orm";
@@ -23,8 +22,6 @@ const attachIdentityLogger = (c: Context<TGlobalEnv>, identity: AuthIdentity) =>
   c.set("logger", c.var.logger.child(identity));
 };
 
-const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
-
 export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
   const auth = getAuth(c);
 
@@ -43,13 +40,6 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
       .returning();
     dbUser = newUser;
     c.var.logger.info({ clerkUserId: auth.userId }, "Created new user record");
-    clerkClient.users
-      .updateUserMetadata(auth.userId, {
-        publicMetadata: { role: newUser.role ?? "guest" },
-      })
-      .catch((err) => {
-        c.var.logger.error({ err, clerkUserId: auth.userId }, "Failed to sync Clerk metadata");
-      });
   } else if (
     !dbUser.lastSeenAt ||
     Date.now() - dbUser.lastSeenAt.getTime() > LAST_SEEN_THROTTLE_MS

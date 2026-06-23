@@ -1,6 +1,8 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type { z } from "zod";
 import { runInBackground } from "../background";
+import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
+import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import {
   type ActivityDto,
   type GearStatsItemDto,
@@ -18,10 +20,15 @@ import type {
   SelectIntervalSegment,
   TrainingType,
 } from "../schema";
-import { intervalSegments } from "../schema";
+import { activities, intervalSegments } from "../schema";
 import type { ActivityListResponseSchema, PatchSegmentSchema } from "../schemas/api_schemas";
 import { userHasHeartRateConsent } from "../services/heart_rate_consent_service";
+import { intervalsApiService } from "../services/intervals_api_service";
 import { enrichActivityFromIntervalsIcu } from "../services/intervals_link_service";
+import {
+  mapIntervalsRawToLaps,
+  mapIntervalsStreamsToStreamSet,
+} from "../services/intervals_mappers";
 import { getSegmentsForActivity } from "../services/lap_derivation_service";
 import {
   type FullSegmentSpec,
@@ -102,27 +109,26 @@ type OwnedActivity = NonNullable<Awaited<ReturnType<typeof activityRepo.findById
 async function applySegmentEdit(
   db: Db,
   userId: string,
-  accessToken: string,
+  clerkUserId: string,
   activity: OwnedActivity,
   specs: FullSegmentSpec[],
 ): Promise<{ intervalSegments: SelectIntervalSegment[] }> {
   if (!activity.trainingType) {
     throw new AppError(400, "Activity has no training type — cannot edit segments");
   }
-  if (activity.stravaActivityId == null) {
-    throw new AppError(400, "Activity has no Strava id");
-  }
   const tag = `[applySegmentEdit activity=${activity.id}]`;
 
   const consent = await userHasHeartRateConsent(db, userId);
+  const src = await resolveActivitySource(db, userId, clerkUserId, activity.id);
   const keys = consent
     ? (["time", "distance", "heartrate"] as const)
     : (["time", "distance"] as const);
-  const streams = await stravaApiService.getActivityStreams(
-    accessToken,
-    activity.stravaActivityId,
-    [...keys],
-  );
+  const streams =
+    src.kind === "intervals"
+      ? mapIntervalsStreamsToStreamSet(
+          await intervalsApiService.getActivityStreams(src.token, src.externalId, [...keys]),
+        )
+      : await stravaApiService.getActivityStreams(src.token, src.externalId, [...keys]);
   if (!streams?.time || !streams?.distance) {
     throw new AppError(400, "Activity streams missing time/distance — cannot recompute stats");
   }
@@ -166,7 +172,7 @@ function loadStoredSegments(db: Db, activityId: number) {
 export async function editSegments(
   db: Db,
   userId: string,
-  accessToken: string,
+  clerkUserId: string,
   activityId: number,
   specs: FullSegmentSpec[],
 ) {
@@ -174,13 +180,13 @@ export async function editSegments(
   if (!activity) {
     throw new AppError(404, "Activity not found");
   }
-  return applySegmentEdit(db, userId, accessToken, activity, specs);
+  return applySegmentEdit(db, userId, clerkUserId, activity, specs);
 }
 
 export async function editSingleSegment(
   db: Db,
   userId: string,
-  accessToken: string,
+  clerkUserId: string,
   activityId: number,
   segmentId: number,
   patch: z.infer<typeof PatchSegmentSchema>,
@@ -216,7 +222,7 @@ export async function editSingleSegment(
     };
   });
 
-  return applySegmentEdit(db, userId, accessToken, activity, specs);
+  return applySegmentEdit(db, userId, clerkUserId, activity, specs);
 }
 
 export interface UpdateActivityInput {
@@ -299,12 +305,69 @@ export async function getGearStats(
   return { stats };
 }
 
-export function getLaps(accessToken: string, activityId: number) {
-  return stravaApiService.getActivityLaps(accessToken, activityId);
+/**
+ * Resolves where an activity's time-series data should be fetched from,
+ * intervals.icu-preferred (see the intervals-icu-primary-data-source decision).
+ * Tokens are resolved lazily so these endpoints work for intervals-only users
+ * who never linked Strava. Takes the INTERNAL activity id (not a Strava id).
+ */
+type ActivitySource =
+  | { kind: "intervals"; token: string; externalId: string }
+  | { kind: "strava"; token: string; externalId: number };
+
+async function resolveActivitySource(
+  db: Db,
+  userId: string,
+  clerkUserId: string,
+  activityId: number,
+): Promise<ActivitySource> {
+  const row = await db.query.activities.findFirst({
+    where: and(eq(activities.id, activityId), eq(activities.userId, userId)),
+    columns: { intervalsIcuId: true, stravaActivityId: true },
+  });
+  if (!row) throw new AppError(404, "Activity not found");
+
+  if (row.intervalsIcuId) {
+    try {
+      const token = await getIntervalsAccessToken(clerkUserId);
+      return { kind: "intervals", token, externalId: row.intervalsIcuId };
+    } catch (err) {
+      // intervals not linked / token dead — fall back to Strava if we can.
+      if (row.stravaActivityId == null) throw err;
+    }
+  }
+  if (row.stravaActivityId != null) {
+    const tokens = await getStravaAccessTokens(clerkUserId);
+    return { kind: "strava", token: tokens.access_token, externalId: row.stravaActivityId };
+  }
+  throw new AppError(400, "Activity has no intervals.icu or Strava source to fetch from");
 }
 
-export async function getSplits(accessToken: string, activityId: number) {
-  const activity = await stravaApiService.getActivity(accessToken, activityId);
+export async function getLaps(
+  db: Db,
+  userId: string,
+  clerkUserId: string,
+  activityId: number,
+) {
+  const src = await resolveActivitySource(db, userId, clerkUserId, activityId);
+  if (src.kind === "intervals") {
+    const raw = await intervalsApiService.getActivityIntervals(src.token, src.externalId);
+    return mapIntervalsRawToLaps(raw);
+  }
+  return stravaApiService.getActivityLaps(src.token, src.externalId);
+}
+
+export async function getSplits(
+  db: Db,
+  userId: string,
+  clerkUserId: string,
+  activityId: number,
+) {
+  const src = await resolveActivitySource(db, userId, clerkUserId, activityId);
+  // intervals.icu has no per-km splits_metric equivalent; the app derives splits
+  // in-app from the distance stream. Strava still provides them directly.
+  if (src.kind === "intervals") return [];
+  const activity = await stravaApiService.getActivity(src.token, src.externalId);
   return activity.splits_metric ?? [];
 }
 
@@ -323,6 +386,37 @@ export async function getHeartrateStream(
     "time",
     "distance",
   ]);
+}
+
+export async function getStreams(
+  db: Db,
+  userId: string,
+  clerkUserId: string,
+  activityId: number,
+) {
+  const consent = await userHasHeartRateConsent(db, userId);
+  const src = await resolveActivitySource(db, userId, clerkUserId, activityId);
+
+  const base = ["time", "distance", "altitude", "cadence", "velocity_smooth"] as const;
+  const keys = consent ? ([...base, "heartrate"] as const) : base;
+
+  let streams: StreamSet;
+  if (src.kind === "intervals") {
+    streams = mapIntervalsStreamsToStreamSet(
+      await intervalsApiService.getActivityStreams(src.token, src.externalId, [...keys]),
+    );
+  } else {
+    streams = await stravaApiService.getActivityStreams(src.token, src.externalId, [...keys]);
+  }
+
+  return {
+    time: streams?.time?.data ?? [],
+    distance: streams?.distance?.data ?? [],
+    heartrate: consent ? (streams?.heartrate?.data ?? null) : null,
+    altitude: streams?.altitude?.data ?? null,
+    cadence: streams?.cadence?.data ?? null,
+    velocity: streams?.velocity_smooth?.data ?? null,
+  };
 }
 
 export async function getDraftSegments(

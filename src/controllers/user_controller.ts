@@ -87,10 +87,6 @@ export async function deleteAccount(
 
   await clerkClient.users.updateUserMetadata(clerkUserId, {
     privateMetadata: { strava: null, intervals: null },
-    publicMetadata: {
-      strava_connected: false,
-      role: null,
-    },
   });
 
   return { success: true, message: "All user data deleted" };

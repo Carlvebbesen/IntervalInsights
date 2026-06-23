@@ -8,12 +8,23 @@ import { triggerAnalysisByStravaId } from "./analysis_service";
 const REQUEUE_BATCH_LIMIT = 100;
 const ERROR_RETRY_CAP = 2;
 const ORPHAN_TIMEOUT_MINUTES = 10;
+const REQUEUE_MIN_INTERVAL_MS = 30_000;
+
+// Throttle the requeue write per user: this runs on the (frequently polled)
+// pending GET, but stale-activity recovery is best-effort and not time-critical,
+// so at most once per REQUEUE_MIN_INTERVAL_MS keeps GETs from writing every call.
+const lastRequeueByUser = new Map<string, number>();
 
 export async function requeueStaleActivities(
   db: IGlobalBindings["db"],
   userId: string,
   stravaAccessToken: string,
 ): Promise<void> {
+  const now = Date.now();
+  const last = lastRequeueByUser.get(userId);
+  if (last !== undefined && now - last < REQUEUE_MIN_INTERVAL_MS) return;
+  lastRequeueByUser.set(userId, now);
+
   const tag = `[requeueStaleActivities user=${userId}]`;
   const requeued = await db
     .update(activities)

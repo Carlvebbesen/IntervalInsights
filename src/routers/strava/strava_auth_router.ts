@@ -120,9 +120,6 @@ stravaAuthRouter.post(
             athlete_id: tokenData.athlete.id,
           },
         },
-        publicMetadata: {
-          strava_connected: true,
-        },
       });
       const stravaId = String(tokenData.athlete.id);
       const existingUser = await c.env.db.query.users.findFirst({

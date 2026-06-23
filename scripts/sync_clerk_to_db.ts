@@ -10,7 +10,12 @@ const DRY_RUN = process.env.DRY_RUN === "1";
 const DELAY_MS = Number(process.env.DELAY_MS ?? 100);
 const PAGE_SIZE = 100;
 
-const STALE_PUBLIC_METADATA_KEYS = ["user_id", "intervals_connected"] as const;
+const STALE_PUBLIC_METADATA_KEYS = [
+  "user_id",
+  "intervals_connected",
+  "role",
+  "strava_connected",
+] as const;
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required");
@@ -93,7 +98,9 @@ async function main() {
           console.log(`[sync] clerk=${clerkUser.id} removing metadata: ${staleKeys.join(", ")}`);
           if (!DRY_RUN) {
             await clerkClient.users.updateUserMetadata(clerkUser.id, {
-              publicMetadata: { user_id: null, intervals_connected: null },
+              publicMetadata: Object.fromEntries(
+                STALE_PUBLIC_METADATA_KEYS.map((key) => [key, null]),
+              ),
             });
           }
         }

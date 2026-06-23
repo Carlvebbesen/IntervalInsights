@@ -26,7 +26,7 @@ All errors from `node_modules/` are pre-existing third-party issues — only car
 **Runtime:** Bun + Hono. The entry point is `src/index.ts`, which mounts all routers under `/api/*`.
 
 **Auth flow:**
-1. `clerkMiddleware` + `authGuard` (`src/middlewares/auth_middleware.ts`) run on all `/api/*` routes. They resolve `clerkUserId` + internal `userId` (UUID) from a Postgres `users` table, cached in Clerk session claims.
+1. `clerkMiddleware` + `authGuard` (`src/middlewares/auth_middleware.ts`) run on all `/api/*` routes. They resolve `clerkUserId` + internal `userId` (UUID) and `role` from the Postgres `users` table via a fresh `findFirst` on every request — the `users` table is the source of truth for identity/role; there is no Clerk session-claim cache.
 2. `stravaMiddleware` (`src/middlewares/strava_middleware.ts`) is applied per-router on routes that need Strava API access. It reads/refreshes Strava OAuth tokens stored in Clerk **private metadata** and sets `stravaAccessToken` + `stravaAthleteId` on the Hono context.
 
 **Two Hono environment types:**

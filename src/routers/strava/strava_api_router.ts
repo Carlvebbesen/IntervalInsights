@@ -3,13 +3,13 @@ import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
 import { activities } from "../../schema";
-import { logger } from "../../logger";
 import {
   ErrorSchema,
   StravaSummaryActivitySchema,
   SyncResultSchema,
   SyncStartedSchema,
 } from "../../schemas/api_schemas";
+import { runInBackground } from "../../background";
 import { startAnalysis } from "../../services/analysis_service";
 import { stravaApiService } from "../../services/strava_api_service";
 import { syncAllFromStrava } from "../../services/strava_link_service";
@@ -158,9 +158,20 @@ stravaApiRouter.post(
     const accessToken = c.get("stravaAccessToken");
     const userId = c.get("userId");
     if (!accessToken || !userId) return c.json({ error: "Unauthorized" }, 401);
-    void syncAllFromStrava(c.env, accessToken, { id: userId }).catch((err) => {
-      logger.error({ err, userId }, "Strava master sync (background) failed");
-    });
+    const log = c.var.logger;
+    runInBackground(
+      "strava.master_sync",
+      async () => {
+        const start = performance.now();
+        log.info({ userId }, "Strava master sync started");
+        const result = await syncAllFromStrava(c.env, accessToken, { id: userId });
+        log.info(
+          { userId, durationMs: Math.round(performance.now() - start), ...result },
+          "Strava master sync completed",
+        );
+      },
+      { attributes: { "user.id": userId }, logger: log },
+    );
     return c.json({ status: "started" as const }, 202);
   },
 );

@@ -381,6 +381,17 @@ export const DraftSegmentsResponseSchema = z
   })
   .openapi({ ref: "DraftSegmentsResponse" });
 
+export const ActivityStreamsSchema = z
+  .object({
+    time: z.array(z.number()),
+    distance: z.array(z.number()),
+    heartrate: z.array(z.number()).nullable(),
+    altitude: z.array(z.number()).nullable(),
+    cadence: z.array(z.number()).nullable(),
+    velocity: z.array(z.number()).nullable(),
+  })
+  .openapi({ ref: "ActivityStreams" });
+
 export const EditSegmentInputSchema = z
   .object({
     type: z.enum(workoutPartEnum.enumValues),

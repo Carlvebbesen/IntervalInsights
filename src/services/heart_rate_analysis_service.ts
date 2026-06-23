@@ -266,6 +266,23 @@ async function fetchZones(intervalsToken: string, log: Logger): Promise<Zone[]> 
 }
 
 /**
+ * The user's HR zone bands from intervals.icu, or `[]` when intervals.icu isn't
+ * linked. Used by the app to compute per-lap time-in-zone client-side.
+ */
+export async function getHrZones(clerkUserId: string, log: Logger): Promise<Zone[]> {
+  let intervalsToken: string;
+  try {
+    intervalsToken = await getIntervalsAccessToken(clerkUserId);
+  } catch (err) {
+    if (err instanceof IntervalsError && (err.status === 401 || err.status === 403)) {
+      return [];
+    }
+    throw err;
+  }
+  return fetchZones(intervalsToken, log);
+}
+
+/**
  * Convert the athlete's running HR-zone configuration into chart bands.
  * `hr_zones` is an ascending list of upper-bound bpm values; each band runs from
  * the previous upper bound to the current one. A leading 0 (boundary-style
