@@ -85,11 +85,12 @@ async function fetchFromStrava(
     ? (["time", "velocity_smooth", "heartrate", "distance", "moving"] as const)
     : (["time", "velocity_smooth", "distance", "moving"] as const);
 
+  // Indoor laps are kept: treadmill sessions often lap warmup/work/cooldown,
+  // which the deterministic segmenter uses for boundaries. See
+  // [[deterministic-interval-segmentation]].
   const [streams, laps] = await Promise.all([
     stravaApiService.getActivityStreams(stravaAccessToken, stravaActivityId, [...streamKeys]),
-    isIndoor
-      ? Promise.resolve<Lap[]>([])
-      : stravaApiService.getActivityLaps(stravaAccessToken, stravaActivityId),
+    stravaApiService.getActivityLaps(stravaAccessToken, stravaActivityId),
   ]);
 
   return {
@@ -115,14 +116,12 @@ async function fetchFromIntervals(
 
   const [rawStreams, rawIntervals] = await Promise.all([
     intervalsApiService.getActivityStreams(accessToken, intervalsIcuId),
-    isIndoor
-      ? Promise.resolve<unknown>(null)
-      : intervalsApiService.getActivityIntervals(accessToken, intervalsIcuId),
+    intervalsApiService.getActivityIntervals(accessToken, intervalsIcuId),
   ]);
 
   const streams = mapIntervalsStreamsToStreamSet(rawStreams);
   if (!processHeartRate) delete streams.heartrate;
-  const laps = isIndoor ? [] : mapIntervalsRawToLaps(rawIntervals);
+  const laps = mapIntervalsRawToLaps(rawIntervals);
 
   return {
     streams,

@@ -32,6 +32,14 @@ export function matchLapsToExpandedSteps(
   let cursor = -1;
   let stepCounter = 0;
 
+  // Effort gate: a real work rep is fast; warmup/recovery laps are slow. This
+  // stops a warmup lap whose distance happens to be near a work target from
+  // being stolen as rep 1 (pyramid case — see [[deterministic-interval-segmentation]]).
+  // If it over-rejects and yields no match, the caller falls back to the
+  // deterministic segmenter, so the gate is safe to apply.
+  const maxLapSpeed = Math.max(0, ...laps.map((l) => l.average_speed ?? 0));
+  const workSpeedFloor = 0.7 * maxLapSpeed;
+
   for (const set of expanded) {
     for (const step of set.steps) {
       const targetIsDistance = step.work_type === "DISTANCE";
@@ -44,7 +52,11 @@ export function matchLapsToExpandedSteps(
       for (let i = cursor + 1; i < laps.length; i++) {
         const lap = laps[i];
         const lapVal = targetIsDistance ? lap.distance : lap.moving_time;
-        if (Math.abs(lapVal - targetVal) <= tolerance && lap.average_speed > 0) {
+        if (
+          Math.abs(lapVal - targetVal) <= tolerance &&
+          lap.average_speed > 0 &&
+          lap.average_speed >= workSpeedFloor
+        ) {
           matchIdx = i;
           break;
         }

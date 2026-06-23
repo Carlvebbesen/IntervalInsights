@@ -4,6 +4,7 @@ import type { IntervalsIcuPrediction } from "../schema/activities";
 import { normalizeActivityStreams, prepareDataForLLM } from "../services/utils";
 import type { StreamSet } from "../types/strava/IStream";
 import { invokeStructured } from "./model";
+import { venuePromptBlock } from "./running_venues";
 export type WorkoutAnalysisOutput = z.infer<typeof workoutAnalysisOutput>;
 
 export const workoutStep = z.object({
@@ -63,8 +64,8 @@ const CLASSIFICATION_RULES = `
 - **LONG**: Total distance is > 20 km (running) or equivalent endurance session in another sport. Pace is generally steady or easy.
 - **EASY**: Steady aerobic effort, no structured intervals. Covers both true low-intensity recovery-pace work and standard daily Zone 2/3 sessions. Distance <= 20 km for running.
 - **RECOVERY**: Cross-training (elliptical, cycling, etc.) used as active recovery, not containing intervals.
-- **SHORT_INTERVALS**: Structured work/rest periods. Work intervals are < 800m OR < 2 minutes duration.
-- **LONG_INTERVALS**: Structured work/rest periods. Work intervals are >= 800m.
+- **SHORT_INTERVALS**: Structured work/rest periods where each work interval is short — < 800m AND < 2 minutes duration (e.g. 10x400m, 8x60s).
+- **LONG_INTERVALS**: Structured work/rest periods where each work interval is long — >= 800m OR >= 2 minutes duration (e.g. 6x6min, 5x1000m, 4x2000m). A time-based rep of 2 minutes or more is ALWAYS long intervals, regardless of distance.
 - **HILL_SPRINTS**: Short intervals (< 300m) with significant elevation gain during the work period.
 - **SPRINTS**: Very short duration (< 30s), maximum effort (Max Speed/Anaerobic).
 - **FARTLEK**: "Speed play." A mix of various interval lengths/intensities with NO clear repeating structure (e.g., random surges). Do NOT select this just because pace is messy; requires distinct high-effort surges.
@@ -163,6 +164,8 @@ ${intervalsIcuBlock}
   2. **Handle Set Recovery:** If there is a distinct longer break between large sets (e.g., 5 mins between blocks of intervals), put that in **set_recovery**.
   3. **Ignore Warmup/Cooldown:** Only capture the "work" segments.
   4. **Units:** Always convert distance to METERS and time to SECONDS.
+
+  ${venuePromptBlock()}
 
   ### 5. TASK
   Analyze the data and classify the run according to the rules above.

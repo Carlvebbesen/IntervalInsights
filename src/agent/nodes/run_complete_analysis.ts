@@ -67,6 +67,7 @@ export async function runCompleteAnalysis(
       initialResult: state.initialResult,
       userNotes: state.userNotes,
       trainingType,
+      intervalsIcuIntervals: state.intervalsIcuPrediction?.intervals ?? null,
       log,
       tag: `[runCompleteAnalysis activity=${state.activityId}]`,
     });

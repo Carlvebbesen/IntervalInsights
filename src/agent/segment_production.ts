@@ -1,6 +1,9 @@
 import type { Logger } from "../logger";
 import type { TrainingType } from "../schema/enums";
 import type { InsertIntervalSegment } from "../schema/interval_segments";
+import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
+import { buildSegmentsDeterministic } from "../services/deterministic_segmenter";
+import { buildSegmentsFromIntervalsIcu } from "../services/intervals_icu_segments";
 import { buildSegmentsFromLaps, structureShapeMatches } from "../services/lap_derivation_service";
 import { calculateSegmentStats, parsePaceStringToMetersPerSecond } from "../services/utils";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
@@ -11,6 +14,8 @@ import type { WorkoutAnalysisOutput } from "./initial_analysis_agent";
 import { invokeWithRateLimitRetry } from "./model";
 
 type StatsStreams = Required<Pick<StreamSet, "time" | "distance">> & Pick<StreamSet, "heartrate">;
+
+const DETERMINISTIC_CONFIDENCE_THRESHOLD = 0.5;
 
 export function ensureWarmupFirst(
   segments: InsertIntervalSegment[],
@@ -44,27 +49,59 @@ export async function produceSegments(params: {
   initialResult: WorkoutAnalysisOutput | null;
   userNotes: string;
   trainingType: TrainingType;
+  intervalsIcuIntervals?: IIntervalsInterval[] | null;
   log: Logger;
   tag: string;
 }): Promise<InsertIntervalSegment[]> {
-  const { activityId, statsStreams, streams, laps, isIndoor, userSets, initialResult, log } =
-    params;
+  const { activityId, statsStreams, streams, laps, userSets, initialResult, log } = params;
   const t0 = statsStreams.time.data[0] ?? 0;
 
+  // Preferred rung: when the activity is linked to intervals.icu, its own
+  // WORK/RECOVERY breakdown is authoritative — use it before any heuristic.
+  const intervalsIcu = params.intervalsIcuIntervals;
+  if (intervalsIcu && intervalsIcu.length > 0) {
+    log.info({ intervals: intervalsIcu.length }, "intervals.icu linked — attempting its breakdown");
+    const fromIcu = buildSegmentsFromIntervalsIcu(activityId, intervalsIcu, statsStreams, params.tag);
+    if (fromIcu) {
+      log.info({ segments: fromIcu.length }, "intervals.icu segments");
+      return ensureWarmupFirst(fromIcu, activityId, t0);
+    }
+    log.info("intervals.icu breakdown unusable — trying laps/heuristics");
+  }
+
   const shapeUnchanged = structureShapeMatches(initialResult?.structure, userSets);
-  if (shapeUnchanged && !isIndoor && laps.length > 0) {
-    log.info("structure unchanged + outdoor — attempting lap-derived segments");
+  if (shapeUnchanged && laps.length > 0) {
+    log.info("structure unchanged — attempting lap-derived segments");
     const fromLaps = buildSegmentsFromLaps(activityId, laps, userSets, statsStreams, params.tag);
     if (fromLaps) {
       log.info({ segments: fromLaps.length }, "lap-derived segments");
       return ensureWarmupFirst(fromLaps, activityId, t0);
     }
-    log.info("lap-derivation failed — falling back to LLM");
-  } else {
-    log.info({ shapeUnchanged, indoor: isIndoor, laps: laps.length }, "skipping lap-derived path");
+    log.info("lap-derivation failed — trying deterministic segmenter");
   }
 
-  log.info("invoking segmentation LLM");
+  // Deterministic segmenter (speed/HR + the known/inferred structure) for the
+  // non-lap-matching path (indoor / dense / one-big-work-lap), where the LLM
+  // used to invent rep counts and crush the warmup to 60s. Validated on real
+  // workouts — see [[deterministic-interval-segmentation]]. A weak result
+  // (confidence below threshold) falls through to the LLM rather than shipping
+  // a bad split.
+  const deterministic = buildSegmentsDeterministic(activityId, laps, userSets, statsStreams);
+  if (deterministic && deterministic.confidence >= DETERMINISTIC_CONFIDENCE_THRESHOLD) {
+    log.info(
+      { segments: deterministic.segments.length, confidence: deterministic.confidence, mode: deterministic.mode },
+      "deterministic segments",
+    );
+    return ensureWarmupFirst(deterministic.segments, activityId, t0);
+  }
+  if (deterministic) {
+    log.info(
+      { confidence: deterministic.confidence, mode: deterministic.mode },
+      "deterministic low-confidence — falling back to LLM",
+    );
+  } else {
+    log.info("deterministic failed — invoking segmentation LLM");
+  }
   const segmentPlan = await invokeWithRateLimitRetry(() =>
     invokeCompleteActivityAnalysisAgent(
       streams,

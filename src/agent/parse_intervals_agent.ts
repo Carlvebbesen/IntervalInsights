@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { TrainingType } from "../schema/enums";
 import { workoutSet } from "./initial_analysis_agent";
 import { invokeStructured } from "./model";
+import { venuePromptBlock } from "./running_venues";
 
 export const parseIntervalsOutput = z.object({
   sets: z
@@ -32,6 +33,8 @@ You convert a user's free-text description of a structured workout into a typed 
 - Ignore warmup/cooldown — only capture the "work" segments.
 - Return an empty 'sets' array if the text doesn't describe a structured workout.
 ${typeHint}
+
+${venuePromptBlock()}
 
 ### USER TEXT
 """${text}"""

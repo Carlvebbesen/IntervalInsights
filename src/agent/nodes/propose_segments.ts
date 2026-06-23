@@ -41,6 +41,7 @@ export async function proposeSegments(
     initialResult: state.initialResult,
     userNotes: "",
     trainingType,
+    intervalsIcuIntervals: state.intervalsIcuPrediction?.intervals ?? null,
     log,
     tag: `[proposeSegments activity=${state.activityId}]`,
   });
