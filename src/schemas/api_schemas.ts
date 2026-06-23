@@ -829,14 +829,10 @@ export const SyncResultSchema = z
   })
   .openapi({ ref: "SyncResult" });
 
-// Master sync (intervals.icu + Strava) is fire-and-forget: the route returns
-// this ack immediately and pushes progress + final counts over the SSE channel.
 export const SyncStartedSchema = z
   .object({ status: z.literal("started") })
   .openapi({ ref: "SyncStarted" });
 
-// Shape pushed over the SSE `strava_master_sync` completed event (and what
-// syncAllFromStrava returns internally).
 export const StravaSyncResultSchema = z
   .object({
     processed: z.number(),
@@ -966,8 +962,6 @@ export const ProgressDoneEventSchema = z
 
 export const SyncProgressEventSchema = z
   .object({
-    // Stable client key (intervals_master_sync | strava_master_sync |
-    // strava_import | future kinds); display text is server-authored below.
     kind: z.string(),
     phase: z.enum(["started", "progress", "completed"]),
     title: z.string(),

@@ -37,10 +37,6 @@ export type ProgressEvent =
     }
   | {
       type: "sync";
-      // `kind` is a stable client key (intervals_master_sync | strava_master_sync
-      // | strava_import | future kinds). `title` + `message` are server-authored
-      // display strings so a new sync kind needs no client changes; `retryAt`
-      // (epoch ms) drives the rate-limit cooldown.
       data: SyncProgress;
     }
   | { type: "error"; data: { id?: number; message: string } }
@@ -94,8 +90,6 @@ class InMemoryProgressPublisher implements ProgressPublisher {
 
 export const progressService: ProgressPublisher = new InMemoryProgressPublisher();
 
-/** Publish a sync progress frame. The one place sync events are shaped — new
- * sync flows call this with their own `title`/`message`, no client changes. */
 export function publishSync(userId: string, data: SyncProgress): Promise<void> {
   return progressService.publish(userId, { type: "sync", data });
 }

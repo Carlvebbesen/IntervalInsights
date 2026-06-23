@@ -158,10 +158,6 @@ stravaApiRouter.post(
     const accessToken = c.get("stravaAccessToken");
     const userId = c.get("userId");
     if (!accessToken || !userId) return c.json({ error: "Unauthorized" }, 401);
-    // Fire-and-forget: the description pass can run long (and may sit near a
-    // rate-limit boundary), so don't hold the HTTP connection open. The service
-    // never throws and pushes its own started/completed events; this .catch is
-    // just a backstop against an unexpected rejection.
     void syncAllFromStrava(c.env, accessToken, { id: userId }).catch((err) => {
       logger.error({ err, userId }, "Strava master sync (background) failed");
     });

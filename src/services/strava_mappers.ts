@@ -28,12 +28,6 @@ export function getDbInsertActivity(
   };
 }
 
-/**
- * Map a Strava SummaryActivity (from the bulk /athlete/activities list) into a
- * DB row. The summary lacks `description` and `calories` — those only come from
- * the per-activity detail call, fetched separately during the master sync to
- * respect Strava's rate limit.
- */
 export function getDbInsertFromSummary(
   data: SummaryActivity,
   userId: string,

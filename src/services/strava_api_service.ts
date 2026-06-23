@@ -16,11 +16,6 @@ import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { publishSync } from "./progress_service";
 import { getDbInsertActivity } from "./strava_mappers";
 
-/**
- * Strava's rate-limit budget, parsed from the read-specific headers when
- * present (falling back to the overall limit headers). Each pair is
- * `15-minute,daily`.
- */
 export interface StravaRateLimit {
   shortTermUsage: number;
   shortTermLimit: number;

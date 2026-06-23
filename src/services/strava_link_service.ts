@@ -10,37 +10,19 @@ import { publishSync } from "./progress_service";
 import { type StravaRateLimit, stravaApiService } from "./strava_api_service";
 import { getDbInsertFromSummary } from "./strava_mappers";
 
-// Strava's rate limit is strict, so the master sync is built around it:
-//   1. One cheap paginated list pass backfills title + gear (both present on the
-//      summary) and links/creates rows — a few requests for two years.
-//   2. A second pass fetches descriptions (detail-only, one request each),
-//      throttled and stopped early when Strava's short-term budget runs low.
-//      Anything left over is reported as `descriptionsRemaining` and picked up
-//      on the next run.
-//
-// The caller runs this in the background (fire-and-forget) and the client
-// follows along on the SSE progress channel, so this function never throws:
-// it always emits a `started` then a `completed` event and returns its counts.
-
 const LOOKBACK_YEARS = 2;
 const PAGE_SIZE = 200;
 const MAX_LIST_PAGES = 60;
 const LIST_THROTTLE_MS = 200;
 const DETAIL_THROTTLE_MS = 250;
-// Leave headroom under the 15-minute window so a concurrent webhook/import
-// doesn't tip us into a 429.
 const SHORT_TERM_SAFETY_MARGIN = 10;
-// Hard cap so a single run stays bounded in wall-clock time.
 const MAX_DESCRIPTION_FETCHES = 200;
 const PROGRESS_EVERY = 20;
-// Descriptions are the slow, throttled phase, so report often enough that the
-// user sees steady movement.
 const DESC_PROGRESS_EVERY = 5;
 
 const TIME_TOLERANCE_MS = 5 * 60 * 1000;
 const DISTANCE_TOLERANCE_RATIO = 0.03;
 
-// Wire identity for this sync's SSE events (stable client key + display title).
 const SYNC_KIND = "strava_master_sync";
 const SYNC_TITLE = "Strava";
 
@@ -67,7 +49,7 @@ function findUniqueMatch(summary: SummaryActivity, locals: FuzzyLocal[]): FuzzyL
   for (const local of locals) {
     if (Math.abs(startMs - local.startMs) > TIME_TOLERANCE_MS) continue;
     if (local.distance < minDistance || local.distance > maxDistance) continue;
-    if (found) return null; // ambiguous → skip
+    if (found) return null;
     found = local;
   }
   return found;
@@ -93,8 +75,6 @@ function overBudget(rateLimit: StravaRateLimit | null): boolean {
   return rateLimit.shortTermUsage >= rateLimit.shortTermLimit - SHORT_TERM_SAFETY_MARGIN;
 }
 
-// Strava's 15-minute budget resets on the wall-clock quarter hour, so the
-// earliest a retry can succeed is the next :00/:15/:30/:45.
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
 function nextStravaWindowMs(): number {
   return (Math.floor(Date.now() / FIFTEEN_MIN_MS) + 1) * FIFTEEN_MIN_MS;
@@ -153,7 +133,6 @@ export async function syncAllFromStrava(
       }
     }
 
-    // Rows whose description should be fetched in the second pass.
     const descriptionQueue: Array<{ internalId: number; stravaId: number }> = [];
     const afterEpoch = Math.floor(
       (Date.now() - LOOKBACK_YEARS * 365 * 24 * 60 * 60 * 1000) / 1000,
@@ -188,7 +167,6 @@ export async function syncAllFromStrava(
         try {
           const existingId = stravaIdToLocalId.get(summary.id);
           if (existingId != null) {
-            // Already linked by Strava id — refresh title + gear (Strava wins).
             await context.db
               .update(activities)
               .set({ title: summary.name, gearId: summary.gear_id })
@@ -250,7 +228,6 @@ export async function syncAllFromStrava(
       await sleep(LIST_THROTTLE_MS);
     }
 
-    // Second pass: descriptions (detail-only), bounded by the rate-limit budget.
     const descTotal = Math.min(descriptionQueue.length, MAX_DESCRIPTION_FETCHES);
     if (descTotal > 0) {
       await publishSync(user.id, {
@@ -297,8 +274,6 @@ export async function syncAllFromStrava(
       await sleep(DETAIL_THROTTLE_MS);
     }
     result.descriptionsRemaining = descriptionQueue.length - i;
-    // Stopped proactively because the budget was nearly spent — same cooldown
-    // as a hard 429 so the client doesn't immediately retry into one.
     if (result.descriptionsRemaining > 0 && overBudget(lastRateLimit)) {
       retryAt ??= nextStravaWindowMs();
     }
