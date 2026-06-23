@@ -13,7 +13,7 @@ import type {
 } from "../types/strava/IDetailedActivity";
 import type { StreamTypeMap } from "../types/strava/IStream";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
-import { progressService } from "./progress_service";
+import { publishSync } from "./progress_service";
 import { getDbInsertActivity } from "./strava_mappers";
 
 /**
@@ -135,9 +135,11 @@ export const stravaApiService = {
     const triggers: Array<{ internalId: number; stravaActivityId: number }> = [];
     const processHeartRate = await userHasHeartRateConsent(db, userId);
 
-    await progressService.publish(userId, {
-      type: "sync",
-      data: { kind: "strava_import", phase: "started", processed: 0, total: ids.length },
+    await publishSync(userId, {
+      kind: "strava_import",
+      phase: "started",
+      title: "Strava",
+      message: `importing 0/${ids.length}`,
     });
 
     let processed = 0;
@@ -173,22 +175,22 @@ export const stravaApiService = {
       processed += batchResults.length;
       failed += batchResults.filter((r) => r.status === "failed").length;
       if (processed % PROGRESS_EVERY < BATCH_SIZE && processed < ids.length) {
-        await progressService.publish(userId, {
-          type: "sync",
-          data: {
-            kind: "strava_import",
-            phase: "progress",
-            processed,
-            total: ids.length,
-            failed,
-          },
+        await publishSync(userId, {
+          kind: "strava_import",
+          phase: "progress",
+          title: "Strava",
+          message: `importing ${processed}/${ids.length}`,
         });
       }
     }
 
-    await progressService.publish(userId, {
-      type: "sync",
-      data: { kind: "strava_import", phase: "completed", processed, total: ids.length, failed },
+    await publishSync(userId, {
+      kind: "strava_import",
+      phase: "completed",
+      title: "Strava",
+      message: failed > 0
+        ? `Imported ${processed - failed}/${ids.length} (${failed} failed)`
+        : `Imported ${processed} activities`,
     });
 
     // Stagger LLM-triggering analyses to avoid bursting Gemini's RPM quota on

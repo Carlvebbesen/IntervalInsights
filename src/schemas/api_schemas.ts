@@ -966,14 +966,13 @@ export const ProgressDoneEventSchema = z
 
 export const SyncProgressEventSchema = z
   .object({
-    kind: z.enum(["intervals_master_sync", "strava_import"]),
+    // Stable client key (intervals_master_sync | strava_master_sync |
+    // strava_import | future kinds); display text is server-authored below.
+    kind: z.string(),
     phase: z.enum(["started", "progress", "completed"]),
-    processed: z.number().int(),
-    total: z.number().int().optional(),
-    created: z.number().int().optional(),
-    linked: z.number().int().optional(),
-    failed: z.number().int().optional(),
+    title: z.string(),
     message: z.string().optional(),
+    retryAt: z.number().int().optional(),
   })
   .openapi({ ref: "SyncProgressEvent" });
 

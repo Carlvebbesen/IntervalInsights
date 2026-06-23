@@ -10,7 +10,7 @@ import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsActivity } from "../types/intervals/IIntervalsActivity";
 import { intervalsApiService } from "./intervals_api_service";
 import { mapIntervalsActivityToInsert } from "./intervals_mappers";
-import { progressService } from "./progress_service";
+import { publishSync } from "./progress_service";
 
 type EnrichmentFields = Partial<
   Pick<
@@ -271,6 +271,10 @@ const SYNC_THROTTLE_MS = 100;
 // we ask the client to wait a conservative minute before retrying.
 const INTERVALS_RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
 
+// Wire identity for this sync's SSE events (stable client key + display title).
+const SYNC_KIND = "intervals_master_sync";
+const SYNC_TITLE = "intervals.icu";
+
 export interface SyncIntervalsResult {
   candidates: number;
   linked: number;
@@ -284,7 +288,6 @@ const AUTO_ANALYZE_ON_IMPORT = false;
 
 const MASTER_WINDOW_MS = 6 * 30 * 24 * 60 * 60 * 1000;
 const MASTER_HISTORY_FLOOR_MS = 10 * 365 * 24 * 60 * 60 * 1000;
-const MASTER_PROGRESS_EVERY = 25;
 
 export interface MasterSyncResult extends SyncIntervalsResult {
   created: number;
@@ -312,6 +315,20 @@ function findUniqueInMemoryMatch(
   return found;
 }
 
+function intervalsCompletedMessage(r: MasterSyncResult, retryAt?: number): string {
+  if (retryAt) return "intervals.icu rate limit reached — paused. Retry shortly.";
+  const parts = [
+    r.created > 0 ? `${r.created} imported` : null,
+    r.linked > 0 ? `${r.linked} linked` : null,
+  ].filter((p): p is string => p !== null);
+  if (parts.length === 0) {
+    return r.failed > 0
+      ? "intervals.icu sync finished with errors"
+      : "intervals.icu is already up to date";
+  }
+  return `Synced intervals.icu — ${parts.join(" • ")}`;
+}
+
 export async function syncAllFromIntervals(
   context: IGlobalBindings,
   user: { id: string; clerkId: string },
@@ -330,9 +347,10 @@ export async function syncAllFromIntervals(
   // live toast never hangs, and never throws.
   let retryAt: number | undefined;
 
-  await progressService.publish(user.id, {
-    type: "sync",
-    data: { kind: "intervals_master_sync", phase: "started", processed: 0 },
+  await publishSync(user.id, {
+    kind: SYNC_KIND,
+    phase: "started",
+    title: SYNC_TITLE,
   });
 
   try {
@@ -389,18 +407,13 @@ export async function syncAllFromIntervals(
 
     if (windowActivities.length === 0) break;
 
-    // One event per window (in addition to the per-25 below) so the user sees
-    // the scan moving back through time even when a window adds nothing new.
-    await progressService.publish(user.id, {
-      type: "sync",
-      data: {
-        kind: "intervals_master_sync",
-        phase: "progress",
-        processed: result.processed,
-        created: result.created,
-        linked: result.linked,
-        message: `scanning ${newest.slice(0, 7)} — ${result.created} imported, ${result.linked} linked`,
-      },
+    // One event per window so the user sees the scan moving back through time,
+    // even when a window adds nothing new.
+    await publishSync(user.id, {
+      kind: SYNC_KIND,
+      phase: "progress",
+      title: SYNC_TITLE,
+      message: `scanning ${newest.slice(0, 7)} — ${result.created} imported, ${result.linked} linked`,
     });
 
     for (const intervalsActivity of windowActivities) {
@@ -448,19 +461,6 @@ export async function syncAllFromIntervals(
       }
 
       result.processed++;
-      if (result.processed % MASTER_PROGRESS_EVERY === 0) {
-        await progressService.publish(user.id, {
-          type: "sync",
-          data: {
-            kind: "intervals_master_sync",
-            phase: "progress",
-            processed: result.processed,
-            created: result.created,
-            linked: result.linked,
-            failed: result.failed,
-          },
-        });
-      }
     }
 
     windowNewestMs = windowOldestMs;
@@ -472,17 +472,12 @@ export async function syncAllFromIntervals(
     result.failed++;
     logger.error({ err, userId: user.id }, "intervals.icu master sync failed");
   } finally {
-    await progressService.publish(user.id, {
-      type: "sync",
-      data: {
-        kind: "intervals_master_sync",
-        phase: "completed",
-        processed: result.processed,
-        created: result.created,
-        linked: result.linked,
-        failed: result.failed,
-        retryAt,
-      },
+    await publishSync(user.id, {
+      kind: SYNC_KIND,
+      phase: "completed",
+      title: SYNC_TITLE,
+      message: intervalsCompletedMessage(result, retryAt),
+      retryAt,
     });
   }
 

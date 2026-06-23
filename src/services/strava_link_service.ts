@@ -6,7 +6,7 @@ import { activities } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { SummaryActivity } from "../types/strava/IDetailedActivity";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
-import { progressService } from "./progress_service";
+import { publishSync } from "./progress_service";
 import { type StravaRateLimit, stravaApiService } from "./strava_api_service";
 import { getDbInsertFromSummary } from "./strava_mappers";
 
@@ -40,6 +40,10 @@ const DESC_PROGRESS_EVERY = 5;
 const TIME_TOLERANCE_MS = 5 * 60 * 1000;
 const DISTANCE_TOLERANCE_RATIO = 0.03;
 
+// Wire identity for this sync's SSE events (stable client key + display title).
+const SYNC_KIND = "strava_master_sync";
+const SYNC_TITLE = "Strava";
+
 export interface StravaMasterSyncResult {
   processed: number;
   created: number;
@@ -67,6 +71,21 @@ function findUniqueMatch(summary: SummaryActivity, locals: FuzzyLocal[]): FuzzyL
     found = local;
   }
   return found;
+}
+
+function stravaCompletedMessage(r: StravaMasterSyncResult, retryAt?: number): string {
+  if (retryAt) return "Strava rate limit reached — paused. Retry when the cooldown ends.";
+  const parts = [
+    r.created > 0 ? `${r.created} imported` : null,
+    r.linked > 0 ? `${r.linked} linked` : null,
+    r.updated > 0 ? `${r.updated} updated` : null,
+    r.descriptionsUpdated > 0 ? `${r.descriptionsUpdated} descriptions` : null,
+  ].filter((p): p is string => p !== null);
+  if (parts.length === 0) {
+    return r.failed > 0 ? "Strava sync finished with errors" : "Strava is already up to date";
+  }
+  const remaining = r.descriptionsRemaining > 0 ? ` • ${r.descriptionsRemaining} left, sync again` : "";
+  return `Synced Strava — ${parts.join(" • ")}${remaining}`;
 }
 
 function overBudget(rateLimit: StravaRateLimit | null): boolean {
@@ -97,9 +116,10 @@ export async function syncAllFromStrava(
   };
   let retryAt: number | undefined;
 
-  await progressService.publish(user.id, {
-    type: "sync",
-    data: { kind: "strava_master_sync", phase: "started", processed: 0 },
+  await publishSync(user.id, {
+    kind: SYNC_KIND,
+    phase: "started",
+    title: SYNC_TITLE,
   });
 
   try {
@@ -117,8 +137,10 @@ export async function syncAllFromStrava(
       .where(eq(activities.userId, user.id));
 
     const stravaIdToLocalId = new Map<number, number>();
+    const hasDescriptionById = new Map<number, boolean>();
     const unlinkedLocals: FuzzyLocal[] = [];
     for (const row of localRows) {
+      hasDescriptionById.set(row.id, !!row.description?.trim());
       if (row.stravaActivityId != null) {
         stravaIdToLocalId.set(Number(row.stravaActivityId), row.id);
       } else {
@@ -172,8 +194,7 @@ export async function syncAllFromStrava(
               .set({ title: summary.name, gearId: summary.gear_id })
               .where(eq(activities.id, existingId));
             result.updated++;
-            const row = localRows.find((r) => r.id === existingId);
-            if (!row?.description?.trim()) {
+            if (!hasDescriptionById.get(existingId)) {
               descriptionQueue.push({ internalId: existingId, stravaId: summary.id });
             }
             continue;
@@ -216,18 +237,11 @@ export async function syncAllFromStrava(
         }
 
         if (result.processed % PROGRESS_EVERY === 0) {
-          await progressService.publish(user.id, {
-            type: "sync",
-            data: {
-              kind: "strava_master_sync",
-              phase: "progress",
-              processed: result.processed,
-              created: result.created,
-              linked: result.linked,
-              updated: result.updated,
-              failed: result.failed,
-              message: `scanning activities — ${result.created} new, ${result.linked + result.updated} updated`,
-            },
+          await publishSync(user.id, {
+            kind: SYNC_KIND,
+            phase: "progress",
+            title: SYNC_TITLE,
+            message: `scanning activities — ${result.created} new, ${result.linked + result.updated} updated`,
           });
         }
       }
@@ -239,14 +253,11 @@ export async function syncAllFromStrava(
     // Second pass: descriptions (detail-only), bounded by the rate-limit budget.
     const descTotal = Math.min(descriptionQueue.length, MAX_DESCRIPTION_FETCHES);
     if (descTotal > 0) {
-      await progressService.publish(user.id, {
-        type: "sync",
-        data: {
-          kind: "strava_master_sync",
-          phase: "progress",
-          processed: result.processed,
-          message: `fetching descriptions 0/${descTotal}`,
-        },
+      await publishSync(user.id, {
+        kind: SYNC_KIND,
+        phase: "progress",
+        title: SYNC_TITLE,
+        message: `fetching descriptions 0/${descTotal}`,
       });
     }
     let i = 0;
@@ -276,14 +287,11 @@ export async function syncAllFromStrava(
         logger.error({ err, stravaActivityId: item.stravaId }, "Strava description fetch failed");
       }
       if ((i + 1) % DESC_PROGRESS_EVERY === 0) {
-        await progressService.publish(user.id, {
-          type: "sync",
-          data: {
-            kind: "strava_master_sync",
-            phase: "progress",
-            processed: result.processed,
-            message: `fetching descriptions ${i + 1}/${descTotal}`,
-          },
+        await publishSync(user.id, {
+          kind: SYNC_KIND,
+          phase: "progress",
+          title: SYNC_TITLE,
+          message: `fetching descriptions ${i + 1}/${descTotal}`,
         });
       }
       await sleep(DETAIL_THROTTLE_MS);
@@ -298,20 +306,12 @@ export async function syncAllFromStrava(
     result.failed++;
     logger.error({ err, userId: user.id }, "Strava master sync failed");
   } finally {
-    await progressService.publish(user.id, {
-      type: "sync",
-      data: {
-        kind: "strava_master_sync",
-        phase: "completed",
-        processed: result.processed,
-        created: result.created,
-        linked: result.linked,
-        updated: result.updated,
-        descriptionsUpdated: result.descriptionsUpdated,
-        descriptionsRemaining: result.descriptionsRemaining,
-        failed: result.failed,
-        retryAt,
-      },
+    await publishSync(user.id, {
+      kind: SYNC_KIND,
+      phase: "completed",
+      title: SYNC_TITLE,
+      message: stravaCompletedMessage(result, retryAt),
+      retryAt,
     });
   }
 
