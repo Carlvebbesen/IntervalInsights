@@ -72,6 +72,25 @@ describe("syncAllFromIntervals (master sync)", () => {
     expect(rows[0].title).toBe(a.name ?? "Untitled activity");
   });
 
+  it("links an existing Strava row by strava_id even when fuzzy time/distance miss", async () => {
+    const local = await insertActivity(user.id, {
+      stravaActivityId: 555111,
+      distance: 1,
+      startDateLocal: new Date("2020-01-01T00:00:00Z"),
+    });
+    // intervals activity shares the Strava id but nothing else fuzzy-matchable
+    loadWindow(synthIntervalsActivity({ strava_id: 555111, distance: 99999 }));
+
+    const result = await syncAllFromIntervals({ db: getDb() }, user);
+
+    expect(result.linked).toBe(1);
+    expect(result.created).toBe(0);
+    const rows = await getDb().select().from(activities).where(eq(activities.userId, user.id));
+    expect(rows).toHaveLength(1); // linked onto the existing row, not duplicated
+    expect(rows[0].id).toBe(local.id);
+    expect(rows[0].intervalsIcuId).not.toBeNull();
+  });
+
   it("imports a no-distance activity (elliptical/strength/swim) as distance 0, not a failure", async () => {
     const a = synthIntervalsActivity({ distance: null, moving_time: null, type: "WeightTraining" });
     loadWindow(a);
@@ -158,12 +177,21 @@ describe("syncAllFromIntervals (master sync)", () => {
 
     const syncEvents = frames
       .filter((f) => f.event === "sync")
-      .map((f) => JSON.parse(f.data) as { phase: string; kind: string; created?: number });
+      .map(
+        (f) =>
+          JSON.parse(f.data) as {
+            phase: string;
+            kind: string;
+            messageKey?: string;
+            messageArgs?: Record<string, string>;
+          },
+      );
 
     expect(syncEvents.some((e) => e.phase === "started")).toBe(true);
     const completed = syncEvents.find((e) => e.phase === "completed");
     expect(completed).toBeDefined();
     expect(completed?.kind).toBe("intervals_master_sync");
-    expect(completed?.created).toBe(1);
+    expect(completed?.messageKey).toBe("sync_completed_intervals");
+    expect(completed?.messageArgs?.created).toBe("1");
   });
 });

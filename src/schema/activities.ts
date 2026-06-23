@@ -85,6 +85,12 @@ export const activities = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
     indoor: boolean("indoor").notNull(),
     intervalsIcuId: text("intervals_icu_id"),
+    // intervals.icu reports the originating Strava id on its activities. Stored
+    // here (NOT in stravaActivityId, which marks a row as Strava-sourced) purely
+    // so the Strava ingest paths can exact-join an intervals-sourced row for the
+    // same workout instead of creating a duplicate. Null when intervals.icu has
+    // no Strava id for the activity → callers fall back to fuzzy time/distance.
+    intervalsStravaId: bigint("intervals_strava_id", { mode: "number" }),
     intervalsAnalyzed: boolean("intervals_analyzed").default(false),
     intervalsIcuEnrichedAt: timestamp("intervals_icu_enriched_at"),
     elapsedTime: integer("elapsed_time"),
@@ -129,6 +135,7 @@ export const activities = pgTable(
       uniqueIndex("intervals_icu_id_unique")
         .on(table.intervalsIcuId)
         .where(sql`intervals_icu_id IS NOT NULL`),
+      index("intervals_strava_id_idx").on(table.intervalsStravaId),
     ];
   },
 );

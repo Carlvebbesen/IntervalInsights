@@ -36,7 +36,13 @@ export interface StravaMasterSyncResult {
   failed: number;
 }
 
-type FuzzyLocal = { id: number; startMs: number; distance: number; hasDescription: boolean };
+type FuzzyLocal = {
+  id: number;
+  startMs: number;
+  distance: number;
+  descriptionResolved: boolean;
+  intervalsStravaId: number | null;
+};
 
 function findUniqueMatch(summary: SummaryActivity, locals: FuzzyLocal[]): FuzzyLocal | null {
   const startMs = new Date(summary.start_date_local).getTime();
@@ -125,16 +131,19 @@ export async function syncAllFromStrava(
         startDateLocal: activities.startDateLocal,
         distance: activities.distance,
         stravaActivityId: activities.stravaActivityId,
+        intervalsStravaId: activities.intervalsStravaId,
         description: activities.description,
       })
       .from(activities)
       .where(eq(activities.userId, user.id));
 
     const stravaIdToLocalId = new Map<number, number>();
-    const hasDescriptionById = new Map<number, boolean>();
+    // null description = never fetched (enqueue it); "" = fetched, Strava had
+    // none (don't re-fetch); non-empty = has one. So "resolved" means non-null.
+    const descriptionResolvedById = new Map<number, boolean>();
     const unlinkedLocals: FuzzyLocal[] = [];
     for (const row of localRows) {
-      hasDescriptionById.set(row.id, !!row.description?.trim());
+      descriptionResolvedById.set(row.id, row.description != null);
       if (row.stravaActivityId != null) {
         stravaIdToLocalId.set(Number(row.stravaActivityId), row.id);
       } else {
@@ -142,7 +151,8 @@ export async function syncAllFromStrava(
           id: row.id,
           startMs: row.startDateLocal.getTime(),
           distance: row.distance,
-          hasDescription: !!row.description?.trim(),
+          descriptionResolved: row.description != null,
+          intervalsStravaId: row.intervalsStravaId,
         });
       }
     }
@@ -186,13 +196,18 @@ export async function syncAllFromStrava(
               .set({ title: summary.name, gearId: summary.gear_id })
               .where(eq(activities.id, existingId));
             result.updated++;
-            if (!hasDescriptionById.get(existingId)) {
+            if (!descriptionResolvedById.get(existingId)) {
               descriptionQueue.push({ internalId: existingId, stravaId: summary.id });
             }
             continue;
           }
 
-          const match = findUniqueMatch(summary, unlinkedLocals);
+          // Exact join first: an intervals-sourced row carrying this Strava id
+          // (from intervals.icu) is unambiguously the same workout — link it
+          // rather than insert a duplicate. Falls back to fuzzy time/distance
+          // when intervals.icu had no Strava id for that activity.
+          const exactMatch = unlinkedLocals.find((l) => l.intervalsStravaId === summary.id) ?? null;
+          const match = exactMatch ?? findUniqueMatch(summary, unlinkedLocals);
           if (match) {
             await context.db
               .update(activities)
@@ -201,7 +216,7 @@ export async function syncAllFromStrava(
             stravaIdToLocalId.set(summary.id, match.id);
             unlinkedLocals.splice(unlinkedLocals.indexOf(match), 1);
             result.linked++;
-            if (!match.hasDescription) {
+            if (!match.descriptionResolved) {
               descriptionQueue.push({ internalId: match.id, stravaId: summary.id });
             }
             continue;
@@ -266,13 +281,14 @@ export async function syncAllFromStrava(
           item.stravaId,
         );
         if (rateLimit) lastRateLimit = rateLimit;
-        if (data.description?.trim()) {
-          await context.db
-            .update(activities)
-            .set({ description: data.description })
-            .where(eq(activities.id, item.internalId));
-          result.descriptionsUpdated++;
-        }
+        // Persist "" when Strava has no description so the row is marked checked
+        // (non-null) and isn't re-queued on every subsequent sync.
+        const description = data.description?.trim() ? data.description : "";
+        await context.db
+          .update(activities)
+          .set({ description })
+          .where(eq(activities.id, item.internalId));
+        if (description) result.descriptionsUpdated++;
       } catch (err) {
         if (err instanceof StravaError && err.status === 429) {
           logger.warn({ stravaActivityId: item.stravaId }, "Strava 429 — stopping description pass");

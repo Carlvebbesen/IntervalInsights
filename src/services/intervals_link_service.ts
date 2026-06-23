@@ -163,6 +163,7 @@ export async function linkFromLocalActivity(
       startDateLocal: true,
       distance: true,
       intervalsIcuId: true,
+      stravaActivityId: true,
     },
   });
   if (!activity || activity.intervalsIcuId) return null;
@@ -170,7 +171,11 @@ export async function linkFromLocalActivity(
   let accessToken: string;
   try {
     accessToken = await getIntervalsAccessToken(user.clerkId);
-  } catch {
+  } catch (err) {
+    // athleteId set in Postgres but token missing/expired in Clerk metadata —
+    // surface it; otherwise this is indistinguishable from "no match" and the
+    // activity silently never links.
+    logger.warn({ err, localActivityId }, "intervals.icu link skipped — no usable access token");
     return null;
   }
 
@@ -184,6 +189,25 @@ export async function linkFromLocalActivity(
   } catch (err) {
     logger.error({ err }, "intervals.icu listActivities failed");
     return null;
+  }
+
+  // Exact join first: when both rows originate from the same Strava activity,
+  // intervals.icu carries its `strava_id`. That's an unambiguous key — use it
+  // before the fuzzy time/distance heuristic, which mis-fires on timezone-offset
+  // start times and >3% distance drift between the two sources.
+  if (activity.stravaActivityId != null) {
+    const exact = candidates.filter((c) => c.strava_id === activity.stravaActivityId);
+    if (exact.length === 1) {
+      let full: IIntervalsActivity;
+      try {
+        full = await intervalsApiService.getActivity(accessToken, exact[0].id);
+      } catch (err) {
+        logger.error({ err, intervalsActivityId: exact[0].id }, "intervals.icu getActivity failed");
+        full = exact[0];
+      }
+      await commitLink(context, activity.id, full);
+      return { localActivityId: activity.id, intervalsActivityId: full.id };
+    }
   }
 
   const fuzzy = candidates.filter((candidate) => {
@@ -291,12 +315,19 @@ export interface MasterSyncResult extends SyncIntervalsResult {
   processed: number;
 }
 
-type FuzzyLocal = { id: number; startMs: number; distance: number };
+type FuzzyLocal = { id: number; startMs: number; distance: number; stravaActivityId: number | null };
 
 function findUniqueInMemoryMatch(
   intervalsActivity: IIntervalsActivity,
   locals: FuzzyLocal[],
 ): FuzzyLocal | null {
+  // Exact Strava-id join first (see linkFromLocalActivity) — unambiguous when
+  // both rows came from the same Strava activity.
+  if (intervalsActivity.strava_id != null) {
+    const exact = locals.filter((l) => l.stravaActivityId === intervalsActivity.strava_id);
+    if (exact.length === 1) return exact[0];
+  }
+
   const startMs = parseIntervalsLocalStartMs(intervalsActivity.start_date_local);
   if (Number.isNaN(startMs)) return null;
 
@@ -361,6 +392,7 @@ export async function syncAllFromIntervals(
         startDateLocal: activities.startDateLocal,
         distance: activities.distance,
         intervalsIcuId: activities.intervalsIcuId,
+        stravaActivityId: activities.stravaActivityId,
       })
       .from(activities)
       .where(eq(activities.userId, user.id));
@@ -375,6 +407,7 @@ export async function syncAllFromIntervals(
           id: row.id,
           startMs: row.startDateLocal.getTime(),
           distance: row.distance,
+          stravaActivityId: row.stravaActivityId,
         });
       }
     }

@@ -15,6 +15,8 @@ function parseIntervalsLocalStart(value: string): Date {
  * strava_mappers.getDbInsertActivity. Used by the master-sync path to create
  * local rows for activities that have no Strava source. `stravaActivityId` is
  * null (these never came from Strava); `intervalsIcuId` carries the link.
+ * `intervalsStravaId` records intervals.icu's reported Strava id (if any) so the
+ * Strava ingest paths can later dedupe against this row.
  * Enrichment metrics are layered on separately via buildEnrichment.
  */
 export function mapIntervalsActivityToInsert(
@@ -24,6 +26,7 @@ export function mapIntervalsActivityToInsert(
   return {
     userId,
     stravaActivityId: null,
+    intervalsStravaId: activity.strava_id ?? null,
     intervalsIcuId: activity.id,
     title: activity.name?.trim() || "Untitled activity",
     description: activity.description,

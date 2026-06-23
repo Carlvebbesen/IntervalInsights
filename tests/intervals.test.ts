@@ -101,13 +101,13 @@ describe("/api/intervals/auth", () => {
 });
 
 describe("/api/intervals (sync)", () => {
-  it("POST /sync runs the link service (mocked)", () =>
+  it("POST /sync kicks off the link service in the background", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
         new Request("http://test/api/intervals/sync", { method: "POST" }),
       );
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(202);
       const body = await res.json();
-      expect(typeof body.linked).toBe("number");
+      expect(body.status).toBe("started");
     }));
 });

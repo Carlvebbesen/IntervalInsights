@@ -43,7 +43,6 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
     const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
     await clerkClient.users.updateUserMetadata(user.clerkId, {
       privateMetadata: { strava: null },
-      publicMetadata: { strava_connected: false },
     });
 
     logger.info({ athleteId: body.owner_id }, "Processed Strava deauthorization");
@@ -103,6 +102,47 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
         "Storing as skipped_inactive — user inactive",
       );
     }
+
+    // Converge with an existing intervals.icu-sourced row for the same workout
+    // (intervals.icu reported this Strava id, but the row isn't Strava-linked
+    // yet) instead of inserting a duplicate. Merge the Strava metadata onto it,
+    // attach the Strava id, and re-arm analysis — intervals enrichment fields
+    // are left untouched (not in the payload).
+    const twin = await context.db.query.activities.findFirst({
+      where: (a, { and, eq, isNull }) =>
+        and(
+          eq(a.userId, user.id),
+          eq(a.intervalsStravaId, stravaActivityId),
+          isNull(a.stravaActivityId),
+        ),
+      columns: { id: true },
+    });
+
+    if (twin) {
+      await context.db
+        .update(activities)
+        .set({ ...payload, analysisStatus: payload.analysisStatus ?? "pending" })
+        .where(eq(activities.id, twin.id));
+      logger.info(
+        { stravaActivityId, userId: user.id, mergedInto: twin.id },
+        "Strava create merged into existing intervals.icu row (dedup)",
+      );
+      if (activityClass === "active") {
+        await progressService.publish(user.id, {
+          type: "progress",
+          data: {
+            id: twin.id,
+            kind: "strava_ingest",
+            phase: "received",
+            analysisStatus: "pending",
+            title: activity.title ?? undefined,
+            startDateLocal: activity.startDateLocal?.toISOString(),
+          },
+        });
+      }
+      return;
+    }
+
     const [inserted] = await context.db
       .insert(activities)
       .values(payload)
