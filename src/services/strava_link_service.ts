@@ -55,19 +55,33 @@ function findUniqueMatch(summary: SummaryActivity, locals: FuzzyLocal[]): FuzzyL
   return found;
 }
 
-function stravaCompletedMessage(r: StravaMasterSyncResult, retryAt?: number): string {
-  if (retryAt) return "Strava rate limit reached — paused. Retry when the cooldown ends.";
-  const parts = [
-    r.created > 0 ? `${r.created} imported` : null,
-    r.linked > 0 ? `${r.linked} linked` : null,
-    r.updated > 0 ? `${r.updated} updated` : null,
-    r.descriptionsUpdated > 0 ? `${r.descriptionsUpdated} descriptions` : null,
-  ].filter((p): p is string => p !== null);
-  if (parts.length === 0) {
-    return r.failed > 0 ? "Strava sync finished with errors" : "Strava is already up to date";
+function stravaCompletedMessage(
+  r: StravaMasterSyncResult,
+  retryAt?: number,
+): { messageKey: string; messageArgs: Record<string, string> } {
+  if (retryAt) {
+    return { messageKey: "sync_completed_rate_limited", messageArgs: { provider: SYNC_TITLE } };
   }
-  const remaining = r.descriptionsRemaining > 0 ? ` • ${r.descriptionsRemaining} left, sync again` : "";
-  return `Synced Strava — ${parts.join(" • ")}${remaining}`;
+  const changed = r.created + r.linked + r.updated + r.descriptionsUpdated;
+  if (changed === 0) {
+    return {
+      messageKey: r.failed > 0 ? "sync_completed_errors" : "sync_completed_up_to_date",
+      messageArgs: { provider: SYNC_TITLE },
+    };
+  }
+  const args: Record<string, string> = {
+    created: String(r.created),
+    linked: String(r.linked),
+    updated: String(r.updated),
+    descriptions: String(r.descriptionsUpdated),
+  };
+  if (r.descriptionsRemaining > 0) {
+    return {
+      messageKey: "sync_completed_strava_more",
+      messageArgs: { ...args, remaining: String(r.descriptionsRemaining) },
+    };
+  }
+  return { messageKey: "sync_completed_strava", messageArgs: args };
 }
 
 function overBudget(rateLimit: StravaRateLimit | null): boolean {
@@ -219,7 +233,11 @@ export async function syncAllFromStrava(
             kind: SYNC_KIND,
             phase: "progress",
             title: SYNC_TITLE,
-            message: `scanning activities — ${result.created} new, ${result.linked + result.updated} updated`,
+            messageKey: "sync_scanning",
+            messageArgs: {
+              created: String(result.created),
+              updated: String(result.linked + result.updated),
+            },
           });
         }
       }
@@ -234,7 +252,8 @@ export async function syncAllFromStrava(
         kind: SYNC_KIND,
         phase: "progress",
         title: SYNC_TITLE,
-        message: `fetching descriptions 0/${descTotal}`,
+        messageKey: "sync_fetching_descriptions",
+        messageArgs: { done: "0", total: String(descTotal) },
       });
     }
     let i = 0;
@@ -268,7 +287,8 @@ export async function syncAllFromStrava(
           kind: SYNC_KIND,
           phase: "progress",
           title: SYNC_TITLE,
-          message: `fetching descriptions ${i + 1}/${descTotal}`,
+          messageKey: "sync_fetching_descriptions",
+          messageArgs: { done: String(i + 1), total: String(descTotal) },
         });
       }
       await sleep(DETAIL_THROTTLE_MS);
@@ -285,7 +305,7 @@ export async function syncAllFromStrava(
       kind: SYNC_KIND,
       phase: "completed",
       title: SYNC_TITLE,
-      message: stravaCompletedMessage(result, retryAt),
+      ...stravaCompletedMessage(result, retryAt),
       retryAt,
     });
   }

@@ -13,7 +13,8 @@ export interface SyncProgress {
   kind: string;
   phase: "started" | "progress" | "completed";
   title: string;
-  message?: string;
+  messageKey?: string;
+  messageArgs?: Record<string, string>;
   retryAt?: number;
 }
 

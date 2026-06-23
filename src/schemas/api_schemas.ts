@@ -965,7 +965,8 @@ export const SyncProgressEventSchema = z
     kind: z.string(),
     phase: z.enum(["started", "progress", "completed"]),
     title: z.string(),
-    message: z.string().optional(),
+    messageKey: z.string().optional(),
+    messageArgs: z.record(z.string(), z.string()).optional(),
     retryAt: z.number().int().optional(),
   })
   .openapi({ ref: "SyncProgressEvent" });

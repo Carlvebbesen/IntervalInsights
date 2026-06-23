@@ -312,18 +312,23 @@ function findUniqueInMemoryMatch(
   return found;
 }
 
-function intervalsCompletedMessage(r: MasterSyncResult, retryAt?: number): string {
-  if (retryAt) return "intervals.icu rate limit reached — paused. Retry shortly.";
-  const parts = [
-    r.created > 0 ? `${r.created} imported` : null,
-    r.linked > 0 ? `${r.linked} linked` : null,
-  ].filter((p): p is string => p !== null);
-  if (parts.length === 0) {
-    return r.failed > 0
-      ? "intervals.icu sync finished with errors"
-      : "intervals.icu is already up to date";
+function intervalsCompletedMessage(
+  r: MasterSyncResult,
+  retryAt?: number,
+): { messageKey: string; messageArgs: Record<string, string> } {
+  if (retryAt) {
+    return { messageKey: "sync_completed_rate_limited", messageArgs: { provider: SYNC_TITLE } };
   }
-  return `Synced intervals.icu — ${parts.join(" • ")}`;
+  if (r.created + r.linked === 0) {
+    return {
+      messageKey: r.failed > 0 ? "sync_completed_errors" : "sync_completed_up_to_date",
+      messageArgs: { provider: SYNC_TITLE },
+    };
+  }
+  return {
+    messageKey: "sync_completed_intervals",
+    messageArgs: { created: String(r.created), linked: String(r.linked) },
+  };
 }
 
 export async function syncAllFromIntervals(
@@ -404,7 +409,12 @@ export async function syncAllFromIntervals(
       kind: SYNC_KIND,
       phase: "progress",
       title: SYNC_TITLE,
-      message: `scanning ${newest.slice(0, 7)} — ${result.created} imported, ${result.linked} linked`,
+      messageKey: "sync_scanning_window",
+      messageArgs: {
+        period: newest.slice(0, 7),
+        imported: String(result.created),
+        linked: String(result.linked),
+      },
     });
 
     for (const intervalsActivity of windowActivities) {
@@ -467,7 +477,7 @@ export async function syncAllFromIntervals(
       kind: SYNC_KIND,
       phase: "completed",
       title: SYNC_TITLE,
-      message: intervalsCompletedMessage(result, retryAt),
+      ...intervalsCompletedMessage(result, retryAt),
       retryAt,
     });
   }

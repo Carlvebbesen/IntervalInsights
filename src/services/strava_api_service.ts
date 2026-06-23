@@ -134,7 +134,8 @@ export const stravaApiService = {
       kind: "strava_import",
       phase: "started",
       title: "Strava",
-      message: `importing 0/${ids.length}`,
+      messageKey: "sync_importing",
+      messageArgs: { done: "0", total: String(ids.length) },
     });
 
     let processed = 0;
@@ -174,7 +175,8 @@ export const stravaApiService = {
           kind: "strava_import",
           phase: "progress",
           title: "Strava",
-          message: `importing ${processed}/${ids.length}`,
+          messageKey: "sync_importing",
+          messageArgs: { done: String(processed), total: String(ids.length) },
         });
       }
     }
@@ -183,9 +185,10 @@ export const stravaApiService = {
       kind: "strava_import",
       phase: "completed",
       title: "Strava",
-      message: failed > 0
-        ? `Imported ${processed - failed}/${ids.length} (${failed} failed)`
-        : `Imported ${processed} activities`,
+      messageKey: failed > 0 ? "sync_import_done_failed" : "sync_import_done",
+      messageArgs: failed > 0
+        ? { done: String(processed - failed), total: String(ids.length), failed: String(failed) }
+        : { done: String(processed) },
     });
 
     // Stagger LLM-triggering analyses to avoid bursting Gemini's RPM quota on
