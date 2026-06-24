@@ -12,11 +12,13 @@ import {
 import { toActivityEventDto } from "../dtos/event_dto";
 import { AppError } from "../error";
 import type { Logger } from "../logger";
+import { recordSegmentEdit, recordTrainingTypeChange } from "../otel";
 import * as activityRepo from "../repositories/activity_repository";
 import * as eventRepo from "../repositories/event_repository";
 import type {
   InsertActivity,
   InsertIntervalSegment,
+  ProposedSegmentDraft,
   SelectIntervalSegment,
   TrainingType,
 } from "../schema";
@@ -26,9 +28,14 @@ import { userHasHeartRateConsent } from "../services/heart_rate_consent_service"
 import { intervalsApiService } from "../services/intervals_api_service";
 import { enrichActivityFromIntervalsIcu } from "../services/intervals_link_service";
 import {
+  extractIntervalsList,
   mapIntervalsRawToLaps,
   mapIntervalsStreamsToStreamSet,
 } from "../services/intervals_mappers";
+import { produceSegments } from "../agent/segment_production";
+import type { WorkoutAnalysisOutput } from "../agent/initial_analysis_agent";
+import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
+import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import { getSegmentsForActivity } from "../services/lap_derivation_service";
 import {
   type FullSegmentSpec,
@@ -112,6 +119,7 @@ async function applySegmentEdit(
   clerkUserId: string,
   activity: OwnedActivity,
   specs: FullSegmentSpec[],
+  editKind: "bulk" | "single",
 ): Promise<{ intervalSegments: SelectIntervalSegment[] }> {
   if (!activity.trainingType) {
     throw new AppError(400, "Activity has no training type — cannot edit segments");
@@ -158,6 +166,8 @@ async function applySegmentEdit(
     draftOverride: null,
   });
 
+  recordSegmentEdit({ editKind, source: src.kind, trainingType: activity.trainingType });
+
   return { intervalSegments: await loadStoredSegments(db, activity.id) };
 }
 
@@ -180,7 +190,7 @@ export async function editSegments(
   if (!activity) {
     throw new AppError(404, "Activity not found");
   }
-  return applySegmentEdit(db, userId, clerkUserId, activity, specs);
+  return applySegmentEdit(db, userId, clerkUserId, activity, specs, "bulk");
 }
 
 export async function editSingleSegment(
@@ -222,7 +232,7 @@ export async function editSingleSegment(
     };
   });
 
-  return applySegmentEdit(db, userId, clerkUserId, activity, specs);
+  return applySegmentEdit(db, userId, clerkUserId, activity, specs, "single");
 }
 
 export interface UpdateActivityInput {
@@ -249,6 +259,9 @@ export async function updateMetadata(
   const updated = await activityRepo.updateMetadataForUser(db, userId, activityId, updates);
   if (!updated) {
     throw new AppError(404, "Activity not found or unauthorized");
+  }
+  if (data.trainingType != null) {
+    recordTrainingTypeChange({ trainingType: data.trainingType, via: "manual" });
   }
   return toActivityDto(updated);
 }
@@ -388,35 +401,138 @@ export async function getHeartrateStream(
   ]);
 }
 
-export async function getStreams(
+export async function getStreamSet(
   db: Db,
   userId: string,
   clerkUserId: string,
   activityId: number,
-) {
+): Promise<StreamSet> {
   const consent = await userHasHeartRateConsent(db, userId);
   const src = await resolveActivitySource(db, userId, clerkUserId, activityId);
 
   const base = ["time", "distance", "altitude", "cadence", "velocity_smooth"] as const;
   const keys = consent ? ([...base, "heartrate"] as const) : base;
 
-  let streams: StreamSet;
   if (src.kind === "intervals") {
-    streams = mapIntervalsStreamsToStreamSet(
+    return mapIntervalsStreamsToStreamSet(
       await intervalsApiService.getActivityStreams(src.token, src.externalId, [...keys]),
     );
-  } else {
-    streams = await stravaApiService.getActivityStreams(src.token, src.externalId, [...keys]);
   }
+  return stravaApiService.getActivityStreams(src.token, src.externalId, [...keys]);
+}
 
+export async function getStreams(
+  db: Db,
+  userId: string,
+  clerkUserId: string,
+  activityId: number,
+) {
+  const streams = await getStreamSet(db, userId, clerkUserId, activityId);
   return {
     time: streams?.time?.data ?? [],
     distance: streams?.distance?.data ?? [],
-    heartrate: consent ? (streams?.heartrate?.data ?? null) : null,
+    heartrate: streams?.heartrate?.data ?? null,
     altitude: streams?.altitude?.data ?? null,
     cadence: streams?.cadence?.data ?? null,
     velocity: streams?.velocity_smooth?.data ?? null,
   };
+}
+
+/**
+ * Re-segment an activity for a USER-PROVIDED structure (e.g. after the user
+ * re-describes their intervals via parse-from-text) and return the unified per-rep
+ * list — boundaries (from the same `produceSegments` cascade the analyze graph uses)
+ * PLUS proposed paces (same logic as `/proposed-pace`). Keeps the segment view and
+ * the proposed structure in sync after a re-describe. Read-only; persists nothing.
+ */
+export async function previewSegments(
+  db: Db,
+  userId: string,
+  clerkUserId: string,
+  activityId: number,
+  sets: ExpandedIntervalSet[],
+  trainingType: TrainingType,
+  logger: Logger,
+): Promise<ProposedSegmentDraft[]> {
+  const log = logger.child({ fn: "previewSegments", activityId });
+  if (!sets || sets.length === 0) return [];
+
+  const activity = await activityRepo.findByIdForUser(db, userId, activityId);
+  if (!activity) throw new AppError(404, "Activity not found");
+
+  const streamSet = await getStreamSet(db, userId, clerkUserId, activityId);
+  const time = streamSet.time;
+  const distance = streamSet.distance;
+  if (!time?.data?.length || !distance?.data?.length) {
+    throw new AppError(400, "Activity streams missing time/distance");
+  }
+  const statsStreams = { time, distance, heartrate: streamSet.heartrate };
+
+  const laps = await getLaps(db, userId, clerkUserId, activityId);
+
+  let intervalsIcuIntervals: IIntervalsInterval[] | null = null;
+  if (activity.intervalsIcuId) {
+    try {
+      const token = await getIntervalsAccessToken(clerkUserId);
+      intervalsIcuIntervals = extractIntervalsList(
+        await intervalsApiService.getActivityIntervals(token, activity.intervalsIcuId),
+      );
+    } catch (err) {
+      log.warn({ err }, "intervals.icu intervals fetch failed — proceeding without");
+    }
+  }
+
+  // The supplied sets ARE the source of truth — the single rep-list that drives
+  // both the segment list and the pace view. Their paces (already proposed by
+  // /proposed-pace or /parse-intervals) flow straight through to the segments;
+  // we never recompute, so the two views cannot diverge. Derive a 1-rep-per-step
+  // structure so the cascade's shape/rep-count rungs see the same shape as userSets.
+  const structure: WorkoutAnalysisOutput["structure"] = sets.map((set) => ({
+    set_reps: 1,
+    set_recovery: set.set_recovery ?? null,
+    steps: set.steps.map((step) => ({
+      reps: 1,
+      work_type: step.work_type,
+      work_value: step.work_value,
+      recovery_type: step.recovery_type ?? null,
+      recovery_value: step.recovery_value ?? null,
+    })),
+  }));
+
+  const initialResult: WorkoutAnalysisOutput = {
+    classification_reasoning: "preview",
+    training_type: trainingType,
+    confidence_score: 1,
+    structure,
+  };
+
+  const segments = await produceSegments({
+    activityId,
+    statsStreams,
+    streams: streamSet,
+    laps,
+    isIndoor: activity.indoor ?? false,
+    userSets: sets,
+    initialResult,
+    userNotes: "",
+    trainingType,
+    intervalsIcuIntervals,
+    log,
+    tag: `[previewSegments activity=${activityId}]`,
+  });
+
+  return segments.map((s) => ({
+    segmentIndex: s.segmentIndex,
+    setGroupIndex: s.setGroupIndex,
+    type: s.type,
+    timeSeriesEndTime: s.timeSeriesEndTime,
+    actualDistance: s.actualDistance,
+    actualDuration: s.actualDuration,
+    avgHeartRate: s.avgHeartRate,
+    targetType: s.targetType,
+    targetValue: s.targetValue,
+    targetPace: s.targetPace,
+  }));
 }
 
 export async function getDraftSegments(

@@ -11,9 +11,11 @@ import {
   DraftSegmentsResponseSchema,
   EditSegmentsRequestSchema,
   ErrorSchema,
+  ExpandedIntervalSetSchema,
   GearStatsResponseSchema,
   IntervalSegmentSchema,
   PatchSegmentSchema,
+  ProposedSegmentSchema,
   SegmentsResponseSchema,
   SplitMetricSchema,
   StravaLapSchema,
@@ -480,6 +482,49 @@ activitiesRouter.patch(
       id,
       segmentId,
       patch,
+    );
+    return c.json(result);
+  },
+);
+
+const previewSegmentsSchema = z.object({
+  sets: z.array(ExpandedIntervalSetSchema),
+  trainingType: z.enum(trainingTypeEnum.enumValues),
+});
+
+activitiesRouter.post(
+  "/:id/preview-segments",
+  describeRoute({
+    description:
+      "Re-segment an activity for a user-supplied rep-list (the paced ExpandedIntervalSet[] returned by /parse-intervals or /proposed-pace, e.g. after re-describing the workout via text). The supplied paces flow straight through, so the returned per-rep segments — boundaries + paces — are the single source the segment list and pace view both render. Same cascade the analyze graph uses. Read-only; persists nothing.",
+    responses: {
+      200: {
+        description: "Proposed segments (boundaries + paces) for the supplied structure",
+        content: { "application/json": { schema: resolver(z.array(ProposedSegmentSchema)) } },
+      },
+      400: {
+        description: "Bad request",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      404: {
+        description: "Activity not found",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("param", activityIdParamSchema),
+  validator("json", previewSegmentsSchema),
+  async (c) => {
+    const { id } = c.req.valid("param");
+    const { sets, trainingType } = c.req.valid("json");
+    const result = await activityController.previewSegments(
+      c.env.db,
+      c.get("userId"),
+      c.get("clerkUserId"),
+      id,
+      sets,
+      trainingType,
+      c.var.logger,
     );
     return c.json(result);
   },

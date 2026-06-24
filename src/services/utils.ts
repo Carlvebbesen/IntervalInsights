@@ -100,7 +100,7 @@ export function prepareDataForLLM(
   return {
     metadata: {
       totalDistance: data[data.length - 1].distance,
-      totalTime: data.length,
+      totalTime: (data[data.length - 1]?.time ?? 0) - (data[0]?.time ?? 0),
       avgHeartRate: hasHr ? hrValues.reduce((a, b) => a + b, 0) / hrValues.length : null,
       maxVelocity: Math.max(...data.map((d) => d.velocity)),
       hrStandardDeviation: hasHr ? calculateSD(hrValues) : null,

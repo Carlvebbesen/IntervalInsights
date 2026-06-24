@@ -121,3 +121,51 @@ export function recordTokenUsage(
     });
   }
 }
+
+// --- Product-usage counters (how users act on their analyses) ---
+// Counters carry only LOW-cardinality attributes (no user.id / activity.id —
+// those live on traces & logs). They feed the Grafana dashboards that show how
+// often users edit segments, re-run analysis, or change an activity's type.
+const segmentEditCounter = meter.createCounter("activity.segment.edit", {
+  description: "User edits to an activity's interval segments",
+  unit: "{edit}",
+});
+
+const analysisRunCounter = meter.createCounter("activity.analysis.run", {
+  description: "User-initiated activity analysis runs (start/regenerate and resume/complete)",
+  unit: "{run}",
+});
+
+const trainingTypeChangeCounter = meter.createCounter("activity.training_type.change", {
+  description: "Changes to an activity's training type (manual edit or analysis resume)",
+  unit: "{change}",
+});
+
+/** A user edited an activity's interval segments (bulk replace or single patch). */
+export function recordSegmentEdit(attrs: {
+  editKind: "bulk" | "single";
+  source: string;
+  trainingType?: string | null;
+}): void {
+  segmentEditCounter.add(1, {
+    "edit.kind": attrs.editKind,
+    "activity.source": attrs.source,
+    ...(attrs.trainingType ? { "training.type": attrs.trainingType } : {}),
+  });
+}
+
+/** A user (re)ran the analysis pipeline: phase "start" = (re)generate, "resume" = complete. */
+export function recordAnalysisRun(attrs: { phase: "start" | "resume"; trigger: "manual" | "auto" }): void {
+  analysisRunCounter.add(1, {
+    "analysis.phase": attrs.phase,
+    "analysis.trigger": attrs.trigger,
+  });
+}
+
+/** An activity's training type changed — via a manual metadata edit or at analysis resume. */
+export function recordTrainingTypeChange(attrs: { trainingType: string; via: "manual" | "resume" }): void {
+  trainingTypeChangeCounter.add(1, {
+    "training.type": attrs.trainingType,
+    "change.via": attrs.via,
+  });
+}

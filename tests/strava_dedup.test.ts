@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { eq } from "drizzle-orm";
+import { existingStravaIdsForUser } from "../src/repositories/activity_repository";
 import { activities } from "../src/schema";
 import { stravaApiService } from "../src/services/strava_api_service";
 import { syncAllFromStrava } from "../src/services/strava_link_service";
@@ -118,3 +119,79 @@ describe("Strava bulk sync dedup (intervalsStravaId exact join)", () => {
     expect(rows).toHaveLength(2); // the import + the new Strava row (no false dedup)
   });
 });
+
+async function insertStravaRow(stravaActivityId: number) {
+  const [row] = await getDb()
+    .insert(activities)
+    .values({
+      userId: user.id,
+      stravaActivityId,
+      title: "Strava Run",
+      sportType: "Run",
+      distance: 5000,
+      movingTime: 1500,
+      startDateLocal: new Date("2026-04-01T07:00:00Z"),
+      indoor: false,
+      analysisStatus: "completed",
+    })
+    .returning();
+  return row;
+}
+
+describe("existingStravaIdsForUser (load-list dedup helper)", () => {
+  it("returns an empty set for no candidate ids (no query)", async () => {
+    const present = await existingStravaIdsForUser(getDb(), user.id, []);
+    expect(present.size).toBe(0);
+  });
+
+  it("flags ids present as Strava-sourced rows (stravaActivityId)", async () => {
+    await insertStravaRow(111);
+    const present = await existingStravaIdsForUser(getDb(), user.id, [111, 222]);
+    expect([...present].sort()).toEqual([111]);
+  });
+
+  it("flags ids present only as intervals.icu twins (intervalsStravaId)", async () => {
+    // The key gap: an intervals-sourced row carries the Strava id in
+    // intervalsStravaId with stravaActivityId = null. It must still count as
+    // already-present so the Strava load doesn't offer it for re-import.
+    await insertIntervalsRow({ intervalsStravaId: 333 });
+    const present = await existingStravaIdsForUser(getDb(), user.id, [333, 444]);
+    expect([...present].sort()).toEqual([333]);
+  });
+
+  it("flags ids present via either column and ignores absent ids", async () => {
+    await insertStravaRow(111);
+    await insertIntervalsRow({ intervalsStravaId: 333 });
+    const present = await existingStravaIdsForUser(getDb(), user.id, [111, 333, 999]);
+    expect([...present].sort((a, b) => a - b)).toEqual([111, 333]);
+    expect(present.has(999)).toBe(false);
+  });
+
+  it("does not match another user's activities", async () => {
+    const other = await createTestUser({ role: "premium" });
+    await getDb()
+      .insert(activities)
+      .values({
+        userId: other.id,
+        stravaActivityId: 777,
+        title: "Other user run",
+        sportType: "Run",
+        distance: 5000,
+        movingTime: 1500,
+        startDateLocal: new Date("2026-04-01T07:00:00Z"),
+        indoor: false,
+        analysisStatus: "completed",
+      });
+    const present = await existingStravaIdsForUser(getDb(), user.id, [777]);
+    expect(present.has(777)).toBe(false);
+    await deleteTestUser(other.id);
+  });
+});
+
+// NOTE: the import path (`stravaApiService.syncStravaActivities`) converges with
+// an intervals.icu twin (by `intervalsStravaId`) instead of inserting a Strava
+// duplicate, and stays idempotent on re-import via `onConflictDoNothing`. It is
+// NOT unit-tested here because `tests/setup.ts` `mock.module`s the whole
+// `strava_api_service` to a stub, so the real method can't be exercised in this
+// suite. Verified manually against the dev DB (merge → 1 row, intervalsIcuId
+// preserved, status re-armed to `pending`; double-import → 1 row).

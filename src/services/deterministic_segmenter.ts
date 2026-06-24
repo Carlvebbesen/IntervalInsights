@@ -408,6 +408,109 @@ function pushSeg(
  * contrast, and whether the bout count matched the expected rep count. Inferred
  * structures (no user title) are discounted since the rep count is itself a guess.
  */
+/** Short TIME reps (≤ this many seconds) read short because the pace stream lags the effort. */
+export const SHORT_REP_EXPAND_MAX_SECONDS = 90;
+
+/**
+ * Recover the prescribed duration of short TIME reps whose detected bout is only
+ * the late, brief high-speed CORE (pace lag). Expand SYMMETRICALLY around the core
+ * centre — the lag shifts the core LATE, so forward-only expansion overshoots into
+ * the rest and inverts work/rest. Never shrinks below the core; clamps to the
+ * neighbouring bouts (and t0/tEnd). Pure; only touches TIME reps ≤ `maxSec`.
+ */
+export function expandShortReps(
+  bouts: WorkBout[],
+  reps: RepDesc[],
+  t0: number,
+  tEnd: number,
+  maxSec: number = SHORT_REP_EXPAND_MAX_SECONDS,
+): WorkBout[] {
+  const out = bouts.map((b) => ({ ...b }));
+  for (let i = 0; i < out.length && i < reps.length; i++) {
+    const rep = reps[i];
+    if (rep.workType !== "TIME" || rep.workValue > maxSec) continue;
+    const core = out[i];
+    if (core.end - core.start >= rep.workValue) continue;
+    const center = (core.start + core.end) / 2;
+    const half = rep.workValue / 2;
+    const prevEnd = i > 0 ? out[i - 1].end : t0;
+    const nextStart = i + 1 < out.length ? out[i + 1].start : tEnd;
+    out[i] = {
+      start: Math.max(Math.min(center - half, core.start), prevEnd),
+      end: Math.min(Math.max(center + half, core.end), nextStart, tEnd),
+    };
+  }
+  return out;
+}
+
+/**
+ * Bind a prescribed rep sequence to detected work bouts by MEASURE, not position.
+ * On noisy treadmill data the speed gate lets a few rests cross into the work-lap
+ * set, so there are more bouts than reps; assigning reps[i]→bouts[i] then shifts
+ * every rep after a spurious bout — a 175s effort ends up tagged the "60s" rep
+ * (activity 622, sets 2-4). Picks the order-preserving subsequence of `bouts` of
+ * length reps.length that minimises total relative measure error (DP, i.e.
+ * DTW-with-skips). Sequence order makes a spurious bout expensive to keep — it
+ * would have to match the NEXT prescribed value, which it doesn't — so the extras
+ * get skipped and the surrounding REST segments absorb their time. Measure is
+ * duration for TIME reps, covered distance for DISTANCE reps. Caller only invokes
+ * this when bouts.length > reps.length; equal/short counts keep positional.
+ */
+export function alignBoutsToReps(
+  bouts: WorkBout[],
+  reps: RepDesc[],
+  time: number[],
+  distance: number[],
+): WorkBout[] {
+  const N = reps.length;
+  const M = bouts.length;
+  if (N === 0) return [];
+  if (M <= N) return bouts.slice(0, N);
+
+  const measure = (b: WorkBout, r: RepDesc): number => {
+    if (r.workType === "TIME") return b.end - b.start;
+    const si = indexAtTime(time, b.start);
+    const ei = indexAtTime(time, b.end);
+    return Math.max(0, (distance[ei] ?? 0) - (distance[si] ?? 0));
+  };
+  const cost = (repIdx: number, boutIdx: number): number => {
+    const tgt = reps[repIdx].workValue;
+    if (tgt <= 0) return 0;
+    return Math.abs(measure(bouts[boutIdx], reps[repIdx]) - tgt) / tgt;
+  };
+
+  const INF = Number.POSITIVE_INFINITY;
+  // dp[i][j] = min total cost to bind the first i reps using the first j bouts.
+  const dp: number[][] = Array.from({ length: N + 1 }, () => new Array<number>(M + 1).fill(INF));
+  const took: boolean[][] = Array.from({ length: N + 1 }, () => new Array<boolean>(M + 1).fill(false));
+  for (let j = 0; j <= M; j++) dp[0][j] = 0;
+  for (let i = 1; i <= N; i++) {
+    for (let j = i; j <= M; j++) {
+      const skip = dp[i][j - 1];
+      const match = dp[i - 1][j - 1] + cost(i - 1, j - 1);
+      if (match < skip) {
+        dp[i][j] = match;
+        took[i][j] = true;
+      } else {
+        dp[i][j] = skip;
+      }
+    }
+  }
+  const chosen: WorkBout[] = [];
+  let i = N;
+  let j = M;
+  while (i > 0 && j > 0) {
+    if (took[i][j]) {
+      chosen.push(bouts[j - 1]);
+      i--;
+      j--;
+    } else {
+      j--;
+    }
+  }
+  return chosen.reverse();
+}
+
 export function buildSegmentsDeterministic(
   activityId: number,
   laps: Lap[],
@@ -439,8 +542,18 @@ export function buildSegmentsDeterministic(
     bouts = detected;
     reps = inferRepsFromBouts(detected);
   } else if (cls.mode === "per-rep" && cls.workLaps.length > 0) {
-    bouts = cls.workLaps.map((l) => lapWindow(l, time));
-    countMatch = bouts.length === reps.length ? 1 : 0.5;
+    const lapBouts = cls.workLaps.map((l) => lapWindow(l, time));
+    if (lapBouts.length > reps.length) {
+      // More work-candidates than prescribed reps — noisy treadmill laps where a
+      // few rests crossed the speed gate. Bind each rep to its best-matching bout
+      // by measure instead of by position, so a spurious lap no longer shifts
+      // every rep after it (activity 622). See alignBoutsToReps.
+      bouts = alignBoutsToReps(lapBouts, reps, time, distance);
+      countMatch = bouts.length === reps.length ? 1 : 0.5;
+    } else {
+      bouts = lapBouts;
+      countMatch = bouts.length === reps.length ? 1 : 0.5;
+    }
   } else {
     const region = cls.mode === "boundary" ? { ws: cls.ws, we: cls.we } : { ws: t0, we: tEnd };
     const { bouts: detected } = detectBouts(time, speed, region.ws, region.we);
@@ -459,6 +572,13 @@ export function buildSegmentsDeterministic(
     }
   }
   if (bouts.length === 0) return null;
+
+  // Recover short TIME reps under-measured due to pace lag — only when the
+  // structure is KNOWN and bouts came from stream detection (not authoritative
+  // device laps / inference). See expandShortReps.
+  if (!inferred && mode !== "per-rep") {
+    bouts = expandShortReps(bouts, reps, t0, tEnd);
+  }
 
   const count = Math.min(bouts.length, reps.length);
   const out: InsertIntervalSegment[] = [];

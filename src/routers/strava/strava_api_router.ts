@@ -1,8 +1,6 @@
-import { and, eq, gte, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
-import { activities } from "../../schema";
 import {
   ErrorSchema,
   StravaSummaryActivitySchema,
@@ -10,6 +8,7 @@ import {
   SyncStartedSchema,
 } from "../../schemas/api_schemas";
 import { runInBackground } from "../../background";
+import { existingStravaIdsForUser } from "../../repositories/activity_repository";
 import { startAnalysis } from "../../services/analysis_service";
 import { stravaApiService } from "../../services/strava_api_service";
 import { syncAllFromStrava } from "../../services/strava_link_service";
@@ -70,25 +69,11 @@ stravaApiRouter.get(
 
       if (stravaActivities.length === 0) return c.json([]);
 
-      const oldestDate = new Date(
-        Math.min(...stravaActivities.map((a) => new Date(a.start_date).getTime())),
+      const syncedIds = await existingStravaIdsForUser(
+        c.env.db,
+        userId,
+        stravaActivities.map((a) => a.id),
       );
-
-      const existingInDb = await c.env.db
-        .select({ stravaActivityId: activities.stravaActivityId })
-        .from(activities)
-        .where(
-          and(
-            eq(activities.userId, userId),
-            gte(activities.startDateLocal, oldestDate),
-            inArray(
-              activities.stravaActivityId,
-              stravaActivities.map((a) => a.id),
-            ),
-          ),
-        );
-
-      const syncedIds = new Set(existingInDb.map((a) => a.stravaActivityId));
       const filtered = stravaActivities.filter((a) => !syncedIds.has(a.id));
 
       if (filtered.length > 0) return c.json(filtered);

@@ -40,7 +40,12 @@ export async function fetchActivityContext(
       .where(eq(activities.id, state.activityId)),
     db.query.activities.findFirst({
       where: eq(activities.id, state.activityId),
-      columns: { intervalsIcuId: true, stravaActivityId: true },
+      columns: {
+        intervalsIcuId: true,
+        stravaActivityId: true,
+        title: true,
+        description: true,
+      },
     }),
     userHasHeartRateConsent(db, state.userId),
   ]);
@@ -56,6 +61,14 @@ export async function fetchActivityContext(
   } else {
     throw new AppError(400, "Activity has no intervals.icu or Strava source to fetch from");
   }
+
+  // The user's stored title/description (set at import, editable in-app) is the
+  // authority for classification intent. The re-fetched source name can be a
+  // generic auto-name — intervals.icu labels treadmill runs "Treadmill Running",
+  // which hides an explicit workout title like "6x6 min" from the classifier and
+  // collapses it to EASY. Prefer the DB values; fall back to the fetched ones.
+  if (row?.title) context.activityTitle = row.title;
+  if (row?.description) context.activityDescription = row.description;
 
   if (!context.streams || Object.keys(context.streams).length === 0) {
     throw new Error(`No streams returned for activity ${state.activityId}`);

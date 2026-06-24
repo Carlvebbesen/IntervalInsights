@@ -36,6 +36,11 @@ export const workoutSet = z.object({
 });
 
 export const workoutAnalysisOutput = z.object({
+  classification_reasoning: z
+    .string()
+    .describe(
+      "Reason BEFORE classifying. State the single WORK-REP unit: duration in seconds and/or distance in meters PER ONE REP (the leading number is the rep COUNT, never the duration). Then apply the hard gate: a rep >= 120s OR >= 800m is LONG_INTERVALS; a rep < 120s AND < 800m is SHORT_INTERVALS. Example: '6x6min = 6 reps of 360s each; 360 >= 120 -> LONG_INTERVALS'.",
+    ),
   training_type: z
     .enum(trainingTypeEnum.enumValues)
     .describe("The classified type of training based on pace and heart rate patterns."),
@@ -72,6 +77,22 @@ const CLASSIFICATION_RULES = `
 - **PROGRESSIVE_LONG**: Distance > 15km. Pace strictly increases (gets faster) from start to finish.
 - **TEMPO**: Sustained high effort (Threshold pace) for a block of time (e.g., 20-40 mins).
 - **RACE**: Sustained maximal effort for the distance.
+
+### SHORT_INTERVALS vs LONG_INTERVALS — HARD GATE (apply literally, do not eyeball)
+Compute the size of ONE work rep (NOT the whole session, NOT the number of reps):
+- rep_duration >= 120s  OR  rep_distance >= 800m  ->  LONG_INTERVALS
+- rep_duration <  120s  AND rep_distance <  800m  ->  SHORT_INTERVALS
+The leading number in a title is the rep COUNT, never the duration. "6x6min" = 6 reps of 360s each; 360 >= 120 -> LONG_INTERVALS.
+
+| Title | Per-rep | Type |
+|---|---|---|
+| 6x6min | 360s | LONG_INTERVALS |
+| 5x1000m | 1000m | LONG_INTERVALS |
+| 4x2000m | 2000m | LONG_INTERVALS |
+| 8x2min | 120s | LONG_INTERVALS |
+| 10x400m | 400m (~80s) | SHORT_INTERVALS |
+| 20x45/15 | 45s | SHORT_INTERVALS |
+| 15x90/30s | 90s | SHORT_INTERVALS |
 `;
 
 function formatIntervalsIcuBlock(prediction: IntervalsIcuPrediction | null | undefined): string {
@@ -98,6 +119,34 @@ function formatIntervalsIcuBlock(prediction: IntervalsIcuPrediction | null | und
     ? `\n| # | Type | Distance | Time | Avg pace | Avg HR | Load |\n|---|------|----------|------|----------|--------|------|\n${rows}`
     : "";
   return `\n  ### INTERVALS.ICU PREDICTION (treat as a strong hint, not ground truth)\n  ${typeHint}${tableBlock}\n`;
+}
+
+/**
+ * Deterministic guardrail: reconcile SHORT_INTERVALS vs LONG_INTERVALS against the
+ * model's OWN extracted structure. gpt-4o-mini reliably parses the per-rep value
+ * into `work_value` but occasionally flips the gate inequality (observed: "7x4min
+ * = 240s each; 240 < 120 -> SHORT"). A rep >= 120 s OR >= 800 m makes it LONG;
+ * all reps shorter make it SHORT. Only touches the two interval subtypes.
+ */
+export function reconcileIntervalSubtype(
+  out: z.infer<typeof workoutAnalysisOutput>,
+): z.infer<typeof workoutAnalysisOutput> {
+  if (out.training_type !== "SHORT_INTERVALS" && out.training_type !== "LONG_INTERVALS") return out;
+  const structure = out.structure;
+  if (!structure || structure.length === 0) return out;
+  let sawRep = false;
+  let hasLongRep = false;
+  for (const set of structure) {
+    for (const step of set.steps) {
+      sawRep = true;
+      if (step.work_type === "DISTANCE" ? step.work_value >= 800 : step.work_value >= 120) {
+        hasLongRep = true;
+      }
+    }
+  }
+  if (!sawRep) return out;
+  const correct = hasLongRep ? "LONG_INTERVALS" : "SHORT_INTERVALS";
+  return correct === out.training_type ? out : { ...out, training_type: correct };
 }
 
 export async function invokeActivityAnalysisAgent(
@@ -160,15 +209,18 @@ ${intervalsIcuBlock}
   You must populate the 'structure' array (an array of Sets) using these rules:
   
   1. **Identify Repeating Series:** - For a simple workout like **10x1000m**: Create one Set with **set_reps: 1** and one Step with **reps: 10**.
-     - For a complex workout like **3x (3km + 2km + 1km)**: Create one Set with **set_reps: 3''. Inside that set, create three Steps (3000m, 2000m, 1000m) each with **reps: 1**.
+     - For a complex workout like **3x (3km + 2km + 1km)**: Create one Set with **set_reps: 3**. Inside that set, create three Steps (3000m, 2000m, 1000m) each with **reps: 1**.
   2. **Handle Set Recovery:** If there is a distinct longer break between large sets (e.g., 5 mins between blocks of intervals), put that in **set_recovery**.
   3. **Ignore Warmup/Cooldown:** Only capture the "work" segments.
   4. **Units:** Always convert distance to METERS and time to SECONDS.
+  5. **Comma-separated values are a STEP LIST, not decimals (Norwegian list notation):** "3,2,1 km" = three Steps of 3 km, 2 km, 1 km (→ 3000m, 2000m, 1000m); "2 x 3,2,2 km" = one Set with **set_reps: 2** and three Steps (3000m, 2000m, 2000m). A comma between numbers in such a list is a SEPARATOR, never a decimal point.
+  6. **"N x (a, b, c)" = N SETS of the sequence a→b→c.** Set **set_reps: N** and create ONE Step per item (reps: 1 each), so the sequence repeats a,b,c / a,b,c / … — e.g. **"5 x (3,2,1 min)"** = set_reps: 5, Steps [180s, 120s, 60s] each reps: 1; **"3x (3km + 2km + 1km)"** = set_reps: 3, Steps [3000m, 2000m, 1000m]. **Do NOT** create 3 Steps with reps: N (that wrongly groups all the a's, then all the b's, then all the c's).
 
   ${venuePromptBlock()}
 
   ### 5. TASK
-  Analyze the data and classify the run according to the rules above.
+  First fill 'classification_reasoning': state the per-rep work duration (s) and/or distance (m) for ONE rep, then apply the SHORT vs LONG hard gate. Then classify the run and populate the structure according to the rules above.
 `;
-  return invokeStructured(workoutAnalysisOutput, prompt, "analyze activity");
+  const result = await invokeStructured(workoutAnalysisOutput, prompt, "analyze activity");
+  return result ? reconcileIntervalSubtype(result) : result;
 }

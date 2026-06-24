@@ -82,6 +82,7 @@ async function seedDraft(activityId: number) {
     .set({
       analysisStatus: "initial",
       draftAnalysisResult: {
+        classification_reasoning: "1000m reps; 1000 >= 800 -> LONG_INTERVALS",
         training_type: "LONG_INTERVALS",
         confidence_score: 0.9,
         proposedSegments: [...proposedSegments],

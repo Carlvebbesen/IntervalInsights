@@ -4,6 +4,7 @@ import type { workoutSet } from "../agent/initial_analysis_agent";
 import { invokeParseIntervalsAgent } from "../agent/parse_intervals_agent";
 import { AppError } from "../error";
 import type { Logger } from "../logger";
+import { recordAnalysisRun, recordTrainingTypeChange } from "../otel";
 import * as activityRepo from "../repositories/activity_repository";
 import type { AnalysisStatus, TrainingType } from "../schema";
 import type { PendingActivitySchema } from "../schemas/api_schemas";
@@ -43,6 +44,7 @@ export function startActivityAnalysis(
     throw new AppError(400, "Access token missing");
   }
   // Fire-and-forget — the pipeline runs in the background.
+  recordAnalysisRun({ phase: "start", trigger: "manual" });
   startAnalysis(db, accessToken, activityId, stravaActivityId, userId);
   return { success: true };
 }
@@ -96,6 +98,8 @@ export async function resumeActivityAnalysis(
     }
     throw err;
   }
+  recordAnalysisRun({ phase: "resume", trigger: "manual" });
+  if (trainingType) recordTrainingTypeChange({ trainingType, via: "resume" });
   return { success: true };
 }
 

@@ -39,6 +39,17 @@ export function ensureWarmupFirst(
   return [warmup, ...segments].map((s, i) => ({ ...s, segmentIndex: i }));
 }
 
+/** Total work reps implied by an LLM-extracted structure (set_reps × Σ step.reps). */
+function countStructureReps(structure: WorkoutAnalysisOutput["structure"]): number | undefined {
+  if (!structure || structure.length === 0) return undefined;
+  let n = 0;
+  for (const set of structure) {
+    const stepReps = set.steps.reduce((s, st) => s + (st.reps ?? 1), 0);
+    n += (set.set_reps ?? 1) * stepReps;
+  }
+  return n > 0 ? n : undefined;
+}
+
 export async function produceSegments(params: {
   activityId: number;
   statsStreams: StatsStreams;
@@ -61,7 +72,14 @@ export async function produceSegments(params: {
   const intervalsIcu = params.intervalsIcuIntervals;
   if (intervalsIcu && intervalsIcu.length > 0) {
     log.info({ intervals: intervalsIcu.length }, "intervals.icu linked — attempting its breakdown");
-    const fromIcu = buildSegmentsFromIntervalsIcu(activityId, intervalsIcu, statsStreams, params.tag);
+    const expectedReps = countStructureReps(initialResult?.structure);
+    const fromIcu = buildSegmentsFromIntervalsIcu(
+      activityId,
+      intervalsIcu,
+      statsStreams,
+      params.tag,
+      expectedReps,
+    );
     if (fromIcu) {
       log.info({ segments: fromIcu.length }, "intervals.icu segments");
       return ensureWarmupFirst(fromIcu, activityId, t0);

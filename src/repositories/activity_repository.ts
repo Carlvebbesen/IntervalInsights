@@ -289,6 +289,48 @@ export async function findPaceContext(
   });
 }
 
+/**
+ * Of the given Strava activity ids, the subset the user already has locally —
+ * counting a row as "already present" when EITHER it is Strava-sourced
+ * (`stravaActivityId`) OR it is an intervals.icu-sourced twin carrying the same
+ * originating Strava id (`intervalsStravaId`). The latter is essential: a Strava
+ * load must not re-import a workout that already exists as an intervals.icu row,
+ * or it creates a cross-source duplicate (see the duplicate-rows gotcha).
+ *
+ * Returns a `Set<number>` for O(1) membership in the list/import filters. An
+ * empty `ids` array short-circuits to an empty set (no query).
+ */
+export async function existingStravaIdsForUser(
+  db: Db,
+  userId: string,
+  ids: number[],
+): Promise<Set<number>> {
+  if (ids.length === 0) return new Set();
+  const rows = await db
+    .select({
+      stravaActivityId: activities.stravaActivityId,
+      intervalsStravaId: activities.intervalsStravaId,
+    })
+    .from(activities)
+    .where(
+      and(
+        eq(activities.userId, userId),
+        or(inArray(activities.stravaActivityId, ids), inArray(activities.intervalsStravaId, ids)),
+      ),
+    );
+  const candidates = new Set(ids);
+  const present = new Set<number>();
+  for (const row of rows) {
+    if (row.stravaActivityId != null && candidates.has(row.stravaActivityId)) {
+      present.add(row.stravaActivityId);
+    }
+    if (row.intervalsStravaId != null && candidates.has(row.intervalsStravaId)) {
+      present.add(row.intervalsStravaId);
+    }
+  }
+  return present;
+}
+
 /** Per-gear usage rows: one row per (gear, trainingType) with a count. */
 export function getGearUsage(db: Db, userId: string) {
   return db

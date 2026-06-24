@@ -40,17 +40,30 @@ export const gptMiniModel = new ChatOpenAI({
   callbacks: [new TokenUsageCallback()],
 });
 
+const MAX_STRUCTURED_ATTEMPTS = 2;
+
 export async function invokeStructured<T extends Record<string, unknown>>(
   schema: z.ZodType<T>,
   prompt: string,
   label: string,
 ): Promise<T | null> {
-  try {
-    return await gptMiniModel.withStructuredOutput<T>(schema).invoke(prompt);
-  } catch (err) {
-    logger.error({ err, label }, `Failed to ${label}`);
-    return null;
+  // Retry transient structured-output failures (timeouts, malformed/parse errors)
+  // before giving up. Returns null after exhausting (callers treat null as a hard
+  // failure → activity goes to `error`, which /pending then auto-retries).
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_STRUCTURED_ATTEMPTS; attempt++) {
+    try {
+      return await gptMiniModel.withStructuredOutput<T>(schema).invoke(prompt);
+    } catch (err) {
+      lastErr = err;
+      logger.warn(
+        { err, label, attempt, maxAttempts: MAX_STRUCTURED_ATTEMPTS },
+        `Structured output failed for ${label}${attempt < MAX_STRUCTURED_ATTEMPTS ? " — retrying" : ""}`,
+      );
+    }
   }
+  logger.error({ err: lastErr, label }, `Failed to ${label} after ${MAX_STRUCTURED_ATTEMPTS} attempts`);
+  return null;
 }
 
 const MAX_ATTEMPTS = 3;

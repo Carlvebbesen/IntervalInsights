@@ -1,0 +1,16 @@
+# Dedicated bun-test config for the REAL pace-algorithm tests
+# (tests/pace_service.test.ts ONLY).
+#
+# It REPLACES the default preload (tests/setup.ts, which globally mocks
+# pace_service + lap_derivation_service) with tests/setup.pace.ts, which leaves
+# those two modules REAL and mocks only leaf network modules. This is the
+# order-independent way to exercise the real algorithm without touching the
+# default suite's mocks (bun's mock.module registry is global + uses live
+# bindings, so in-file bypass tricks are fragile in the full run).
+#
+# Invoke with `bun --config=tests/bunfig.pace.toml test ...` (the `--config=`
+# form, BEFORE the `test` subcommand, actually replaces the root preload — a
+# trailing `bun test --config <f>` is silently ignored). scripts/test-pace.sh
+# wraps this with the disposable Postgres the history tests need.
+[test]
+preload = ["./tests/setup.pace.ts"]

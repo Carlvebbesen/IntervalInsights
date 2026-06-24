@@ -52,11 +52,16 @@ export function matchLapsToExpandedSteps(
       for (let i = cursor + 1; i < laps.length; i++) {
         const lap = laps[i];
         const lapVal = targetIsDistance ? lap.distance : lap.moving_time;
-        if (
-          Math.abs(lapVal - targetVal) <= tolerance &&
-          lap.average_speed > 0 &&
-          lap.average_speed >= workSpeedFloor
-        ) {
+        // The effort gate guards the FIRST match against stealing a warmup lap
+        // whose distance is near a work target (the pyramid case, #510). Later reps
+        // are already disambiguated by the distance/time match (recovery laps don't
+        // match a work target) plus the monotonic cursor, so a strict speed floor
+        // there wrongly drops genuinely-slower work reps when the athlete fades or
+        // one rep is much faster (e.g. 10x1000m — #626). Apply the floor only on the
+        // first step; afterwards require just a positive speed.
+        const passesEffort =
+          stepCounter === 0 ? lap.average_speed >= workSpeedFloor : lap.average_speed > 0;
+        if (Math.abs(lapVal - targetVal) <= tolerance && lap.average_speed > 0 && passesEffort) {
           matchIdx = i;
           break;
         }

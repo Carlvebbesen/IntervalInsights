@@ -84,58 +84,45 @@ export const getProposedPaceForStructure = async (
   return interpolatePaces(history, completeIntervalSet);
 };
 
-const getEffectivePace = (row: HistoryRow): number =>
-  row.targetPace ?? (row.actualDuration > 0 ? row.actualDistance / row.actualDuration : 0);
+// m/s for a history rep, or null when the row carries no usable pace (prefer an
+// explicit targetPace; else distance/duration). A zero/garbage row returns null
+// so it is EXCLUDED from averages rather than dragging them toward 0.
+const getEffectivePace = (row: HistoryRow): number | null => {
+  if (row.targetPace != null && row.targetPace > 0) return row.targetPace;
+  if (row.actualDuration > 0 && row.actualDistance > 0) return row.actualDistance / row.actualDuration;
+  return null;
+};
+
+// Unit-aware match tolerance: distance within max(50 m, 5%), time within
+// max(5 s, 5%). A flat `< 1` was far too tight for time targets (90 s vs 91 s).
+function targetsMatch(targetType: string, historyVal: number, stepVal: number): boolean {
+  const tol = targetType === "distance" ? Math.max(50, stepVal * 0.05) : Math.max(5, stepVal * 0.05);
+  return Math.abs(historyVal - stepVal) <= tol;
+}
+
+function meanOf(values: (number | null)[]): number | null {
+  const valid = values.filter((v): v is number => v != null && Number.isFinite(v));
+  return valid.length > 0 ? valid.reduce((s, v) => s + v, 0) / valid.length : null;
+}
 
 function interpolatePaces(rows: HistoryRow[], sets: ExpandedIntervalSet[]): ExpandedIntervalSet[] {
   const now = Date.now();
-  const sortedRows = [...rows].sort((a, b) => a.segmentIndex - b.segmentIndex);
-  const averagePace =
-    sortedRows.length > 0
-      ? sortedRows.reduce((sum, row) => sum + getEffectivePace(row), 0) / sortedRows.length
-      : null;
-  let workIntervalCounter = 0;
-
   return sets.map((set) => ({
     ...set,
     steps: set.steps.map((step) => {
-      const currentIntervalNumber = workIntervalCounter++;
       const targetType = step.work_type === "DISTANCE" ? "distance" : "time";
-      const targetVal = step.work_value;
-      const relevantRow = sortedRows[currentIntervalNumber];
-
-      const isAligned =
-        !!relevantRow &&
-        relevantRow.targetType === targetType &&
-        Math.abs(relevantRow.targetValue - targetVal) < 1;
-
-      if (!isAligned) {
-        const matchingRows = sortedRows.filter(
-          (row) => row.targetType === targetType && Math.abs(row.targetValue - targetVal) < 1,
-        );
-        if (matchingRows.length > 0) {
-          const avgPaceForMatching =
-            matchingRows.reduce((sum, row) => sum + getEffectivePace(row), 0) / matchingRows.length;
-          return { ...step, target_pace: avgPaceForMatching };
-        }
-        return { ...step, target_pace: averagePace };
-      }
-
-      const msSinceLastDone = now - relevantRow.date.getTime();
-      if (msSinceLastDone < ONE_MONTH_MS) {
-        return { ...step, target_pace: getEffectivePace(relevantRow) };
-      }
-
-      const matchingRows = sortedRows.filter(
-        (row) =>
-          row.targetType === relevantRow.targetType &&
-          Math.abs(row.targetValue - relevantRow.targetValue) < 1,
+      // Match history rows to THIS step by target (type + value), never by
+      // position: a flat positional counter misaligns identical reps and
+      // interleaves rows from different activities. No same-shape history → no
+      // proposal (null), rather than bleeding a different rep's or cross-type pace.
+      const matching = rows.filter(
+        (r) => r.targetType === targetType && targetsMatch(targetType, r.targetValue, step.work_value),
       );
-      const proposedPace =
-        matchingRows.length > 0
-          ? matchingRows.reduce((sum, row) => sum + getEffectivePace(row), 0) / matchingRows.length
-          : (averagePace ?? getEffectivePace(relevantRow));
-      return { ...step, target_pace: proposedPace };
+      if (matching.length === 0) return { ...step, target_pace: null };
+      // Recent fitness wins: use last-month matches if any, else all matches.
+      const recent = matching.filter((r) => now - r.date.getTime() < ONE_MONTH_MS);
+      const pool = recent.length > 0 ? recent : matching;
+      return { ...step, target_pace: meanOf(pool.map(getEffectivePace)) };
     }),
   }));
 }

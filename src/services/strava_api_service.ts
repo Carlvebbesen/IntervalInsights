@@ -146,17 +146,49 @@ export const stravaApiService = {
       const batchPromises = batch.map(async (id) => {
         try {
           const activity = await this.getActivity(accessToken, id);
-          await db
-            .insert(activities)
-            .values(getDbInsertActivity(activity, userId, processHeartRate))
-            .onConflictDoNothing();
-          if (onActivitySynced) {
-            const [row] = await db
-              .select({ id: activities.id })
-              .from(activities)
-              .where(eq(activities.stravaActivityId, activity.id))
-              .limit(1);
-            if (row) triggers.push({ internalId: row.id, stravaActivityId: activity.id });
+          const values = getDbInsertActivity(activity, userId, processHeartRate);
+
+          // Converge with an existing intervals.icu-sourced row for the same
+          // workout (it carries this Strava id in intervalsStravaId but isn't
+          // Strava-linked yet) instead of inserting a cross-source duplicate.
+          // Mirrors the Strava webhook merge. The list endpoint already filters
+          // these out, but a twin can appear between list and import, so guard
+          // here too. intervals enrichment fields are left untouched.
+          const twin = await db.query.activities.findFirst({
+            where: (a, { and, eq, isNull }) =>
+              and(
+                eq(a.userId, userId),
+                eq(a.intervalsStravaId, activity.id),
+                isNull(a.stravaActivityId),
+              ),
+            columns: { id: true },
+          });
+
+          let internalId: number | undefined;
+          if (twin) {
+            await db
+              .update(activities)
+              .set({ ...values, analysisStatus: "pending" })
+              .where(eq(activities.id, twin.id));
+            internalId = twin.id;
+          } else {
+            const [inserted] = await db
+              .insert(activities)
+              .values(values)
+              .onConflictDoNothing()
+              .returning({ id: activities.id });
+            internalId = inserted?.id;
+            if (internalId == null) {
+              const [row] = await db
+                .select({ id: activities.id })
+                .from(activities)
+                .where(eq(activities.stravaActivityId, activity.id))
+                .limit(1);
+              internalId = row?.id;
+            }
+          }
+          if (onActivitySynced && internalId != null) {
+            triggers.push({ internalId, stravaActivityId: activity.id });
           }
           return { id, status: "success" };
         } catch (err) {

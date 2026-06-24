@@ -1,0 +1,154 @@
+import { sleep } from "bun";
+import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
+import { getStravaAccessTokens } from "../src/middlewares/strava_middleware";
+import * as schema from "../src/schema";
+import { startAnalysis } from "../src/services/analysis_service";
+
+/**
+ * Gated LLM revalidation — re-runs the REAL analyze graph end-to-end on the
+ * interval fixtures with the current code (new classification prompt + segmenter),
+ * then grades training-type and the proposed segment structure against expectations.
+ *
+ * MUTATES the dev DB: each fixture is reset to `pending` and re-analyzed, landing
+ * back at `initial` with a FRESH draftAnalysisResult (this also refreshes the stale
+ * pre-fix drafts). Makes real gpt-4o-mini calls (classification, + segmentation only
+ * if the deterministic cascade falls through). Run: bun run scripts/revalidate_fixtures.ts
+ */
+
+const EXPECTED: Record<number, string> = {
+  503: "LONG_INTERVALS", // 6x6min — the bug
+  504: "SHORT_INTERVALS", // 20x45/15, single lap
+  509: "SHORT_INTERVALS", // 20x45/15
+  608: "SHORT_INTERVALS", // 20x45/15
+  615: "LONG_INTERVALS", // 5x3km
+  47: "SHORT_INTERVALS", // 15x90/30s
+  48: "EASY",
+  50: "EASY",
+  505: "LONG_INTERVALS", // 8x1000m
+  508: "LONG_INTERVALS", // 5x2000m
+  510: "LONG_INTERVALS", // 3x(3,2,1km) pyramid
+  507: "LONG_INTERVALS", // "What a feeling" — descriptive desc only
+};
+
+const FIXTURES = process.env.FIXTURES
+  ? process.env.FIXTURES.split(",").map(Number)
+  : Object.keys(EXPECTED).map(Number);
+const DELAY_MS = Number(process.env.DELAY_MS ?? 1500);
+const OUT =
+  process.env.OUT ??
+  "/Users/carlvaldemarebbesen/Development/intervals/knowledge/knowledge/sources/activity-dumps/REVALIDATION.md";
+
+if (!process.env.DATABASE_URL) {
+  console.error("DATABASE_URL required");
+  process.exit(1);
+}
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const db = drizzle({ client: pool, schema });
+
+async function main() {
+  console.log(`[reval] fixtures=${FIXTURES.join(",")} delay=${DELAY_MS}ms`);
+  const tokenCache = new Map<string, string>();
+  const rows: any[] = [];
+
+  for (let i = 0; i < FIXTURES.length; i++) {
+    const id = FIXTURES[i];
+    const act = (
+      await db.select().from(schema.activities).where(eq(schema.activities.id, id))
+    )[0] as any;
+    if (!act) {
+      console.log(`[reval] ${id} NOT FOUND`);
+      continue;
+    }
+    const userRow = (
+      await db
+        .select({ clerkId: schema.users.clerkId })
+        .from(schema.users)
+        .where(eq(schema.users.id, act.userId))
+    )[0];
+    const clerkId = userRow?.clerkId as string | undefined;
+
+    let token = "";
+    if (clerkId) {
+      if (!tokenCache.has(clerkId)) {
+        try {
+          tokenCache.set(clerkId, (await getStravaAccessTokens(clerkId)).access_token);
+        } catch {
+          tokenCache.set(clerkId, "");
+        }
+      }
+      token = tokenCache.get(clerkId) ?? "";
+    }
+
+    // Clear the skip-guard so startAnalysis actually re-runs (it resets the thread itself).
+    await db
+      .update(schema.activities)
+      .set({ analysisStatus: "pending" })
+      .where(eq(schema.activities.id, id));
+
+    const t0 = Date.now();
+    try {
+      await startAnalysis(db, token, id, act.stravaActivityId ?? null, act.userId);
+    } catch (e) {
+      console.log(`[reval] ${id} startAnalysis threw: ${e instanceof Error ? e.message : e}`);
+    }
+
+    const fresh = (
+      await db
+        .select({
+          draft: schema.activities.draftAnalysisResult,
+          status: schema.activities.analysisStatus,
+          ver: schema.activities.analysisVersion,
+        })
+        .from(schema.activities)
+        .where(eq(schema.activities.id, id))
+    )[0] as any;
+    const draft = fresh?.draft ?? {};
+    const classified = draft?.training_type ?? null;
+    const expected = EXPECTED[id] ?? "?";
+    const correct = classified === expected;
+    const rec = {
+      id,
+      title: act.title,
+      expected,
+      classified,
+      conf: draft?.confidence_score ?? null,
+      reasoning: draft?.classification_reasoning ?? null,
+      proposedSegs: Array.isArray(draft?.proposedSegments) ? draft.proposedSegments.length : null,
+      status: fresh?.status,
+      ver: fresh?.ver,
+      correct,
+      ms: Date.now() - t0,
+    };
+    rows.push(rec);
+    console.log(
+      `[reval] ${i + 1}/${FIXTURES.length} id=${id} "${String(act.title).slice(0, 24)}" exp=${expected} got=${classified} ${correct ? "OK" : "WRONG"} conf=${rec.conf} segs=${rec.proposedSegs} status=${rec.status} ${rec.ms}ms`,
+    );
+    if (i < FIXTURES.length - 1) await sleep(DELAY_MS);
+  }
+
+  const passed = rows.filter((r) => r.correct).length;
+  const lines = [
+    "# Fixture revalidation — full analyze-graph re-run (current code)",
+    "",
+    `Classification: **${passed}/${rows.length} correct**. Generated by scripts/revalidate_fixtures.ts.`,
+    "",
+    "| id | title | expected | classified | conf | segs | status | ok | reasoning |",
+    "|---|---|---|---|---|---|---|---|---|",
+    ...rows.map(
+      (r) =>
+        `| ${r.id} | ${String(r.title).replace(/\|/g, "/").slice(0, 28)} | ${r.expected} | ${r.classified} | ${r.conf} | ${r.proposedSegs} | ${r.status} | ${r.correct ? "✅" : "❌"} | ${String(r.reasoning ?? "").replace(/\|/g, "/").slice(0, 80)} |`,
+    ),
+  ];
+  await Bun.write(OUT, lines.join("\n"));
+  console.log(`[reval] done. ${passed}/${rows.length} correct. report=${OUT}`);
+  await pool.end();
+}
+
+main().catch(async (err) => {
+  console.error("[reval] fatal:", err);
+  await pool.end().catch(() => {});
+  process.exit(1);
+});

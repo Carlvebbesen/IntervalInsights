@@ -28,6 +28,7 @@ export function buildSegmentsFromIntervalsIcu(
   intervals: IIntervalsInterval[],
   streams: StatsStreams,
   parentTag = "",
+  expectedReps?: number,
 ): InsertIntervalSegment[] | null {
   const tag = `${parentTag}[buildSegmentsFromIntervalsIcu]`;
   if (intervals.length === 0) return null;
@@ -36,6 +37,23 @@ export function buildSegmentsFromIntervalsIcu(
   const lastWork = intervals.reduce((acc, iv, i) => (isWork(iv) ? i : acc), -1);
   if (firstWork === -1) {
     logger.info({ tag }, "no WORK interval — falling through");
+    return null;
+  }
+
+  // Only trust intervals.icu's breakdown when it's a credible rep-level partition.
+  // intervals.icu's own detection often fails for HR/pace (esp. treadmill): it
+  // returns a few coarse all-WORK lumps with no RECOVERY — laying those end-to-end
+  // yields a 2-4 segment "interval" plan that hides the real reps. In that case
+  // fall through to the deterministic segmenter (speed/HR), which recovers the reps.
+  const workCount = intervals.filter(isWork).length;
+  const recoveryCount = intervals.length - workCount;
+  const minWork = expectedReps ? Math.max(2, Math.floor(expectedReps * 0.5)) : 2;
+  const maxWork = expectedReps ? Math.ceil(expectedReps * 1.5) : Number.POSITIVE_INFINITY;
+  if (recoveryCount === 0 || workCount < minWork || workCount > maxWork) {
+    logger.info(
+      { tag, workCount, recoveryCount, expectedReps, minWork, maxWork },
+      "intervals.icu breakdown not a credible rep structure (no rests / too few or too many work blocks vs the structure) — falling through to heuristics",
+    );
     return null;
   }
 
