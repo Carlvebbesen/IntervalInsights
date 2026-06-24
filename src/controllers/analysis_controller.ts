@@ -39,13 +39,15 @@ export function startActivityAnalysis(
   activityId: number,
   stravaActivityId: number | null | undefined,
   userId: string,
+  force = false,
 ): { success: true } {
   if (!accessToken) {
     throw new AppError(400, "Access token missing");
   }
-  // Fire-and-forget — the pipeline runs in the background.
-  recordAnalysisRun({ phase: "start", trigger: "manual" });
-  startAnalysis(db, accessToken, activityId, stravaActivityId, userId);
+  // Fire-and-forget — the pipeline runs in the background. `force` re-runs an
+  // already-analysed / sync-imported activity (overwrites its draft + segments).
+  recordAnalysisRun({ phase: "start", trigger: force ? "reanalyze" : "manual" });
+  startAnalysis(db, accessToken, activityId, stravaActivityId, userId, force);
   return { success: true };
 }
 

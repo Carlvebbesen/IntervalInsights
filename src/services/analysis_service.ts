@@ -49,13 +49,17 @@ export const startAnalysis = async (
   activityId: number,
   stravaActivityId: number | null | undefined,
   userId: string,
+  force = false,
 ): Promise<void> => {
-  const log = logger.child({ fn: "startAnalysis", activityId });
+  const log = logger.child({ fn: "startAnalysis", activityId, force });
   const current = await db.query.activities.findFirst({
     where: eq(activities.id, activityId),
     columns: { analysisStatus: true },
   });
-  if (current?.analysisStatus && SKIP_START_STATUSES.has(current.analysisStatus)) {
+  // `force` is the user-driven re-analyze path (e.g. from the activity details
+  // view): re-run even on a completed / sync-imported activity. The thread reset
+  // below + the persist node's delete-before-insert make this a clean overwrite.
+  if (!force && current?.analysisStatus && SKIP_START_STATUSES.has(current.analysisStatus)) {
     log.info({ status: current.analysisStatus }, "skipping — already in this status");
     return;
   }

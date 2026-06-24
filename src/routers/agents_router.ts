@@ -41,6 +41,9 @@ agentsRouter.get(
 const startAnalysisSchema = z.object({
   activityId: z.number(),
   stravaActivityId: z.number().nullish(),
+  // Re-run an already-analysed / sync-imported activity (bypasses the
+  // already-in-progress/completed skip guard; overwrites the draft + segments).
+  force: z.boolean().optional(),
 });
 
 agentsRouter.post(
@@ -64,13 +67,14 @@ agentsRouter.post(
   }),
   validator("json", startAnalysisSchema),
   async (c) => {
-    const { activityId, stravaActivityId } = c.req.valid("json");
+    const { activityId, stravaActivityId, force } = c.req.valid("json");
     const result = analysisController.startActivityAnalysis(
       c.env.db,
       c.get("stravaAccessToken"),
       activityId,
       stravaActivityId,
       c.get("userId"),
+      force ?? false,
     );
     return c.json(result, 200);
   },

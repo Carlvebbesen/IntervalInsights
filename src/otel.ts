@@ -155,7 +155,10 @@ export function recordSegmentEdit(attrs: {
 }
 
 /** A user (re)ran the analysis pipeline: phase "start" = (re)generate, "resume" = complete. */
-export function recordAnalysisRun(attrs: { phase: "start" | "resume"; trigger: "manual" | "auto" }): void {
+export function recordAnalysisRun(attrs: {
+  phase: "start" | "resume";
+  trigger: "manual" | "auto" | "reanalyze";
+}): void {
   analysisRunCounter.add(1, {
     "analysis.phase": attrs.phase,
     "analysis.trigger": attrs.trigger,
