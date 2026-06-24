@@ -12,10 +12,20 @@ import { recordTokenUsage } from "../otel";
 
 export const ANALYSIS_VERSION = "v4.0";
 
-const MODEL_NAME = "gpt-4o-mini";
+// Analysis-pipeline models. gpt-4o-mini is the default for every structured
+// agent. The stronger tiers exist so the reasoning-heavy agents (classification +
+// structure extraction) can be A/B'd / promoted PER-AGENT via invokeStructured's
+// `model` arg. Verified against the OpenAI lineup 2026-06 (o4-mini = cost-effective
+// o-series reasoning, supports structured outputs; gpt-4.1 = strong general).
+const MINI_MODEL = "gpt-4o-mini";
+const STRONG_MODEL = "gpt-4.1"; // strong general model, drop-in (supports temperature)
+const REASONING_MODEL = "o4-mini"; // o-series: ignores temperature, uses reasoningEffort
 
 class TokenUsageCallback extends BaseCallbackHandler {
   name = "OtelTokenUsage";
+  constructor(private readonly modelName: string) {
+    super();
+  }
   async handleLLMEnd(output: LLMResult): Promise<void> {
     const usage = output.llmOutput?.tokenUsage as
       | { promptTokens?: number; completionTokens?: number }
@@ -24,7 +34,7 @@ class TokenUsageCallback extends BaseCallbackHandler {
     recordTokenUsage(
       {
         system: GEN_AI_SYSTEM_VALUE_OPENAI,
-        model: MODEL_NAME,
+        model: this.modelName,
         operation: GEN_AI_OPERATION_NAME_VALUE_CHAT,
       },
       { inputTokens: usage.promptTokens, outputTokens: usage.completionTokens },
@@ -33,11 +43,34 @@ class TokenUsageCallback extends BaseCallbackHandler {
 }
 
 export const gptMiniModel = new ChatOpenAI({
-  model: MODEL_NAME,
+  model: MINI_MODEL,
   temperature: 0,
   maxRetries: 2,
   timeout: 45_000,
-  callbacks: [new TokenUsageCallback()],
+  callbacks: [new TokenUsageCallback(MINI_MODEL)],
+});
+
+/**
+ * Stronger tiers for the reasoning-heavy structured agents. Defined but NOT wired
+ * into any agent yet — pass one explicitly to `invokeStructured(..., model)` to
+ * A/B against `gptMiniModel`. `gptStrongModel` is a drop-in (temperature 0);
+ * `o4ReasoningModel` is an o-series reasoning model (no temperature — it reasons
+ * at the default effort; bind `reasoningEffort` per-call to tune) with a longer
+ * timeout since reasoning runs are slower.
+ */
+export const gptStrongModel = new ChatOpenAI({
+  model: STRONG_MODEL,
+  temperature: 0,
+  maxRetries: 2,
+  timeout: 60_000,
+  callbacks: [new TokenUsageCallback(STRONG_MODEL)],
+});
+
+export const o4ReasoningModel = new ChatOpenAI({
+  model: REASONING_MODEL,
+  maxRetries: 2,
+  timeout: 90_000,
+  callbacks: [new TokenUsageCallback(REASONING_MODEL)],
 });
 
 const MAX_STRUCTURED_ATTEMPTS = 2;
@@ -46,14 +79,16 @@ export async function invokeStructured<T extends Record<string, unknown>>(
   schema: z.ZodType<T>,
   prompt: string,
   label: string,
+  model: ChatOpenAI = gptMiniModel,
 ): Promise<T | null> {
   // Retry transient structured-output failures (timeouts, malformed/parse errors)
   // before giving up. Returns null after exhausting (callers treat null as a hard
   // failure → activity goes to `error`, which /pending then auto-retries).
+  // `model` defaults to gpt-4o-mini; pass a stronger tier for reasoning-heavy agents.
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_STRUCTURED_ATTEMPTS; attempt++) {
     try {
-      return await gptMiniModel.withStructuredOutput<T>(schema).invoke(prompt);
+      return await model.withStructuredOutput<T>(schema).invoke(prompt);
     } catch (err) {
       lastErr = err;
       logger.warn(
