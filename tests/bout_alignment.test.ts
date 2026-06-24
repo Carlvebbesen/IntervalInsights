@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { alignBoutsToReps, clampOverlongBouts } from "../src/services/deterministic_segmenter";
+import {
+  alignBoutsToReps,
+  clampOverlongBouts,
+  expandShortDistanceReps,
+} from "../src/services/deterministic_segmenter";
 
 // Locks the contract of measure-aware bout binding: when noisy treadmill laps
 // leave MORE work-candidate bouts than prescribed reps (a few rests crossed the
@@ -138,5 +142,41 @@ describe("clampOverlongBouts", () => {
     const distance = time.map((i) => 10 * i); // 1050 m bout = 1.05x
     const out = clampOverlongBouts([bout(0, 105)], [rep("DISTANCE", 1000)], time, distance);
     expect(out[0]).toEqual(bout(0, 105));
+  });
+});
+
+describe("expandShortDistanceReps", () => {
+  // 1 Hz, 10 m/s constant → distance[i] = 10·i, so covered distance = 10·(end-start).
+  const time = Array.from({ length: 401 }, (_, i) => i);
+  const distance = time.map((i) => 10 * i);
+
+  it("grows a short DISTANCE bout toward the prescribed distance (a '1000 m' rep reads ~1000 m)", () => {
+    // detected core covers only 600 m (t 120→180) of a 1000 m rep → expand to ~1000 m.
+    const out = expandShortDistanceReps([bout(120, 180)], [rep("DISTANCE", 1000)], time, distance, 0, 400);
+    const span = 10 * (out[0].end - out[0].start);
+    expect(span).toBeGreaterThanOrEqual(950);
+    expect(span).toBeLessThanOrEqual(1050);
+  });
+
+  it("leaves a DISTANCE bout already near the prescribed distance", () => {
+    const out = expandShortDistanceReps([bout(100, 195)], [rep("DISTANCE", 1000)], time, distance, 0, 400);
+    expect(out[0]).toEqual(bout(100, 195)); // 950 m ≥ 0.9× → untouched
+  });
+
+  it("never touches TIME reps (that's expandShortReps' job)", () => {
+    const out = expandShortDistanceReps([bout(0, 30)], [rep("TIME", 1000)], time, distance, 0, 400);
+    expect(out[0]).toEqual(bout(0, 30));
+  });
+
+  it("clamps growth to the neighbouring bout (no overlap)", () => {
+    const out = expandShortDistanceReps(
+      [bout(120, 180), bout(200, 260)],
+      [rep("DISTANCE", 1000), rep("DISTANCE", 600)],
+      time,
+      distance,
+      0,
+      400,
+    );
+    expect(out[0].end).toBeLessThanOrEqual(out[1].start);
   });
 });

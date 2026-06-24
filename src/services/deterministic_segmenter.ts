@@ -278,6 +278,13 @@ function indexAtTime(time: number[], target: number): number {
   return idx;
 }
 
+/** Time at which cumulative distance first reaches `targetDist` (distance is monotone). */
+function timeAtDistance(time: number[], distance: number[], targetDist: number): number {
+  let idx = distance.findIndex((d) => d >= targetDist);
+  if (idx === -1) idx = distance.length - 1;
+  return time[idx] ?? time[time.length - 1] ?? 0;
+}
+
 /**
  * Lay the nominal work/rest durations from `ws`, then snap each work-bout edge to
  * the nearest speed transition (improves alignment, esp. the unusable/no-lap case).
@@ -444,6 +451,47 @@ export function expandShortReps(
 }
 
 /**
+ * DISTANCE analog of expandShortReps: detection captures only the high-speed CORE
+ * of a distance rep (a "1000 m" rep can read 666 m). When a DISTANCE rep's bout
+ * spans less than `minRatio` of its prescribed distance, grow it SYMMETRICALLY in
+ * distance (around the core centre) until it covers the prescribed distance, clamped
+ * to the neighbouring bouts and t0/tEnd. The title distance is authoritative — a
+ * "1000 m" rep should read ~1000 m. Only runs on detected bouts (not authoritative
+ * device laps); over-long bouts are pulled back by clampOverlongBouts.
+ */
+export function expandShortDistanceReps(
+  bouts: WorkBout[],
+  reps: RepDesc[],
+  time: number[],
+  distance: number[],
+  t0: number,
+  tEnd: number,
+  minRatio = 0.9,
+): WorkBout[] {
+  const out = bouts.map((b) => ({ ...b }));
+  for (let i = 0; i < out.length && i < reps.length; i++) {
+    const rep = reps[i];
+    if (rep.workType !== "DISTANCE" || rep.workValue <= 0) continue;
+    const core = out[i];
+    const si = indexAtTime(time, core.start);
+    const ei = indexAtTime(time, core.end);
+    const measured = Math.max(0, (distance[ei] ?? 0) - (distance[si] ?? 0));
+    if (measured >= rep.workValue * minRatio) continue;
+    const center = ((distance[si] ?? 0) + (distance[ei] ?? 0)) / 2;
+    const half = rep.workValue / 2;
+    const prevEnd = i > 0 ? out[i - 1].end : t0;
+    const nextStart = i + 1 < out.length ? out[i + 1].start : tEnd;
+    const newStart = timeAtDistance(time, distance, center - half);
+    const newEnd = timeAtDistance(time, distance, center + half);
+    out[i] = {
+      start: Math.max(Math.min(newStart, core.start), prevEnd),
+      end: Math.min(Math.max(newEnd, core.end), nextStart, tEnd),
+    };
+  }
+  return out;
+}
+
+/**
  * Bind a prescribed rep sequence to detected work bouts by MEASURE, not position.
  * On noisy treadmill data the speed gate lets a few rests cross into the work-lap
  * set, so there are more bouts than reps; assigning reps[i]→bouts[i] then shifts
@@ -583,6 +631,10 @@ export function buildSegmentsDeterministic(
   // fewer work blocks than reps — the title count is authoritative, so the result
   // must be USED rather than discarded for the (count-inventing) LLM fallback.
   let forcedCount = false;
+  // True when bouts came from STREAM detection (detectBouts / templatePlace) rather
+  // than authoritative device laps — gates the short-rep pace-lag expansion, which
+  // must run on detected cores but not on real laps.
+  let boutsFromDetection = false;
 
   if (inferred) {
     const region = cls.mode === "unusable" ? { ws: t0, we: tEnd } : { ws: cls.ws, we: cls.we };
@@ -590,32 +642,24 @@ export function buildSegmentsDeterministic(
     if (detected.length === 0) return null;
     bouts = detected;
     reps = inferRepsFromBouts(detected);
-  } else if (cls.mode === "per-rep" && cls.workLaps.length > 0) {
+  } else if (cls.mode === "per-rep" && cls.workLaps.length >= reps.length) {
+    // Enough work laps to cover the structure: bind them to reps — align away the
+    // spurious extras when there are more laps than reps (622), else 1:1.
     const lapBouts = cls.workLaps.map((l) => lapWindow(l, time));
-    if (lapBouts.length > reps.length) {
-      // More work-candidates than prescribed reps — noisy treadmill laps where a
-      // few rests crossed the speed gate. Bind each rep to its best-matching bout
-      // by measure instead of by position, so a spurious lap no longer shifts
-      // every rep after it (activity 622). See alignBoutsToReps.
-      bouts = alignBoutsToReps(lapBouts, reps, time, distance);
-      countMatch = bouts.length === reps.length ? 1 : 0.5;
-    } else if (lapBouts.length < reps.length) {
-      // UNDER-DETECTION: lapping found fewer work blocks than the known structure
-      // — HR-only / speed-ambiguous reps (626) or a coarse compound the laps don't
-      // separate (616). The TITLE count is authoritative: lay the prescribed reps
-      // by template across the work window so the segment count matches the
-      // structure rather than shipping a truncated breakdown. See countGuard note.
-      const window = detectWorkWindowBySpeed(time, speed, estimateStructSecs(reps, time, speed));
-      const placed = templatePlace(window.ws, window.we, reps, time, speed);
-      bouts = placed.bouts;
-      snapFrac = placed.total > 0 ? placed.snapped / placed.total : 0;
-      countMatch = 1;
-      forcedCount = true;
-    } else {
-      bouts = lapBouts;
-      countMatch = 1;
-    }
+    bouts =
+      lapBouts.length > reps.length
+        ? alignBoutsToReps(lapBouts, reps, time, distance)
+        : lapBouts;
+    countMatch = 1;
   } else {
+    // Boundary / one-big-lap, OR per-rep UNDER-detection where the lap-level
+    // 0.75×max-speed gate missed reps (626 — slower reps; 616 — the compound's
+    // short second block). Recover reps from SAMPLE-level speed valleys:
+    // detectBouts finds the rests and the work runs between them, catching what the
+    // lap gate dropped; selectRegion trims to the prescribed count. Only if
+    // detection STILL falls short do we count-guarantee via template (the title
+    // count is authoritative — see forcedCount).
+    boutsFromDetection = true;
     const region = cls.mode === "boundary" ? { ws: cls.ws, we: cls.we } : { ws: t0, we: tEnd };
     const { bouts: detected } = detectBouts(time, speed, region.ws, region.we);
     const picked = selectRegion(detected, reps.length);
@@ -629,16 +673,19 @@ export function buildSegmentsDeterministic(
       const placed = templatePlace(window.ws, window.we, reps, time, speed);
       bouts = placed.bouts;
       snapFrac = placed.total > 0 ? placed.snapped / placed.total : 0;
-      countMatch = 0.6;
+      countMatch = 1;
+      forcedCount = true;
     }
   }
   if (bouts.length === 0) return null;
 
   // Recover short TIME reps under-measured due to pace lag — only when the
   // structure is KNOWN and bouts came from stream detection (not authoritative
-  // device laps / inference). See expandShortReps.
-  if (!inferred && mode !== "per-rep") {
+  // device laps / inference). Keyed on detection, not mode: per-rep under-detection
+  // also lands here (616's 45s reps detect as 20-30s cores). See expandShortReps.
+  if (!inferred && boutsFromDetection) {
     bouts = expandShortReps(bouts, reps, t0, tEnd);
+    bouts = expandShortDistanceReps(bouts, reps, time, distance, t0, tEnd);
   }
 
   // Pull in work bouts that overrun the prescribed measure (a "1000 m" rep that
