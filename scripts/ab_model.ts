@@ -41,11 +41,15 @@ const FIXTURES: Fix[] = [
   { id: 629, title: "7x4min", type: "LONG_INTERVALS", reps: 7, note: "SHORT/LONG gate" },
 ];
 
-const MODELS: [string, ChatOpenAI][] = [
+const ALL_MODELS: [string, ChatOpenAI][] = [
   ["mini", gptMiniModel],
   ["gpt-4.1", gptStrongModel],
   ["o4-mini", o4ReasoningModel],
 ];
+// MODELS=mini (or mini,gpt-4.1) limits the run — e.g. a cheap mini-only re-check.
+const MODELS = process.env.MODELS
+  ? ALL_MODELS.filter(([n]) => process.env.MODELS!.split(",").includes(n))
+  : ALL_MODELS;
 
 function wrap(a: number[] | null | undefined) {
   return Array.isArray(a) ? { data: a } : undefined;
