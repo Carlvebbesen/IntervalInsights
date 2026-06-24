@@ -579,6 +579,10 @@ export function buildSegmentsDeterministic(
   let bouts: WorkBout[];
   let snapFrac = 1;
   let countMatch = 1;
+  // Set when we deliberately lay the full known structure because detection found
+  // fewer work blocks than reps — the title count is authoritative, so the result
+  // must be USED rather than discarded for the (count-inventing) LLM fallback.
+  let forcedCount = false;
 
   if (inferred) {
     const region = cls.mode === "unusable" ? { ws: t0, we: tEnd } : { ws: cls.ws, we: cls.we };
@@ -595,9 +599,21 @@ export function buildSegmentsDeterministic(
       // every rep after it (activity 622). See alignBoutsToReps.
       bouts = alignBoutsToReps(lapBouts, reps, time, distance);
       countMatch = bouts.length === reps.length ? 1 : 0.5;
+    } else if (lapBouts.length < reps.length) {
+      // UNDER-DETECTION: lapping found fewer work blocks than the known structure
+      // — HR-only / speed-ambiguous reps (626) or a coarse compound the laps don't
+      // separate (616). The TITLE count is authoritative: lay the prescribed reps
+      // by template across the work window so the segment count matches the
+      // structure rather than shipping a truncated breakdown. See countGuard note.
+      const window = detectWorkWindowBySpeed(time, speed, estimateStructSecs(reps, time, speed));
+      const placed = templatePlace(window.ws, window.we, reps, time, speed);
+      bouts = placed.bouts;
+      snapFrac = placed.total > 0 ? placed.snapped / placed.total : 0;
+      countMatch = 1;
+      forcedCount = true;
     } else {
       bouts = lapBouts;
-      countMatch = bouts.length === reps.length ? 1 : 0.5;
+      countMatch = 1;
     }
   } else {
     const region = cls.mode === "boundary" ? { ws: cls.ws, we: cls.we } : { ws: t0, we: tEnd };
@@ -678,6 +694,11 @@ export function buildSegmentsDeterministic(
   const contrast = speedContrast(time, speed, bouts.slice(0, count));
   let confidence = 0.45 * snapFrac + 0.3 * contrast + 0.25 * countMatch;
   if (inferred) confidence *= 0.85;
+  // Count-guaranteed structures are user-authoritative on count; their template
+  // placement snaps few edges (the missing reps have no transitions) so the raw
+  // blend reads low — floor above the cascade's LLM-fallback threshold so the
+  // structure-honoring split is kept instead of handing off to the count-inventing LLM.
+  if (forcedCount) confidence = Math.max(confidence, 0.6);
   confidence = Math.max(0, Math.min(1, confidence));
 
   return { segments: out, confidence, mode };

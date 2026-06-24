@@ -47,12 +47,19 @@ export function buildSegmentsFromIntervalsIcu(
   // fall through to the deterministic segmenter (speed/HR), which recovers the reps.
   const workCount = intervals.filter(isWork).length;
   const recoveryCount = intervals.length - workCount;
-  const minWork = expectedReps ? Math.max(2, Math.floor(expectedReps * 0.5)) : 2;
-  const maxWork = expectedReps ? Math.ceil(expectedReps * 1.5) : Number.POSITIVE_INFINITY;
-  if (recoveryCount === 0 || workCount < minWork || workCount > maxWork) {
+  if (recoveryCount === 0) {
+    logger.info({ tag, workCount }, "intervals.icu breakdown has no RECOVERY blocks — falling through");
+    return null;
+  }
+  // The TITLE count is authoritative: when the structure gives an expected rep
+  // count, only trust icu if its WORK-block count MATCHES it exactly. icu commonly
+  // under/over-detects (treadmill HR-only reps — e.g. 6 of 10), so a mismatch falls
+  // through to the deterministic segmenter, which lays the full known structure.
+  // Without an expected count, keep a loose sanity floor.
+  if (expectedReps != null ? workCount !== expectedReps : workCount < 2) {
     logger.info(
-      { tag, workCount, recoveryCount, expectedReps, minWork, maxWork },
-      "intervals.icu breakdown not a credible rep structure (no rests / too few or too many work blocks vs the structure) — falling through to heuristics",
+      { tag, workCount, recoveryCount, expectedReps },
+      "intervals.icu work-block count does not match the structure — falling through to heuristics",
     );
     return null;
   }
