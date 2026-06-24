@@ -1,9 +1,10 @@
+import type { ChatOpenAI } from "@langchain/openai";
 import { z } from "zod";
 import { trainingTypeEnum } from "../schema";
 import type { IntervalsIcuPrediction } from "../schema/activities";
 import { normalizeActivityStreams, prepareDataForLLM } from "../services/utils";
 import type { StreamSet } from "../types/strava/IStream";
-import { invokeStructured } from "./model";
+import { gptMiniModel, invokeStructured } from "./model";
 import { venuePromptBlock } from "./running_venues";
 export type WorkoutAnalysisOutput = z.infer<typeof workoutAnalysisOutput>;
 
@@ -156,6 +157,7 @@ export async function invokeActivityAnalysisAgent(
   totalElevationGain: number,
   type: string,
   intervalsIcuPrediction?: IntervalsIcuPrediction | null,
+  model: ChatOpenAI = gptMiniModel,
 ): Promise<WorkoutAnalysisOutput | null> {
   const normalized = normalizeActivityStreams(
     streams?.time?.data ?? [],
@@ -221,6 +223,6 @@ ${intervalsIcuBlock}
   ### 5. TASK
   First fill 'classification_reasoning': state the per-rep work duration (s) and/or distance (m) for ONE rep, then apply the SHORT vs LONG hard gate. Then classify the run and populate the structure according to the rules above.
 `;
-  const result = await invokeStructured(workoutAnalysisOutput, prompt, "analyze activity");
+  const result = await invokeStructured(workoutAnalysisOutput, prompt, "analyze activity", model);
   return result ? reconcileIntervalSubtype(result) : result;
 }
