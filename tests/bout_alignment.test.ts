@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { alignBoutsToReps } from "../src/services/deterministic_segmenter";
+import { alignBoutsToReps, clampOverlongBouts } from "../src/services/deterministic_segmenter";
 
 // Locks the contract of measure-aware bout binding: when noisy treadmill laps
 // leave MORE work-candidate bouts than prescribed reps (a few rests crossed the
@@ -87,7 +87,7 @@ describe("alignBoutsToReps", () => {
     for (let i = 1; i < out.length; i++) expect(out[i].start).toBeGreaterThan(out[i - 1].start);
   });
 
-  it("matches DISTANCE reps by covered distance, not duration", () => {
+  it("matches DISTANCE reps by covered distance, not duration (alignBoutsToReps)", () => {
     // 1Hz streams: 1000m effort, then a 200m spurious bout, then another 1000m.
     const time = Array.from({ length: 301 }, (_, i) => i);
     const distance = new Array<number>(301);
@@ -102,5 +102,41 @@ describe("alignBoutsToReps", () => {
     const reps = [rep("DISTANCE", 1000), rep("DISTANCE", 1000)];
     const out = alignBoutsToReps(bouts, reps, time, distance);
     expect(out).toEqual([bout(0, 100), bout(200, 300)]);
+  });
+});
+
+describe("clampOverlongBouts", () => {
+  it("trims a TIME bout that overruns the target beyond tolerance", () => {
+    // 90s detected for a 60s rep (1.5x) -> pulled back to exactly 60s.
+    const out = clampOverlongBouts([bout(0, 90)], [rep("TIME", 60)], NO_STREAMS, NO_STREAMS);
+    expect(out[0]).toEqual(bout(0, 60));
+  });
+
+  it("keeps a TIME bout within tolerance (real variation)", () => {
+    // 66s for a 60s rep (1.1x < 1.15) -> unchanged.
+    const out = clampOverlongBouts([bout(0, 66)], [rep("TIME", 60)], NO_STREAMS, NO_STREAMS);
+    expect(out[0]).toEqual(bout(0, 66));
+  });
+
+  it("never extends an under-measured bout (that's expandShortReps' job)", () => {
+    const out = clampOverlongBouts([bout(0, 40)], [rep("TIME", 60)], NO_STREAMS, NO_STREAMS);
+    expect(out[0]).toEqual(bout(0, 40));
+  });
+
+  it("trims a DISTANCE bout to the prescribed-distance point", () => {
+    // 1Hz, 10 m/s: a bout covering 1200 m for a 1000 m rep -> end pulled to the
+    // 1000 m mark (t=100), not left at 1200 m (t=120).
+    const time = Array.from({ length: 121 }, (_, i) => i);
+    const distance = time.map((i) => 10 * i);
+    const out = clampOverlongBouts([bout(0, 120)], [rep("DISTANCE", 1000)], time, distance);
+    expect(out[0].start).toBe(0);
+    expect(out[0].end).toBe(100);
+  });
+
+  it("keeps a DISTANCE bout within tolerance", () => {
+    const time = Array.from({ length: 121 }, (_, i) => i);
+    const distance = time.map((i) => 10 * i); // 1050 m bout = 1.05x
+    const out = clampOverlongBouts([bout(0, 105)], [rep("DISTANCE", 1000)], time, distance);
+    expect(out[0]).toEqual(bout(0, 105));
   });
 });

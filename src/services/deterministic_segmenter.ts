@@ -511,6 +511,51 @@ export function alignBoutsToReps(
   return chosen.reverse();
 }
 
+/** Default over-run tolerance: keep real variation, trim only clear overruns. */
+export const OVERLONG_TOLERANCE = 0.15;
+
+/**
+ * Trim work bouts that overrun the prescribed measure — the prescribed value is a
+ * strong prior (a "1000 m" rep is ~950-1050 m, not 1200; a long TIME rep drifts
+ * only ±10-20 s). Detection or device laps sometimes overrun: a lap that kept
+ * counting, or a boundary that leaked into the rest. When a bout's measure exceeds
+ * the target by more than `tol`, pull its END back to exactly the prescribed
+ * measure from the bout start; the trimmed tail falls into the following REST.
+ * Within tolerance the detected end is kept (real variation). Never EXTENDS — under
+ * -measure is expandShortReps' job — and only touches known TIME/DISTANCE reps.
+ */
+export function clampOverlongBouts(
+  bouts: WorkBout[],
+  reps: RepDesc[],
+  time: number[],
+  distance: number[],
+  tol: number = OVERLONG_TOLERANCE,
+): WorkBout[] {
+  const out = bouts.map((b) => ({ ...b }));
+  for (let i = 0; i < out.length && i < reps.length; i++) {
+    const rep = reps[i];
+    const b = out[i];
+    const target = rep.workValue;
+    if (target <= 0) continue;
+    if (rep.workType === "TIME") {
+      if (b.end - b.start > target * (1 + tol)) {
+        b.end = Math.max(b.start + target, b.start + 1);
+      }
+    } else {
+      const si = indexAtTime(time, b.start);
+      const ei = indexAtTime(time, b.end);
+      const measured = Math.max(0, (distance[ei] ?? 0) - (distance[si] ?? 0));
+      if (measured > target * (1 + tol)) {
+        const targetDist = (distance[si] ?? 0) + target;
+        let k = si;
+        while (k < ei && (distance[k] ?? 0) < targetDist) k++;
+        b.end = Math.max(time[k] ?? b.end, b.start + 1);
+      }
+    }
+  }
+  return out;
+}
+
 export function buildSegmentsDeterministic(
   activityId: number,
   laps: Lap[],
@@ -578,6 +623,13 @@ export function buildSegmentsDeterministic(
   // device laps / inference). See expandShortReps.
   if (!inferred && mode !== "per-rep") {
     bouts = expandShortReps(bouts, reps, t0, tEnd);
+  }
+
+  // Pull in work bouts that overrun the prescribed measure (a "1000 m" rep that
+  // a device lap recorded as 1200 m). Applies in every known-structure mode,
+  // including per-rep, since the overrun usually comes from the laps themselves.
+  if (!inferred) {
+    bouts = clampOverlongBouts(bouts, reps, time, distance);
   }
 
   const count = Math.min(bouts.length, reps.length);
