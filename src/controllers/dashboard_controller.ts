@@ -6,11 +6,13 @@ import type {
   DashboardResponseSchema,
   FitnessDayResponseSchema,
   FitnessSeriesResponseSchema,
+  PaceAnchorResponseSchema,
   TrainingSummaryResponseSchema,
   WeekDetailResponseSchema,
   WellnessSeriesResponseSchema,
 } from "../schemas/api_schemas";
 import { fetchFitnessDayBlock, fetchFitnessSeries } from "../services/fitness_service";
+import { fetchPaceAnchor } from "../services/pace_anchor_service";
 import {
   fetchTrainingSummary,
   fetchWeekWellnessStats,
@@ -200,6 +202,14 @@ export function getTrainingSummary(
   clerkUserId: string,
 ): Promise<z.infer<typeof TrainingSummaryResponseSchema>> {
   return fetchTrainingSummary(clerkUserId);
+}
+
+export function getPaceAnchor(
+  db: Db,
+  userId: string,
+  clerkUserId: string,
+): Promise<z.infer<typeof PaceAnchorResponseSchema>> {
+  return fetchPaceAnchor(db, userId, clerkUserId);
 }
 
 export function getWellnessSeries(

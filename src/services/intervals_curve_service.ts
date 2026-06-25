@@ -91,7 +91,7 @@ export async function fetchBestEffortCurve(
     return { status: "no_data", data: null };
   }
 
-  const curve = response?.find((c) => c?.secs?.length);
+  const curve = Array.isArray(response) ? response.find((c) => c?.secs?.length) : undefined;
   if (!curve) return { status: "no_data", data: null };
 
   const values = curve.values ?? curve.watts ?? [];

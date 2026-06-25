@@ -8,6 +8,7 @@ import {
   FitnessDayParamSchema,
   FitnessDayResponseSchema,
   FitnessSeriesResponseSchema,
+  PaceAnchorResponseSchema,
   TrainingSummaryResponseSchema,
   WeekDetailResponseSchema,
   WellnessQuerySchema,
@@ -58,6 +59,28 @@ dashboardRouter.get(
   async (c) => {
     const summary = await dashboardController.getTrainingSummary(c.get("clerkUserId"));
     return c.json(summary);
+  },
+);
+
+dashboardRouter.get(
+  "/pace-anchor",
+  describeRoute({
+    description:
+      "Derives the athlete's current fitness 'anchor' from their recent (~90-day) best-effort running curve and returns predicted training paces in sec/km. Discriminated by `status`: `ok` (data populated; intervals.icu linked — but `anchorSource` may still be `none` when there is no genuine maximal effort to anchor on) or `not_linked` (intervals.icu not connected). `anchorSource` is `critical_speed` (slope of the distance–time fit over 2–15 min maximal efforts), `vdot` (Daniels, from a single representative effort), or `none`. When `none`, paces are null and `predictedRaces` is empty — never fabricated. `confidence` (high/medium/low) reflects the fit quality / available points.",
+    responses: {
+      200: {
+        description: "Discriminated pace-anchor result",
+        content: { "application/json": { schema: resolver(PaceAnchorResponseSchema) } },
+      },
+    },
+  }),
+  async (c) => {
+    const result = await dashboardController.getPaceAnchor(
+      c.env.db,
+      c.get("userId"),
+      c.get("clerkUserId"),
+    );
+    return c.json(result);
   },
 );
 
