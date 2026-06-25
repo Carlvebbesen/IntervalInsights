@@ -2,6 +2,7 @@ import { logger } from "../logger";
 import type { InsertIntervalSegment } from "../schema/interval_segments";
 import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
 import type { StreamSet } from "../types/strava/IStream";
+import { SEGMENTER_CONFIG } from "./segmenter_config";
 import { calculateSegmentStats } from "./utils";
 
 type StatsStreams = Required<Pick<StreamSet, "time" | "distance">> & Pick<StreamSet, "heartrate">;
@@ -56,7 +57,7 @@ export function buildSegmentsFromIntervalsIcu(
   // under/over-detects (treadmill HR-only reps — e.g. 6 of 10), so a mismatch falls
   // through to the deterministic segmenter, which lays the full known structure.
   // Without an expected count, keep a loose sanity floor.
-  if (expectedReps != null ? workCount !== expectedReps : workCount < 2) {
+  if (expectedReps != null ? workCount !== expectedReps : workCount < SEGMENTER_CONFIG.cascade.icuMinWorkBlocks) {
     logger.info(
       { tag, workCount, recoveryCount, expectedReps },
       "intervals.icu work-block count does not match the structure — falling through to heuristics",

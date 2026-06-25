@@ -11,11 +11,12 @@ import type { Lap } from "../types/strava/IDetailedActivity";
 import type { StreamSet } from "../types/strava/IStream";
 import { invokeCompleteActivityAnalysisAgent } from "./full_analysis_agent";
 import type { WorkoutAnalysisOutput } from "./initial_analysis_agent";
+import { SEGMENTER_CONFIG } from "../services/segmenter_config";
 import { invokeWithRateLimitRetry } from "./model";
 
 type StatsStreams = Required<Pick<StreamSet, "time" | "distance">> & Pick<StreamSet, "heartrate">;
 
-const DETERMINISTIC_CONFIDENCE_THRESHOLD = 0.5;
+const DETERMINISTIC_CONFIDENCE_THRESHOLD = SEGMENTER_CONFIG.cascade.deterministicThreshold;
 
 export function ensureWarmupFirst(
   segments: InsertIntervalSegment[],

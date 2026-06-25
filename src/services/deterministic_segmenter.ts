@@ -2,6 +2,9 @@ import type { InsertIntervalSegment } from "../schema/interval_segments";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { Lap } from "../types/strava/IDetailedActivity";
 import type { StreamSet } from "../types/strava/IStream";
+import { defaultPenalty, pelt, variance, viterbiTwoState } from "./changepoint";
+import { compensateHrLag } from "./hr_lag";
+import { SEGMENTER_CONFIG as CFG } from "./segmenter_config";
 import { calculateSegmentStats } from "./utils";
 
 /**
@@ -41,10 +44,10 @@ export interface DeterministicResult {
   mode: SegmentMode;
 }
 
-const MIN_LAP_SECONDS = 10;
-const SNAP_WINDOW_SECONDS = 45;
-const MIN_BOUT_SECONDS = 10;
-const MIN_GAP_SECONDS = 4;
+const MIN_LAP_SECONDS = CFG.laps.minLapSeconds;
+const SNAP_WINDOW_SECONDS = CFG.snap.windowSeconds;
+const MIN_BOUT_SECONDS = CFG.bouts.minBoutSeconds;
+const MIN_GAP_SECONDS = CFG.bouts.minGapSeconds;
 
 export function flattenReps(userSets: ExpandedIntervalSet[]): RepDesc[] {
   const reps: RepDesc[] = [];
@@ -65,7 +68,7 @@ export function flattenReps(userSets: ExpandedIntervalSet[]): RepDesc[] {
 }
 
 /** Windowed speed (m/s) from cumulative distance; mirrors the app's deriveVelocity. */
-export function deriveSpeed(time: number[], distance: number[], windowSec = 10): number[] {
+export function deriveSpeed(time: number[], distance: number[], windowSec = CFG.speed.windowSec): number[] {
   const n = time.length;
   const v = new Array<number>(n).fill(0);
   for (let i = 0; i < n; i++) {
@@ -83,7 +86,7 @@ function isJunkLap(l: Lap): boolean {
   const dur = l.elapsed_time ?? 0;
   const dist = l.distance ?? 0;
   const spd = l.average_speed ?? 0;
-  return dur < MIN_LAP_SECONDS || (dist < 5 && spd < 0.5);
+  return dur < MIN_LAP_SECONDS || (dist < CFG.laps.junkLapMinDistanceM && spd < CFG.laps.junkLapMinSpeed);
 }
 
 function lapWindow(l: Lap, time: number[]): WorkBout {
@@ -120,11 +123,11 @@ export function classifyLaps(
 
   if (meaningful.length <= 1) return { mode: "unusable", ws: t0, we: tEnd, workLaps: [] };
 
-  if (meaningful.length <= 5) {
+  if (meaningful.length <= CFG.laps.boundaryMaxLaps) {
     const hrs = meaningful.map((l) => l.average_heartrate ?? 0);
     const mx = Math.max(...hrs);
     const mn = Math.min(...hrs);
-    const thr = mn + 0.6 * (mx - mn);
+    const thr = mn + CFG.laps.boundaryHrFraction * (mx - mn);
     const idx = hrs.map((h, i) => (h >= thr ? i : -1)).filter((i) => i >= 0);
     const a = idx[0] ?? 0;
     const b = idx[idx.length - 1] ?? meaningful.length - 1;
@@ -137,7 +140,7 @@ export function classifyLaps(
   }
 
   const speeds = meaningful.map((l) => l.average_speed ?? 0);
-  const thr = 0.75 * Math.max(...speeds);
+  const thr = CFG.laps.perRepSpeedFraction * Math.max(...speeds);
   const work = meaningful.filter((_, i) => speeds[i] >= thr);
   return {
     mode: "per-rep",
@@ -172,10 +175,47 @@ export function detectBouts(
   // workLvl (p75) ≈ work; the gate sits halfway between.
   const win = speed.filter((_, i) => inWin(i)).sort((a, b) => a - b);
   if (win.length === 0) return { bouts: [], workLvl: 0, restLvl: 0 };
-  const workLvl = percentile(win, 0.75);
-  const restLvl = percentile(win, 0.05);
-  const thr = restLvl + 0.5 * (workLvl - restLvl);
+  const workLvl = percentile(win, CFG.bouts.workPercentile);
+  const restLvl = percentile(win, CFG.bouts.restPercentile);
+  const thr = restLvl + CFG.bouts.thresholdFraction * (workLvl - restLvl);
   if (workLvl <= 0 || thr <= 0) return { bouts: [], workLvl, restLvl };
+
+  // Per-sample work/rest label, by one of three cores (all feed the same run-
+  // forming below): PELT change-point detection (principled multi-changepoint
+  // partition with a min-size short-rep guard), the Markov/Viterbi prior (charges
+  // a switch cost so one fast/slow sample can't open or close a bout), or the raw
+  // `speed > thr` threshold. PELT and Markov both kill the threshold's flicker —
+  // the inference over-segmentation (504 24→20). PELT is the core; Markov is the
+  // fallback when PELT is off or the window is too short.
+  const idxInWin: number[] = [];
+  for (let i = 0; i < time.length; i++) if (inWin(i)) idxInWin.push(i);
+  const labelOf = new Map<number, number>();
+  const winSpeed = idxInWin.map((i) => speed[i]);
+  const winDt =
+    idxInWin.length > 1
+      ? (time[idxInWin[idxInWin.length - 1]] - time[idxInWin[0]]) / (idxInWin.length - 1)
+      : 1;
+  const minSizeSamples = Math.max(2, Math.round(CFG.pelt.minSizeSeconds / Math.max(winDt, 0.1)));
+
+  if (CFG.pelt.enabled && winSpeed.length >= 2 * minSizeSamples) {
+    // PELT partitions the window; each segment is work if its mean speed clears
+    // the work/rest gate. Adjacent same-label segments coalesce in the run loop.
+    const cps = pelt(winSpeed, minSizeSamples, defaultPenalty(winSpeed));
+    const bounds = [0, ...cps, winSpeed.length];
+    for (let b = 0; b < bounds.length - 1; b++) {
+      const lo = bounds[b];
+      const hi = bounds[b + 1];
+      let sum = 0;
+      for (let k = lo; k < hi; k++) sum += winSpeed[k];
+      const segLabel = hi > lo && sum / (hi - lo) > thr ? 1 : 0;
+      for (let k = lo; k < hi; k++) labelOf.set(idxInWin[k], segLabel);
+    }
+  } else if (CFG.markov.enabled && winSpeed.length >= 2) {
+    const labels = viterbiTwoState(winSpeed, restLvl, workLvl, CFG.markov.switchPenalty);
+    idxInWin.forEach((i, k) => labelOf.set(i, labels[k]));
+  } else {
+    for (const i of idxInWin) labelOf.set(i, speed[i] > thr ? 1 : 0);
+  }
 
   const raw: WorkBout[] = [];
   let startIdx = -1;
@@ -183,7 +223,7 @@ export function detectBouts(
   for (let i = 0; i < time.length; i++) {
     if (!inWin(i)) continue;
     lastIdx = i;
-    const hi = speed[i] > thr;
+    const hi = labelOf.get(i) === 1;
     if (hi && startIdx < 0) startIdx = i;
     if (!hi && startIdx >= 0) {
       raw.push({ start: time[startIdx], end: time[i - 1] ?? time[startIdx] });
@@ -254,7 +294,7 @@ export function detectWorkWindowBySpeed(
   const tEnd = time[n - 1] ?? 0;
   const positive = speed.filter((x) => x > 0).sort((a, b) => a - b);
   if (positive.length === 0) return { ws: t0, we: tEnd };
-  const thr = percentile(positive, 0.75) * 0.5;
+  const thr = percentile(positive, CFG.window.workPercentile) * CFG.window.thresholdFraction;
   const working = speed.map((x) => (x > thr ? 1 : 0));
   let best = { frac: -1, ws: t0, we: tEnd };
   for (let i = 0; i < n; i++) {
@@ -262,7 +302,7 @@ export function detectWorkWindowBySpeed(
     let j = i;
     while (j < n && time[j] < endT) j++;
     const jj = Math.min(j, n - 1);
-    if (jj <= i || time[jj] - time[i] < 0.9 * structSecs) continue;
+    if (jj <= i || time[jj] - time[i] < CFG.window.minCoverage * structSecs) continue;
     let sum = 0;
     for (let k = i; k < jj; k++) sum += working[k];
     const frac = sum / (jj - i);
@@ -299,14 +339,18 @@ export function templatePlace(
   speed: number[],
 ): { bouts: WorkBout[]; snapped: number; total: number } {
   const win = speed.filter((_, i) => time[i] >= ws && time[i] <= we && speed[i] > 0).sort((a, b) => a - b);
-  const workLvl = percentile(win, 0.6);
-  const restLvl = percentile(win, 0.15);
+  const workLvl = percentile(win, CFG.template.workPercentile);
+  const restLvl = percentile(win, CFG.template.restPercentile);
   const thr = (workLvl + restLvl) / 2;
 
   const workSecOf = (r: RepDesc): number =>
-    r.workType === "TIME" ? r.workValue : workLvl > 0 ? r.workValue / workLvl : 60;
+    r.workType === "TIME" ? r.workValue : workLvl > 0 ? r.workValue / workLvl : CFG.template.paceFallbackSeconds;
   const restSecOf = (r: RepDesc): number =>
-    r.recoveryType === "TIME" ? r.recoveryValue : restLvl > 0.3 ? r.recoveryValue / restLvl : r.recoveryValue;
+    r.recoveryType === "TIME"
+      ? r.recoveryValue
+      : restLvl > CFG.template.restLevelFloor
+        ? r.recoveryValue / restLvl
+        : r.recoveryValue;
 
   const snap = (target: number, rising: boolean): { t: number; hit: boolean } => {
     let bestT = target;
@@ -345,14 +389,35 @@ export function templatePlace(
   return { bouts, snapped, total: reps.length * 2 };
 }
 
+/**
+ * Choose the signal bouts are detected from. Normally speed (the primary rep
+ * discriminator). But when speed can't separate work from rest — flat treadmill
+ * speed or HR-only reps, the case intervals.icu's HR detection mishandles — fall
+ * back to lag-compensated HR, which still carries the effort structure. On
+ * clean-speed data the contrast clears the floor and this returns speed unchanged.
+ */
+function pickDetectionSignal(time: number[], speed: number[], hr: number[] | undefined): number[] {
+  if (!CFG.hrLag.enabled || !hr || hr.length !== speed.length) return speed;
+  const positive = speed.filter((x) => x > 0).sort((a, b) => a - b);
+  if (positive.length === 0) return speed;
+  const w = percentile(positive, CFG.bouts.workPercentile);
+  const r = percentile(positive, CFG.bouts.restPercentile);
+  const contrast = w > 0 ? (w - r) / w : 0;
+  if (contrast >= CFG.hrLag.fallbackWhenSpeedContrastBelow) return speed;
+  if (variance(hr) <= 0) return speed;
+  return compensateHrLag(time, speed, hr);
+}
+
 function estimateStructSecs(reps: RepDesc[], time: number[], speed: number[]): number {
   const positive = speed.filter((x) => x > 0).sort((a, b) => a - b);
-  const workLvl = percentile(positive, 0.75);
-  const restLvl = percentile(positive, 0.2);
+  const workLvl = percentile(positive, CFG.template.estimateWorkPercentile);
+  const restLvl = percentile(positive, CFG.template.estimateRestPercentile);
   let total = 0;
   for (const r of reps) {
-    total += r.workType === "TIME" ? r.workValue : workLvl > 0 ? r.workValue / workLvl : 60;
-    total += r.recoveryType === "TIME" ? r.recoveryValue : restLvl > 0.3 ? r.recoveryValue / restLvl : 0;
+    total +=
+      r.workType === "TIME" ? r.workValue : workLvl > 0 ? r.workValue / workLvl : CFG.template.paceFallbackSeconds;
+    total +=
+      r.recoveryType === "TIME" ? r.recoveryValue : restLvl > CFG.template.restLevelFloor ? r.recoveryValue / restLvl : 0;
   }
   return total;
 }
@@ -416,7 +481,7 @@ function pushSeg(
  * structures (no user title) are discounted since the rep count is itself a guess.
  */
 /** Short TIME reps (≤ this many seconds) read short because the pace stream lags the effort. */
-export const SHORT_REP_EXPAND_MAX_SECONDS = 90;
+export const SHORT_REP_EXPAND_MAX_SECONDS = CFG.expand.shortRepMaxSeconds;
 
 /**
  * Recover the prescribed duration of short TIME reps whose detected bout is only
@@ -466,7 +531,7 @@ export function expandShortDistanceReps(
   distance: number[],
   t0: number,
   tEnd: number,
-  minRatio = 0.9,
+  minRatio = CFG.expand.shortDistanceMinRatio,
 ): WorkBout[] {
   const out = bouts.map((b) => ({ ...b }));
   for (let i = 0; i < out.length && i < reps.length; i++) {
@@ -560,7 +625,7 @@ export function alignBoutsToReps(
 }
 
 /** Default over-run tolerance: keep real variation, trim only clear overruns. */
-export const OVERLONG_TOLERANCE = 0.15;
+export const OVERLONG_TOLERANCE = CFG.clamp.overlongTolerance;
 
 /**
  * Trim work bouts that overrun the prescribed measure — the prescribed value is a
@@ -615,6 +680,7 @@ export function buildSegmentsDeterministic(
   if (time.length < 3 || distance.length !== time.length) return null;
 
   const speed = deriveSpeed(time, distance);
+  const detectionSignal = pickDetectionSignal(time, speed, streams.heartrate?.data);
   const t0 = time[0];
   const tEnd = time[time.length - 1];
 
@@ -638,7 +704,7 @@ export function buildSegmentsDeterministic(
 
   if (inferred) {
     const region = cls.mode === "unusable" ? { ws: t0, we: tEnd } : { ws: cls.ws, we: cls.we };
-    const { bouts: detected } = detectBouts(time, speed, region.ws, region.we);
+    const { bouts: detected } = detectBouts(time, detectionSignal, region.ws, region.we);
     if (detected.length === 0) return null;
     bouts = detected;
     reps = inferRepsFromBouts(detected);
@@ -661,7 +727,7 @@ export function buildSegmentsDeterministic(
     // count is authoritative — see forcedCount).
     boutsFromDetection = true;
     const region = cls.mode === "boundary" ? { ws: cls.ws, we: cls.we } : { ws: t0, we: tEnd };
-    const { bouts: detected } = detectBouts(time, speed, region.ws, region.we);
+    const { bouts: detected } = detectBouts(time, detectionSignal, region.ws, region.we);
     const picked = selectRegion(detected, reps.length);
     if (picked.length === reps.length) {
       bouts = picked;
@@ -739,13 +805,16 @@ export function buildSegmentsDeterministic(
   if (out.length === 0) return null;
 
   const contrast = speedContrast(time, speed, bouts.slice(0, count));
-  let confidence = 0.45 * snapFrac + 0.3 * contrast + 0.25 * countMatch;
-  if (inferred) confidence *= 0.85;
+  let confidence =
+    CFG.confidence.snapWeight * snapFrac +
+    CFG.confidence.contrastWeight * contrast +
+    CFG.confidence.countWeight * countMatch;
+  if (inferred) confidence *= CFG.confidence.inferredFactor;
   // Count-guaranteed structures are user-authoritative on count; their template
   // placement snaps few edges (the missing reps have no transitions) so the raw
   // blend reads low — floor above the cascade's LLM-fallback threshold so the
   // structure-honoring split is kept instead of handing off to the count-inventing LLM.
-  if (forcedCount) confidence = Math.max(confidence, 0.6);
+  if (forcedCount) confidence = Math.max(confidence, CFG.confidence.forcedCountFloor);
   confidence = Math.max(0, Math.min(1, confidence));
 
   return { segments: out, confidence, mode };
