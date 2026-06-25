@@ -28,6 +28,7 @@ import mcpRouter from "./routers/mcp_router";
 import progressRouter from "./routers/progress_router";
 import publicRouter from "./routers/public_router";
 import stravaEntryRouter from "./routers/strava/strava_entry_router";
+import suggestSessionRouter from "./routers/suggest_session_router";
 import trainingRouter from "./routers/training_router";
 import userRouter from "./routers/user_router";
 import type { TGlobalEnv } from "./types/IRouters";
@@ -134,6 +135,7 @@ app.use("/api/*", authGuard);
 
 app.route("/api/activity", activitiesRouter);
 app.route("/api/activity", stravaActivitiesRouter);
+app.route("/api/agents", suggestSessionRouter);
 app.route("/api/agents", agentsRouter);
 app.route("/api/strava", stravaEntryRouter);
 app.route("/api/interval-structures", intervalStructureRouter);

@@ -127,6 +127,106 @@ function interpolatePaces(rows: HistoryRow[], sets: ExpandedIntervalSet[]): Expa
   }));
 }
 
+export type HrvStatusSignal = "balanced" | "unbalanced" | "low" | null;
+
+export interface ReadinessSignals {
+  tsb: number | null;
+  ctl: number | null;
+  atl: number | null;
+  ramp: number | null;
+  hrvStatus: HrvStatusSignal;
+  sleepScore: number | null;
+}
+
+export interface ReadinessAdjustmentResult {
+  paces: ExpandedIntervalSet[];
+  penaltySecPerKm: number;
+  advisory: string;
+}
+
+const SLEEP_POOR = 50;
+const SLEEP_VERY_POOR = 35;
+const TSB_NEGATIVE = -20;
+const TSB_VERY_NEGATIVE = -30;
+const RAMP_HIGH = 1.2;
+const PENALTY_SLEEP_POOR = 4;
+const PENALTY_SLEEP_VERY_POOR = 8;
+const PENALTY_TSB_NEGATIVE = 4;
+const PENALTY_TSB_VERY_NEGATIVE = 8;
+const PENALTY_HRV_UNBALANCED = 4;
+const PENALTY_HRV_LOW = 8;
+const PENALTY_RAMP_HIGH = 3;
+const MAX_PENALTY_SEC_PER_KM = 15;
+
+function easePace(mps: number | null | undefined, penaltySecPerKm: number): number | null {
+  if (mps == null || mps <= 0) return mps ?? null;
+  if (penaltySecPerKm <= 0) return mps;
+  const secPerKm = 1000 / mps;
+  const easedSecPerKm = secPerKm + penaltySecPerKm;
+  return 1000 / easedSecPerKm;
+}
+
+export function applyReadinessAdjustment(
+  basePaces: ExpandedIntervalSet[],
+  signals: ReadinessSignals,
+): ReadinessAdjustmentResult {
+  const reasons: string[] = [];
+  let penalty = 0;
+
+  if (signals.sleepScore != null && signals.sleepScore < SLEEP_VERY_POOR) {
+    penalty += PENALTY_SLEEP_VERY_POOR;
+    reasons.push(`your sleep score is very low (${Math.round(signals.sleepScore)})`);
+  } else if (signals.sleepScore != null && signals.sleepScore < SLEEP_POOR) {
+    penalty += PENALTY_SLEEP_POOR;
+    reasons.push(`your sleep score is low (${Math.round(signals.sleepScore)})`);
+  }
+
+  if (signals.hrvStatus === "low") {
+    penalty += PENALTY_HRV_LOW;
+    reasons.push("your HRV status is low");
+  } else if (signals.hrvStatus === "unbalanced") {
+    penalty += PENALTY_HRV_UNBALANCED;
+    reasons.push("your HRV is unbalanced");
+  }
+
+  if (signals.tsb != null && signals.tsb < TSB_VERY_NEGATIVE) {
+    penalty += PENALTY_TSB_VERY_NEGATIVE;
+    reasons.push(`your form (TSB) is deeply negative (${Math.round(signals.tsb)})`);
+  } else if (signals.tsb != null && signals.tsb < TSB_NEGATIVE) {
+    penalty += PENALTY_TSB_NEGATIVE;
+    reasons.push(`your form (TSB) is negative (${Math.round(signals.tsb)})`);
+  }
+
+  if (signals.ramp != null && signals.ramp > RAMP_HIGH) {
+    penalty += PENALTY_RAMP_HIGH;
+    reasons.push(`your fitness ramp is steep (${signals.ramp.toFixed(1)})`);
+  }
+
+  penalty = Math.min(penalty, MAX_PENALTY_SEC_PER_KM);
+
+  const paces =
+    penalty <= 0
+      ? basePaces
+      : basePaces.map((set) => ({
+          ...set,
+          steps: set.steps.map((step) => ({
+            ...step,
+            target_pace: easePace(step.target_pace, penalty),
+          })),
+        }));
+
+  let advisory = "";
+  if (penalty > 0 && reasons.length > 0) {
+    const list =
+      reasons.length === 1
+        ? reasons[0]
+        : `${reasons.slice(0, -1).join(", ")} and ${reasons[reasons.length - 1]}`;
+    advisory = `Because ${list}, I've eased today's target paces by about ${Math.round(penalty)} s/km — consider taking the quality down a notch or moving it to a fresher day.`;
+  }
+
+  return { paces, penaltySecPerKm: penalty, advisory };
+}
+
 export function getProposedPaceFromLaps(
   laps: Lap[],
   sets: z.infer<typeof workoutSet>[],

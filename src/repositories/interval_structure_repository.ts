@@ -1,4 +1,5 @@
-import { and, asc, avg, count, eq, max, sql } from "drizzle-orm";
+import { and, asc, avg, count, desc, eq } from "drizzle-orm";
+import { max, sql } from "drizzle-orm";
 import { activities, intervalSegments, intervalStructures } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 
@@ -34,6 +35,7 @@ export function listDistinctForUser(db: Db, userId: string) {
  * a repeated session has progressed over time.
  */
 export function structureHistory(db: Db, userId: string, structureId: number) {
+  const workPaceExpr = sql`CASE WHEN ${intervalSegments.actualDistance} > 0 THEN ${intervalSegments.actualDuration}::float / ${intervalSegments.actualDistance} * 1000 ELSE NULL END`;
   return db
     .select({
       activityId: activities.id,
@@ -44,10 +46,12 @@ export function structureHistory(db: Db, userId: string, structureId: number) {
       avgHeartRate: activities.averageHeartRate,
       load: sql<number | null>`COALESCE(${activities.trainingLoad}, ${activities.icuTrainingLoad})`,
       workRepCount: count(intervalSegments.id),
-      avgWorkPaceSecPerKm: avg(
-        sql`CASE WHEN ${intervalSegments.actualDistance} > 0 THEN ${intervalSegments.actualDuration}::float / ${intervalSegments.actualDistance} * 1000 ELSE NULL END`,
-      ),
+      avgWorkPaceSecPerKm: avg(workPaceExpr),
+      fastestWorkPaceSecPerKm: sql<string | null>`MIN(${workPaceExpr})`,
+      slowestWorkPaceSecPerKm: sql<string | null>`MAX(${workPaceExpr})`,
       avgWorkHr: avg(intervalSegments.avgHeartRate),
+      minWorkHr: sql<string | null>`MIN(${intervalSegments.avgHeartRate})`,
+      maxWorkHr: sql<string | null>`MAX(${intervalSegments.avgHeartRate})`,
     })
     .from(activities)
     .leftJoin(
@@ -57,4 +61,40 @@ export function structureHistory(db: Db, userId: string, structureId: number) {
     .where(and(eq(activities.userId, userId), eq(activities.intervalStructureId, structureId)))
     .groupBy(activities.id)
     .orderBy(asc(activities.startDateLocal));
+}
+
+export async function getStructureWithSets(db: Db, userId: string, structureId: number) {
+  const structure = await db.query.intervalStructures.findFirst({
+    where: eq(intervalStructures.id, structureId),
+    columns: { id: true, name: true, signature: true, trainingType: true },
+  });
+  if (!structure) return null;
+
+  const rows = await db
+    .select({
+      structure: activities.draftAnalysisResult,
+    })
+    .from(activities)
+    .where(and(eq(activities.userId, userId), eq(activities.intervalStructureId, structureId)))
+    .orderBy(desc(activities.startDateLocal))
+    .limit(5);
+
+  let sets: NonNullable<
+    NonNullable<(typeof rows)[number]["structure"]>["structure"]
+  > | null = null;
+  for (const r of rows) {
+    const candidate = r.structure?.structure;
+    if (candidate && candidate.length > 0) {
+      sets = candidate;
+      break;
+    }
+  }
+
+  return {
+    id: structure.id,
+    name: structure.name,
+    signature: structure.signature,
+    trainingType: structure.trainingType,
+    sets,
+  };
 }

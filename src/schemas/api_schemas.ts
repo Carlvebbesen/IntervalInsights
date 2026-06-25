@@ -435,6 +435,49 @@ export const IntervalStructureSchema = z
   })
   .openapi({ ref: "IntervalStructure" });
 
+export const IntervalStructureListItemSchema = z
+  .object({
+    id: z.number(),
+    name: z.string(),
+    signature: z.string().nullable(),
+    activityCount: z.number(),
+    lastDoneAt: z.string().nullable(),
+  })
+  .openapi({ ref: "IntervalStructureListItem" });
+
+export const IntervalStructureListResponseSchema = z
+  .object({
+    data: z.array(IntervalStructureListItemSchema),
+    meta: z.object({ count: z.number() }),
+  })
+  .openapi({ ref: "IntervalStructureListResponse" });
+
+export const IntervalStructureHistoryEntrySchema = z
+  .object({
+    activityId: z.number(),
+    date: z.string(),
+    title: z.string(),
+    distance: z.number(),
+    movingTime: z.number(),
+    avgHeartRate: z.number().nullable(),
+    load: z.number().nullable(),
+    workRepCount: z.number(),
+    avgWorkPaceSecPerKm: z.number().nullable(),
+    fastestWorkPaceSecPerKm: z.number().nullable(),
+    slowestWorkPaceSecPerKm: z.number().nullable(),
+    avgWorkHr: z.number().nullable(),
+    minWorkHr: z.number().nullable(),
+    maxWorkHr: z.number().nullable(),
+  })
+  .openapi({ ref: "IntervalStructureHistoryEntry" });
+
+export const IntervalStructureHistoryResponseSchema = z
+  .object({
+    data: z.array(IntervalStructureHistoryEntrySchema),
+    meta: z.object({ structureId: z.number(), count: z.number() }),
+  })
+  .openapi({ ref: "IntervalStructureHistoryResponse" });
+
 export const DashboardResponseSchema = z
   .object({
     summary: z.object({
@@ -724,6 +767,41 @@ export const WeekDetailResponseSchema = z
   })
   .openapi({ ref: "WeekDetailResponse" });
 
+const PaceSetSchema = z
+  .object({
+    easySecPerKm: z.number().nullable(),
+    thresholdSecPerKm: z.number().nullable(),
+    intervalSecPerKm: z.number().nullable(),
+    repSecPerKm: z.number().nullable(),
+  })
+  .openapi({ ref: "PaceSet" });
+
+const PredictedRaceSchema = z
+  .object({
+    distanceM: z.number(),
+    timeSec: z.number(),
+  })
+  .openapi({ ref: "PredictedRace" });
+
+const PaceAnchorDataSchema = z
+  .object({
+    anchorSource: z.enum(["critical_speed", "vdot", "none"]),
+    confidence: z.enum(["high", "medium", "low"]),
+    criticalSpeedMps: z.number().nullable(),
+    dPrimeM: z.number().nullable(),
+    vdot: z.number().nullable(),
+    paces: PaceSetSchema,
+    predictedRaces: z.array(PredictedRaceSchema),
+  })
+  .openapi({ ref: "PaceAnchorData" });
+
+export const PaceAnchorResponseSchema = z
+  .discriminatedUnion("status", [
+    z.object({ status: z.literal("ok"), data: PaceAnchorDataSchema }),
+    z.object({ status: z.literal("not_linked"), data: z.null() }),
+  ])
+  .openapi({ ref: "PaceAnchorResponse" });
+
 export const GearStatsItemSchema = z
   .object({
     gearId: z.string(),
@@ -861,6 +939,66 @@ export const StravaSyncResultSchema = z
 export const ProposedPaceResponseSchema = z
   .array(ExpandedIntervalSetSchema)
   .openapi({ ref: "ProposedPaceResponse" });
+
+export const WorkoutInputStepSchema = z
+  .object({
+    reps: z.number(),
+    work_type: z.enum(["DISTANCE", "TIME"]),
+    work_value: z.number(),
+    recovery_type: z.enum(["DISTANCE", "TIME"]).nullable().optional(),
+    recovery_value: z.number().nullable().optional(),
+  })
+  .openapi({ ref: "WorkoutInputStep" });
+
+export const WorkoutInputSetSchema = z
+  .object({
+    set_reps: z.number(),
+    steps: z.array(WorkoutInputStepSchema),
+    set_recovery: z.number().nullable().optional(),
+  })
+  .openapi({ ref: "WorkoutInputSet" });
+
+export const SuggestSessionRequestSchema = z
+  .object({
+    structureId: z
+      .number()
+      .int()
+      .optional()
+      .describe("Id of a saved interval structure to base the session on."),
+    structure: z
+      .array(WorkoutInputSetSchema)
+      .optional()
+      .describe("An explicit workout structure (sets/steps in METERS + SECONDS) instead of a structureId."),
+    date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
+      .optional()
+      .describe("Target day (YYYY-MM-DD). Defaults to today (athlete's server date)."),
+  })
+  .refine((b) => b.structureId != null || (b.structure != null && b.structure.length > 0), {
+    message: "Provide either structureId or a non-empty structure.",
+  })
+  .openapi({ ref: "SuggestSessionRequest" });
+
+export const ReadinessSignalsSchema = z
+  .object({
+    tsb: z.number().nullable(),
+    ctl: z.number().nullable(),
+    atl: z.number().nullable(),
+    ramp: z.number().nullable().optional(),
+    hrvStatus: z.enum(["balanced", "unbalanced", "low"]).nullable().optional(),
+    sleepScore: z.number().nullable().optional(),
+  })
+  .openapi({ ref: "ReadinessSignals" });
+
+export const SuggestSessionResponseSchema = z
+  .object({
+    proposedTraining: ProposedTrainingArtifactSchema,
+    paces: z.array(ExpandedIntervalSetSchema),
+    readiness: ReadinessSignalsSchema,
+    advisory: z.string(),
+  })
+  .openapi({ ref: "SuggestSessionResponse" });
 
 // ─── Heart-rate analysis (POST /api/heart-rate/analysis) ──────────────────────
 // Contract: docs/backend/heart_rate_analysis_contract.md in the app repo. The
