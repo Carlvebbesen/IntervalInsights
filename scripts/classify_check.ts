@@ -63,6 +63,7 @@ async function main() {
       a.totalElevationGain ?? 0,
       a.sportType,
       null,
+      d.pipeline?.laps ?? [],
     );
     const got = out?.training_type ?? "NULL";
     const expected = EXPECTED[id] ?? "?";

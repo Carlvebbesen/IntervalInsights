@@ -105,6 +105,7 @@ async function main() {
           act.totalElevationGain ?? 0,
           act.sportType ?? "Run",
           pred,
+          dump.pipeline?.laps ?? [],
           model,
         );
         const type = res?.training_type ?? null;

@@ -82,7 +82,7 @@ export function deriveSpeed(time: number[], distance: number[], windowSec = CFG.
   return v;
 }
 
-function isJunkLap(l: Lap): boolean {
+export function isJunkLap(l: Lap): boolean {
   const dur = l.elapsed_time ?? 0;
   const dist = l.distance ?? 0;
   const spd = l.average_speed ?? 0;
