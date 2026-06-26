@@ -28,6 +28,7 @@ export async function runInitialAgent(
       state.totalElevationGain,
       state.activityType,
       state.intervalsIcuPrediction,
+      state.laps,
     ),
   );
 

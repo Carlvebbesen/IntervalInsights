@@ -3,7 +3,9 @@ import { z } from "zod";
 import { trainingTypeEnum } from "../schema";
 import type { IntervalsIcuPrediction } from "../schema/activities";
 import { normalizeActivityStreams, prepareDataForLLM } from "../services/utils";
+import type { Lap } from "../types/strava/IDetailedActivity";
 import type { StreamSet } from "../types/strava/IStream";
+import { buildLapEvidenceBlock } from "./lap_evidence";
 import { gptMiniModel, invokeStructured } from "./model";
 import { venuePromptBlock } from "./running_venues";
 export type WorkoutAnalysisOutput = z.infer<typeof workoutAnalysisOutput>;
@@ -129,6 +131,44 @@ function formatIntervalsIcuBlock(prediction: IntervalsIcuPrediction | null | und
  * = 240s each; 240 < 120 -> SHORT"). A rep >= 120 s OR >= 800 m makes it LONG;
  * all reps shorter make it SHORT. Only touches the two interval subtypes.
  */
+/**
+ * Deterministic guardrail: collapse the Cartesian rep-count blowup. When the
+ * per-rep lap evidence lists N reps of slightly varying measured size, gpt-4o-mini
+ * sometimes emits N steps that EACH carry reps:N (observed: "10x1000m" → 9 steps ×
+ * reps 9 = 81; "Treadmill" → 14 × 14 = 196), inflating the rep count N→N². The
+ * signature is unmistakable and effectively never legitimate for N ≥ 3: a set whose
+ * steps are all the same work_type and all carry the SAME reps value R equal to the
+ * step count. Collapse it to a single step of reps:R sized at the MEDIAN measured
+ * value (median, not min/max, so a single under/over-measured rep can't flip the
+ * SHORT/LONG gate). Runs before reconcileIntervalSubtype so the gate sees the fixed
+ * structure. A genuine sequence ("3,2,1 km") has reps:1 per step and is untouched.
+ */
+export function reconcileStructureBlowup(
+  out: z.infer<typeof workoutAnalysisOutput>,
+): z.infer<typeof workoutAnalysisOutput> {
+  const structure = out.structure;
+  if (!structure || structure.length === 0) return out;
+  let changed = false;
+  const fixed = structure.map((set) => {
+    const steps = set.steps;
+    if (steps.length < 3) return set;
+    const r = steps[0].reps;
+    const isBlowup =
+      r === steps.length &&
+      steps.every((s) => s.reps === r && s.work_type === steps[0].work_type);
+    if (!isBlowup) return set;
+    const values = [...steps.map((s) => s.work_value)].sort((a, b) => a - b);
+    const mid = Math.floor(values.length / 2);
+    const median = values.length % 2 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
+    changed = true;
+    return {
+      ...set,
+      steps: [{ ...steps[0], reps: r, work_value: Math.round(median) }],
+    };
+  });
+  return changed ? { ...out, structure: fixed } : out;
+}
+
 export function reconcileIntervalSubtype(
   out: z.infer<typeof workoutAnalysisOutput>,
 ): z.infer<typeof workoutAnalysisOutput> {
@@ -157,6 +197,7 @@ export async function invokeActivityAnalysisAgent(
   totalElevationGain: number,
   type: string,
   intervalsIcuPrediction?: IntervalsIcuPrediction | null,
+  laps: Lap[] = [],
   model: ChatOpenAI = gptMiniModel,
 ): Promise<WorkoutAnalysisOutput | null> {
   const normalized = normalizeActivityStreams(
@@ -180,12 +221,14 @@ export async function invokeActivityAnalysisAgent(
     )
     .join("\n");
   const intervalsIcuBlock = formatIntervalsIcuBlock(intervalsIcuPrediction);
+  const lapEvidenceBlock = buildLapEvidenceBlock(laps, streams?.time?.data ?? []);
   const prompt = `
   You are an expert running coach analyzing Strava activity data.
 
   ### 1. PRIORITY & CONTEXT
   - **Title/Description Priority:** You must prioritize the user's Title and Description over raw data IF the user explicitly names the workout (e.g., "10x400m", "Tempo Run", "Long Run").
   - **Ignore Generics:** If the title is generic (e.g., "Morning Run", "Lunch Run", "Run"), ignore it and rely 100% on the data stats.
+  - **Device Lap Evidence:** If a "DEVICE LAP EVIDENCE" block is present below, it is a deterministic work/rest split from the athlete's own lap markers (recoveries already removed by pace) and is the STRONGEST structural signal you have — stronger than the 30s-sampled table and stronger than a raw intervals.icu block (which often mislabels every lap WORK). When it shows a clean repeating work grid, classify as the matching interval type and take the per-rep size from it, even if the Title is ambiguous/non-English or the sampled table looks steady.
   - **Fartlek Warning:** Do not default to "Fartlek" just because the data is noisy. Fartlek requires distinct, intentional surges in pace that don't fit a fixed grid. If it's just a steady run with bad GPS data, classify as EASY.
 
   ### 2. CLASSIFICATION DEFINITIONS
@@ -206,7 +249,7 @@ export async function invokeActivityAnalysisAgent(
   **Sampled Data (30s Windows):**
   ${tableHeader}
   ${tableRows}
-${intervalsIcuBlock}
+${intervalsIcuBlock}${lapEvidenceBlock}
   ### 4. STRUCTURE EXTRACTION RULES (Hierarchical)
   You must populate the 'structure' array (an array of Sets) using these rules:
   
@@ -225,5 +268,5 @@ ${intervalsIcuBlock}
   First fill 'classification_reasoning': state the per-rep work duration (s) and/or distance (m) for ONE rep, then apply the SHORT vs LONG hard gate. Then classify the run and populate the structure according to the rules above.
 `;
   const result = await invokeStructured(workoutAnalysisOutput, prompt, "analyze activity", model);
-  return result ? reconcileIntervalSubtype(result) : result;
+  return result ? reconcileIntervalSubtype(reconcileStructureBlowup(result)) : result;
 }
