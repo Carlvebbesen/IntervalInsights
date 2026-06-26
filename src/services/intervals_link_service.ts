@@ -291,6 +291,10 @@ export async function enrichActivityFromIntervalsIcu(
 }
 
 const SYNC_THROTTLE_MS = 100;
+// intervalsApiService paces every request under the 10 req/s IP cap and retries
+// transient 429s honouring Retry-After, so a 429 surfacing here means the limit
+// is persistent (retries exhausted or the wait exceeded the layer's ceiling).
+// We stop the backfill and report a resume point rather than hammering further.
 const INTERVALS_RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
 
 const SYNC_KIND = "intervals_master_sync";
