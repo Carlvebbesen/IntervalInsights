@@ -43,6 +43,22 @@ export const DeleteEventResponseSchema = z
 
 export const ErrorSchema = z.object({ error: z.string() }).openapi({ ref: "Error" });
 
+// Shared weather snapshot (device-sourced, e.g. iOS WeatherKit). temperatureC +
+// humidity are what the heat-pace model needs; the rest refine the estimate.
+export const WeatherSchema = z
+  .object({
+    temperatureC: z.number(),
+    humidity: z.number().describe("Relative humidity, %."),
+    apparentTemperatureC: z.number().optional(),
+    uvIndex: z.number().optional(),
+    cloudCover: z.number().optional().describe("0..1 fraction."),
+    windKph: z.number().optional(),
+    condition: z.string().optional(),
+  })
+  .openapi({ ref: "Weather" });
+
+export type Weather = z.infer<typeof WeatherSchema>;
+
 export const CoachChatRequestSchema = z
   .object({
     conversationId: z
@@ -51,15 +67,7 @@ export const CoachChatRequestSchema = z
       .describe("Stable id for the conversation thread (persisted)."),
     message: z.string().min(1).max(4000),
     userTime: z.string().describe("Athlete's current local time (ISO 8601)."),
-    weather: z
-      .object({
-        temperatureC: z.number(),
-        condition: z.string(),
-        windKph: z.number(),
-        humidity: z.number(),
-      })
-      .partial()
-      .optional(),
+    weather: WeatherSchema.partial().optional(),
   })
   .openapi({ ref: "CoachChatRequest" });
 
@@ -523,9 +531,20 @@ export const DashboardResponseSchema = z
   })
   .openapi({ ref: "DashboardResponse" });
 
+const TodaySessionSchema = z
+  .object({
+    sportType: z.string(),
+    trainingType: z.enum(trainingTypeEnum.enumValues).nullable(),
+    movingTime: z.number().nullable(),
+    load: z.number().nullable(),
+  })
+  .openapi({ ref: "TodaySession" });
+
 const TrainingSummaryDataSchema = z
   .object({
     date: z.string(),
+    trainedToday: z.boolean(),
+    todaySessions: z.array(TodaySessionSchema),
     fitness: z.object({
       ctl: z.number().nullable(),
       atl: z.number().nullable(),
@@ -780,8 +799,23 @@ const PredictedRaceSchema = z
   .object({
     distanceM: z.number(),
     timeSec: z.number(),
+    heatDeltaSec: z.number().optional(),
   })
   .openapi({ ref: "PredictedRace" });
+
+const HeatAdjustmentSchema = z
+  .object({
+    dewPointC: z.number(),
+    hasSun: z.boolean(),
+    perZoneDeltaSecPerKm: z.object({
+      easy: z.number(),
+      threshold: z.number(),
+      interval: z.number(),
+      rep: z.number(),
+    }),
+    advisory: z.string(),
+  })
+  .openapi({ ref: "HeatAdjustment" });
 
 const PaceAnchorDataSchema = z
   .object({
@@ -792,8 +826,20 @@ const PaceAnchorDataSchema = z
     vdot: z.number().nullable(),
     paces: PaceSetSchema,
     predictedRaces: z.array(PredictedRaceSchema),
+    heat: HeatAdjustmentSchema.nullable().optional(),
   })
   .openapi({ ref: "PaceAnchorData" });
+
+// Optional weather passed as query params on GET /dashboard/pace-anchor.
+export const PaceAnchorQuerySchema = z
+  .object({
+    temperatureC: z.coerce.number().optional(),
+    humidity: z.coerce.number().optional(),
+    uvIndex: z.coerce.number().optional(),
+    cloudCover: z.coerce.number().optional(),
+    apparentTemperatureC: z.coerce.number().optional(),
+  })
+  .openapi({ ref: "PaceAnchorQuery" });
 
 export const PaceAnchorResponseSchema = z
   .discriminatedUnion("status", [
@@ -974,6 +1020,9 @@ export const SuggestSessionRequestSchema = z
       .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
       .optional()
       .describe("Target day (YYYY-MM-DD). Defaults to today (athlete's server date)."),
+    weather: WeatherSchema.optional().describe(
+      "Optional device weather snapshot; when present, target paces are also heat-adjusted by session type.",
+    ),
   })
   .refine((b) => b.structureId != null || (b.structure != null && b.structure.length > 0), {
     message: "Provide either structureId or a non-empty structure.",

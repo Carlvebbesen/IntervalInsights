@@ -8,6 +8,7 @@ import {
   FitnessDayParamSchema,
   FitnessDayResponseSchema,
   FitnessSeriesResponseSchema,
+  PaceAnchorQuerySchema,
   PaceAnchorResponseSchema,
   TrainingSummaryResponseSchema,
   WeekDetailResponseSchema,
@@ -57,7 +58,11 @@ dashboardRouter.get(
     },
   }),
   async (c) => {
-    const summary = await dashboardController.getTrainingSummary(c.get("clerkUserId"));
+    const summary = await dashboardController.getTrainingSummary(
+      c.env.db,
+      c.get("userId"),
+      c.get("clerkUserId"),
+    );
     return c.json(summary);
   },
 );
@@ -74,11 +79,24 @@ dashboardRouter.get(
       },
     },
   }),
+  validator("query", PaceAnchorQuerySchema),
   async (c) => {
+    const q = c.req.valid("query");
+    const weather =
+      q.temperatureC != null && q.humidity != null
+        ? {
+            temperatureC: q.temperatureC,
+            humidity: q.humidity,
+            uvIndex: q.uvIndex,
+            cloudCover: q.cloudCover,
+            apparentTemperatureC: q.apparentTemperatureC,
+          }
+        : undefined;
     const result = await dashboardController.getPaceAnchor(
       c.env.db,
       c.get("userId"),
       c.get("clerkUserId"),
+      weather,
     );
     return c.json(result);
   },

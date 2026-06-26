@@ -22,6 +22,7 @@ export interface PaceSet {
 export interface PredictedRace {
   distanceM: number;
   timeSec: number;
+  heatDeltaSec?: number;
 }
 
 export interface PaceAnchor {

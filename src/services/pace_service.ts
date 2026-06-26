@@ -158,7 +158,7 @@ const PENALTY_HRV_LOW = 8;
 const PENALTY_RAMP_HIGH = 3;
 const MAX_PENALTY_SEC_PER_KM = 15;
 
-function easePace(mps: number | null | undefined, penaltySecPerKm: number): number | null {
+export function easePace(mps: number | null | undefined, penaltySecPerKm: number): number | null {
   if (mps == null || mps <= 0) return mps ?? null;
   if (penaltySecPerKm <= 0) return mps;
   const secPerKm = 1000 / mps;

@@ -12,6 +12,7 @@ import type {
   WellnessSeriesResponseSchema,
 } from "../schemas/api_schemas";
 import { fetchFitnessDayBlock, fetchFitnessSeries } from "../services/fitness_service";
+import { computeHeatModel, heatRaceDeltaSec, type WeatherInput } from "../services/heat_service";
 import { fetchPaceAnchor } from "../services/pace_anchor_service";
 import {
   fetchTrainingSummary,
@@ -198,18 +199,45 @@ export async function getDashboard(
   };
 }
 
-export function getTrainingSummary(
-  clerkUserId: string,
-): Promise<z.infer<typeof TrainingSummaryResponseSchema>> {
-  return fetchTrainingSummary(clerkUserId);
-}
-
-export function getPaceAnchor(
+export async function getTrainingSummary(
   db: Db,
   userId: string,
   clerkUserId: string,
+): Promise<z.infer<typeof TrainingSummaryResponseSchema>> {
+  const [summary, todayRows] = await Promise.all([
+    fetchTrainingSummary(clerkUserId),
+    dashboardRepo.activitiesOnDate(db, userId, toISODate(new Date())),
+  ]);
+  if (summary.status !== "ok") return summary;
+
+  const todaySessions = todayRows.map((a) => ({
+    sportType: a.sportType,
+    trainingType: a.trainingType,
+    movingTime: a.movingTime,
+    load: a.icuTrainingLoad ?? a.trainingLoad,
+  }));
+  return {
+    status: "ok",
+    data: { ...summary.data, trainedToday: todayRows.length > 0, todaySessions },
+  };
+}
+
+export async function getPaceAnchor(
+  db: Db,
+  userId: string,
+  clerkUserId: string,
+  weather?: WeatherInput,
 ): Promise<z.infer<typeof PaceAnchorResponseSchema>> {
-  return fetchPaceAnchor(db, userId, clerkUserId);
+  const result = await fetchPaceAnchor(db, userId, clerkUserId);
+  if (result.status !== "ok" || !weather) return result;
+  const predictedRaces = result.data.predictedRaces.map((r) => ({
+    ...r,
+    heatDeltaSec: heatRaceDeltaSec(weather, r.distanceM),
+  }));
+  return {
+    status: "ok",
+    data: { ...result.data, heat: computeHeatModel(weather), predictedRaces },
+  };
 }
 
 export function getWellnessSeries(

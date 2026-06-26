@@ -7,8 +7,10 @@ import * as structureRepo from "../repositories/interval_structure_repository";
 import type {
   ProposedTrainingArtifactSchema,
   SuggestSessionResponseSchema,
+  Weather,
 } from "../schemas/api_schemas";
 import { fetchFitnessDayBlock } from "../services/fitness_service";
+import { applyHeatAdjustment, heatZoneForTrainingType } from "../services/heat_service";
 import { fetchTrainingSummary } from "../services/intervals_wellness_service";
 import {
   applyReadinessAdjustment,
@@ -42,9 +44,11 @@ function cacheKey(
   date: string,
   structureId: number | undefined,
   sets: WorkoutSet[],
+  weather: Weather | undefined,
 ): string {
   const shape = structureId != null ? `id:${structureId}` : `h:${hashStructure(sets)}`;
-  return `${userId}|${date}|${shape}`;
+  const w = weather ? `|w:${Math.round(weather.temperatureC)}:${Math.round(weather.humidity)}` : "";
+  return `${userId}|${date}|${shape}${w}`;
 }
 
 function toWorkoutStructure(
@@ -134,7 +138,7 @@ export async function suggestSession(
   db: Db,
   userId: string,
   clerkUserId: string,
-  input: { structureId?: number; structure?: WorkoutSet[]; date?: string },
+  input: { structureId?: number; structure?: WorkoutSet[]; date?: string; weather?: Weather },
   logger: Logger,
 ): Promise<SuggestSessionResponse> {
   const date = input.date ?? toISODate(new Date());
@@ -160,7 +164,7 @@ export async function suggestSession(
     throw new AppError(400, "Provide either structureId or a non-empty structure.");
   }
 
-  const key = cacheKey(userId, date, input.structureId, baseStructure);
+  const key = cacheKey(userId, date, input.structureId, baseStructure, input.weather);
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
     log.info("suggest-session cache hit");
@@ -184,19 +188,27 @@ export async function suggestSession(
   let finalSets = baseStructure;
   let finalPaces = paces;
   let title = structureName ?? "Suggested session";
-  let notes: string | null = advisory || null;
   let trainingType: ProposedTraining["trainingType"] = null;
 
   if (suggestion && suggestion.structure.length > 0) {
     finalSets = suggestion.structure;
     title = suggestion.title;
     trainingType = suggestion.trainingType ?? null;
-    notes = suggestion.notes || advisory || null;
     const reshapedBase = await getProposedPaceForStructure(db, userId, clerkUserId, finalSets);
     finalPaces = applyReadinessAdjustment(reshapedBase, readiness).paces;
   } else {
     log.warn("suggest-session agent returned null — using the athlete's own structure unchanged");
   }
+
+  let heatAdvisory = "";
+  if (input.weather) {
+    const heat = applyHeatAdjustment(finalPaces, input.weather, heatZoneForTrainingType(trainingType));
+    finalPaces = heat.paces;
+    heatAdvisory = heat.advisory;
+  }
+
+  const combinedAdvisory = [advisory, heatAdvisory].filter(Boolean).join(" ");
+  const notes: string | null = suggestion?.notes || combinedAdvisory || null;
 
   const proposedTraining: ProposedTraining = {
     type: "proposed_training",
@@ -219,7 +231,7 @@ export async function suggestSession(
     proposedTraining,
     paces: finalPaces,
     readiness,
-    advisory,
+    advisory: combinedAdvisory,
   };
   cache.set(key, { at: Date.now(), value });
   return value;

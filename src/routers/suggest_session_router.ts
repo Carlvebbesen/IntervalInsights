@@ -40,12 +40,12 @@ suggestSessionRouter.post(
   }),
   validator("json", SuggestSessionRequestSchema),
   async (c) => {
-    const { structureId, structure, date } = c.req.valid("json");
+    const { structureId, structure, date, weather } = c.req.valid("json");
     const result = await suggestSessionController.suggestSession(
       c.env.db,
       c.get("userId"),
       c.get("clerkUserId"),
-      { structureId, structure, date },
+      { structureId, structure, date, weather },
       c.var.logger,
     );
     return c.json(result);
