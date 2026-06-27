@@ -10,6 +10,7 @@ import {
   FitnessSeriesResponseSchema,
   PaceAnchorQuerySchema,
   PaceAnchorResponseSchema,
+  TrainingSummaryQuerySchema,
   TrainingSummaryResponseSchema,
   WeekDetailResponseSchema,
   WellnessQuerySchema,
@@ -49,7 +50,7 @@ dashboardRouter.get(
   "/training-summary",
   describeRoute({
     description:
-      "Current intervals.icu training-summary snapshot. Always returns an object discriminated by `status`: `ok` (data populated with latest wellness record — fitness model, sleep, recovery, body), `not_linked` (intervals.icu not connected), or `no_recent_data` (linked, but no wellness records in the past 7 days). All metrics in `data` are auto/device-sourced (no subjective fields).",
+      "Current intervals.icu training-summary snapshot. Always returns an object discriminated by `status`: `ok` (data populated with latest wellness record — fitness model, sleep, recovery, body), `not_linked` (intervals.icu not connected), or `no_recent_data` (linked, but no wellness records in the past 7 days). All metrics in `data` are auto/device-sourced (no subjective fields). Pass `date` (YYYY-MM-DD, the athlete's local calendar date) so `trainedToday`/`todaySessions` are resolved against the athlete's day rather than the server's UTC day.",
     responses: {
       200: {
         description: "Discriminated training-summary result",
@@ -57,11 +58,14 @@ dashboardRouter.get(
       },
     },
   }),
+  validator("query", TrainingSummaryQuerySchema),
   async (c) => {
+    const { date } = c.req.valid("query");
     const summary = await dashboardController.getTrainingSummary(
       c.env.db,
       c.get("userId"),
       c.get("clerkUserId"),
+      date,
     );
     return c.json(summary);
   },

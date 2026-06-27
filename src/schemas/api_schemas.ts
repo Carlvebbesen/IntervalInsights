@@ -606,6 +606,10 @@ export const WellnessQuerySchema = z
     },
   );
 
+export const TrainingSummaryQuerySchema = z.object({
+  date: isoDate.optional(),
+});
+
 const MetricStatsSchema = z
   .object({
     latest: z.number().nullable(),
