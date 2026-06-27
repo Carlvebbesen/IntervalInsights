@@ -8,6 +8,7 @@ import {
   ActivityListResponseSchema,
   ActivitySchema,
   ActivityStreamsSchema,
+  AssignGearSchema,
   DraftSegmentsResponseSchema,
   EditSegmentsRequestSchema,
   ErrorSchema,
@@ -187,6 +188,35 @@ activitiesRouter.patch(
   },
 );
 
+activitiesRouter.patch(
+  "/:id/gear",
+  describeRoute({
+    description: "Assign (or clear with gearId=null) the local shoe on an activity.",
+    responses: {
+      200: {
+        description: "Updated activity",
+        content: { "application/json": { schema: resolver(ActivitySchema) } },
+      },
+      404: {
+        description: "Activity not found",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("param", activityIdParamSchema),
+  validator("json", AssignGearSchema),
+  async (c) => {
+    const { id } = c.req.valid("param");
+    const { gearId } = c.req.valid("json");
+    const updated = await activityController.assignGear(c.env.db, c.get("userId"), id, gearId);
+    return c.json(updated);
+  },
+);
+
 /**
  * @deprecated Use `PATCH /activity/:id` instead. Kept for older app versions that
  * send the activity id in the request body. Remove once all clients have migrated.
@@ -227,10 +257,13 @@ activitiesRouter.post(
 const stravaActivitiesRouter = new Hono<TStravaEnv>();
 stravaActivitiesRouter.use("*", stravaMiddleware);
 
-stravaActivitiesRouter.get(
+// Served from LOCAL gear now (no Strava token needed) → on the global router.
+activitiesRouter.get(
   "/gear/stats",
   describeRoute({
-    description: "Get aggregated usage statistics for each shoe/gear item",
+    description:
+      "[DEPRECATED — use GET /api/gear] Aggregated usage stats per shoe, from local gear (no Strava call).",
+    deprecated: true,
     responses: {
       200: {
         description: "Gear stats",
@@ -243,11 +276,7 @@ stravaActivitiesRouter.get(
     },
   }),
   async (c) => {
-    const result = await activityController.getGearStats(
-      c.env.db,
-      c.get("userId"),
-      c.get("stravaAccessToken"),
-    );
+    const result = await activityController.getGearStats(c.env.db, c.get("userId"));
     return c.json(result);
   },
 );

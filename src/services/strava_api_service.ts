@@ -7,6 +7,7 @@ import { activities } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type {
   DetailedActivity,
+  DetailedAthlete,
   Gear,
   Lap,
   SummaryActivity,
@@ -84,6 +85,10 @@ export const stravaApiService = {
   },
   async getGear(accessToken: string, id: string) {
     return fetchStrava<Gear>(`/gear/${id}`, accessToken);
+  },
+
+  async getAthlete(accessToken: string) {
+    return fetchStrava<DetailedAthlete>("/athlete", accessToken);
   },
 
   async getActivityStreams<K extends keyof StreamTypeMap>(

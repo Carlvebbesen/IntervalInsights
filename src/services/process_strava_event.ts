@@ -3,10 +3,12 @@ import { eq } from "drizzle-orm";
 import { config } from "../config";
 import { logger } from "../logger";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
-import { activities, users } from "../schema";
+import * as gearRepo from "../repositories/gear_repository";
+import { activities, gears, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
 import { triggerAnalysisByStravaId } from "./analysis_service";
+import { linkActivityGearOnIngest } from "./gear_strava_service";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { progressService } from "./progress_service";
 import { stravaApiService } from "./strava_api_service";
@@ -38,6 +40,13 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
     // Delete all activities (interval_segments cascade via ON DELETE CASCADE)
     await context.db.delete(activities).where(eq(activities.userId, user.id));
 
+    // Keep local gears (source of truth) but zero their derived counters — the
+    // activities backing them are gone; the Strava-snapshot baseline is retained.
+    await context.db
+      .update(gears)
+      .set({ maintainedDistanceMeters: 0, activityCount: 0 })
+      .where(eq(gears.userId, user.id));
+
     await context.db.update(users).set({ stravaId: null }).where(eq(users.id, user.id));
 
     const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
@@ -53,6 +62,18 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
 
   const stravaActivityId = body.object_id;
   if (body.aspect_type === "delete") {
+    const [row] = await context.db
+      .select({
+        id: activities.id,
+        userId: activities.userId,
+        localGearId: activities.localGearId,
+      })
+      .from(activities)
+      .where(eq(activities.stravaActivityId, stravaActivityId));
+    if (row?.localGearId != null) {
+      // Detach (decrements the gear's counters) before the row disappears.
+      await gearRepo.assignActivityToGear(context.db, row.userId, row.id, null);
+    }
     return await context.db
       .delete(activities)
       .where(eq(activities.stravaActivityId, stravaActivityId));
@@ -123,6 +144,13 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
         .update(activities)
         .set({ ...payload, analysisStatus: payload.analysisStatus ?? "pending" })
         .where(eq(activities.id, twin.id));
+      if (data.gear_id && activity.startDateLocal) {
+        await linkActivityGearOnIngest(context.db, user.id, accessToken, twin.id, {
+          stravaGearId: data.gear_id,
+          sportType: data.sport_type,
+          startDateLocal: activity.startDateLocal,
+        });
+      }
       logger.info(
         { stravaActivityId, userId: user.id, mergedInto: twin.id },
         "Strava create merged into existing intervals.icu row (dedup)",
@@ -148,6 +176,13 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
       .values(payload)
       .onConflictDoNothing()
       .returning({ id: activities.id });
+    if (inserted && data.gear_id && activity.startDateLocal) {
+      await linkActivityGearOnIngest(context.db, user.id, accessToken, inserted.id, {
+        stravaGearId: data.gear_id,
+        sportType: data.sport_type,
+        startDateLocal: activity.startDateLocal,
+      });
+    }
     if (activityClass === "active" && inserted) {
       await progressService.publish(user.id, {
         type: "progress",
@@ -165,10 +200,24 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
   }
 
   if (body.aspect_type === "update") {
+    const [existing] = await context.db
+      .select({ id: activities.id, distance: activities.distance })
+      .from(activities)
+      .where(eq(activities.stravaActivityId, stravaActivityId));
     await context.db
       .update(activities)
       .set(activity)
       .where(eq(activities.stravaActivityId, stravaActivityId));
+    if (existing) {
+      // Keep the assigned gear's maintained distance in sync. localGearId is
+      // preserved (the mapper never sets it, so manual assignments survive).
+      await gearRepo.adjustForDistanceChange(
+        context.db,
+        existing.id,
+        existing.distance,
+        activity.distance,
+      );
+    }
     if (activityClass === "active" && (body.updates?.title || body.updates?.description)) {
       await triggerAnalysisByStravaId(context.db, accessToken, stravaActivityId, user.id);
     }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import * as gearController from "../../../controllers/gear_controller";
 import * as activityRepo from "../../../repositories/activity_repository";
 import { eventTypeEnum, trainingTypeEnum } from "../../../schema/enums";
 import { defineTool } from "../tool_types";
@@ -69,11 +70,18 @@ const getActivity = defineTool({
 const getGearUsage = defineTool({
   name: "get_gear_usage",
   description:
-    "How many activities of each training type were done on each piece of gear (shoes/bikes). Useful for mileage-per-shoe questions.",
-  keywords: ["gear", "shoes", "bike", "equipment", "mileage", "usage"],
+    "The user's shoes with total distance (km), activity count, and per-training-type usage counts. Useful for mileage-per-shoe questions.",
+  keywords: ["gear", "shoes", "equipment", "mileage", "usage", "distance"],
   requires: "db",
-  params: z.object({}),
-  handler: (ctx) => activityRepo.getGearUsage(ctx.db, ctx.userId),
+  params: z.object({
+    includeRetired: z.boolean().optional().describe("include retired shoes (default false)"),
+  }),
+  handler: async (ctx, args) =>
+    (
+      await gearController.listGears(ctx.db, ctx.userId, {
+        includeRetired: args.includeRetired ?? false,
+      })
+    ).data,
 });
 
 export const activityTools = [listActivities, getActivity, getGearUsage];

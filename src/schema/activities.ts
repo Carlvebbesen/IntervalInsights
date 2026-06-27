@@ -24,6 +24,7 @@ import {
   type WorkoutPartType,
 } from "./enums";
 import { activityEvents } from "./events";
+import { gears } from "./gears";
 import { intervalSegments } from "./interval_segments";
 import { intervalStructures } from "./interval_structure";
 import { users } from "./users";
@@ -70,7 +71,10 @@ export const activities = pgTable(
     draftAnalysisResult: json("draft_analysis_result").$type<DraftAnalysisResult>(),
     analysisVersion: text("analysis_version").default("v1.0"),
     stravaActivityId: bigint("strava_activity_id", { mode: "number" }),
+    // Strava's opaque gear id (legacy). Kept for back-compat + matching imports.
     gearId: text("gear_id"),
+    // FK to the local `gears` table — the source of truth going forward.
+    localGearId: integer("local_gear_id").references(() => gears.id),
     hasHeartrate: boolean("has_heart_rate"),
     title: text("title").notNull(),
     description: text("description"),
@@ -136,6 +140,7 @@ export const activities = pgTable(
         .on(table.intervalsIcuId)
         .where(sql`intervals_icu_id IS NOT NULL`),
       index("intervals_strava_id_idx").on(table.intervalsStravaId),
+      index("local_gear_idx").on(table.localGearId),
     ];
   },
 );
@@ -151,6 +156,10 @@ export const activitiesRelations = relations(activities, ({ one, many }) => ({
   }),
   intervals: many(intervalSegments),
   activityEvents: many(activityEvents),
+  gear: one(gears, {
+    fields: [activities.localGearId],
+    references: [gears.id],
+  }),
 }));
 
 export type InsertActivity = InferInsertModel<typeof activities>;

@@ -157,6 +157,14 @@ export interface Gear {
   distance: number;
   retired?: boolean;
 }
+export interface DetailedAthlete {
+  id: number;
+  resource_state: number;
+  firstname?: string;
+  lastname?: string;
+  shoes?: Gear[];
+  bikes?: Gear[];
+}
 export interface PhotosSummary {
   primary: {
     id: string | null;

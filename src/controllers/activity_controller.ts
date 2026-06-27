@@ -10,11 +10,13 @@ import {
   toActivityListItemDto,
 } from "../dtos/activity_dto";
 import { toActivityEventDto } from "../dtos/event_dto";
+import { gearDisplayName, toGearSummaryDto } from "../dtos/gear_dto";
 import { AppError } from "../error";
 import type { Logger } from "../logger";
 import { recordSegmentEdit, recordTrainingTypeChange } from "../otel";
 import * as activityRepo from "../repositories/activity_repository";
 import * as eventRepo from "../repositories/event_repository";
+import * as gearRepo from "../repositories/gear_repository";
 import type {
   InsertActivity,
   InsertIntervalSegment,
@@ -27,6 +29,7 @@ import type { ActivityListResponseSchema, PatchSegmentSchema } from "../schemas/
 import { userHasHeartRateConsent } from "../services/heart_rate_consent_service";
 import { intervalsApiService } from "../services/intervals_api_service";
 import { enrichActivityFromIntervalsIcu } from "../services/intervals_link_service";
+import { linkActivityGearOnIngest } from "../services/gear_strava_service";
 import {
   extractIntervalsList,
   mapIntervalsRawToLaps,
@@ -78,6 +81,57 @@ export async function listActivities(
   };
 }
 
+/** Resolve the gear summary for an activity's localGearId (works for retired gear). */
+async function resolveGearSummary(db: Db, userId: string, localGearId: number | null) {
+  if (localGearId == null) return null;
+  const summary = (await gearRepo.findSummariesByIds(db, userId, [localGearId])).get(localGearId);
+  return summary ? toGearSummaryDto(summary) : null;
+}
+
+/**
+ * Resolve the local gear id for an activity, self-healing the link on demand.
+ * A local link always wins. Otherwise, if the activity still carries a Strava
+ * gear id, link the matching local gear — importing it from Strava the first
+ * time it's seen — so the detail page shows the right shoe even for activities
+ * ingested before the local-gear feature. Best-effort: any failure (e.g. Strava
+ * not linked) leaves the activity unlinked rather than failing the request.
+ */
+async function resolveActivityGearId(
+  db: Db,
+  userId: string,
+  clerkId: string,
+  activity: { id: number; localGearId: number | null; gearId: string | null; sportType: string; startDateLocal: Date },
+  logger: Logger,
+): Promise<number | null> {
+  if (activity.localGearId != null) return activity.localGearId;
+  const stravaGearId = activity.gearId;
+  if (!stravaGearId) return null;
+
+  // Already imported locally → just link this activity (no Strava call needed).
+  const existing = await gearRepo.findByStravaGearId(db, userId, stravaGearId);
+  if (existing) {
+    await gearRepo.assignActivityToGear(db, userId, activity.id, existing.id);
+    return existing.id;
+  }
+
+  // Not local yet → import from Strava (needs a token), then link.
+  try {
+    const { access_token } = await getStravaAccessTokens(clerkId);
+    await linkActivityGearOnIngest(db, userId, access_token, activity.id, {
+      stravaGearId,
+      sportType: activity.sportType,
+      startDateLocal: activity.startDateLocal,
+    });
+    return (await gearRepo.findByStravaGearId(db, userId, stravaGearId))?.id ?? null;
+  } catch (err) {
+    logger.warn(
+      { err, userId, activityId: activity.id, stravaGearId },
+      "could not lazy-link Strava gear on detail view",
+    );
+    return null;
+  }
+}
+
 export async function getActivityDetail(
   db: Db,
   userId: string,
@@ -103,7 +157,10 @@ export async function getActivityDetail(
     );
   }
 
-  return toActivityDto(activity, relatedEvents.map(toActivityEventDto));
+  const localGearId = await resolveActivityGearId(db, userId, clerkId, activity, logger);
+  activity.localGearId = localGearId;
+  const gear = await resolveGearSummary(db, userId, localGearId);
+  return toActivityDto(activity, relatedEvents.map(toActivityEventDto), gear);
 }
 
 export async function getSegments(db: Db, clerkId: string, activityId: number) {
@@ -263,59 +320,62 @@ export async function updateMetadata(
   if (data.trainingType != null) {
     recordTrainingTypeChange({ trainingType: data.trainingType, via: "manual" });
   }
-  return toActivityDto(updated);
+  const gear = await resolveGearSummary(db, userId, updated.localGearId);
+  return toActivityDto(updated, undefined, gear);
 }
 
+/**
+ * @deprecated Legacy gear stats for older app builds — now served from LOCAL gear
+ * (no Strava call). Keyed by Strava gear id so old clients can still resolve the
+ * activity badge; manual shoes (no Strava id) are omitted. New clients use /api/gear.
+ */
 export async function getGearStats(
   db: Db,
   userId: string,
-  accessToken: string,
 ): Promise<{ stats: GearStatsItemDto[] }> {
-  const rows = await activityRepo.getGearUsage(db, userId);
+  const [gearsList, countRows] = await Promise.all([
+    gearRepo.listForUser(db, userId, { includeRetired: false }),
+    gearRepo.trainingTypeCountsByGear(db, userId),
+  ]);
 
-  const statsMap = new Map<
-    string,
-    { activityCount: number; trainingTypeCounts: Record<string, number> }
-  >();
-  for (const row of rows) {
-    if (row.gearId === null) continue;
-    const id = row.gearId;
-    const rowCount = Number(row.count);
-    const existing = statsMap.get(id);
-    if (!existing) {
-      statsMap.set(id, {
-        activityCount: rowCount,
-        trainingTypeCounts: row.trainingType ? { [row.trainingType]: rowCount } : {},
-      });
-    } else {
-      existing.activityCount += rowCount;
-      if (row.trainingType) {
-        existing.trainingTypeCounts[row.trainingType] =
-          (existing.trainingTypeCounts[row.trainingType] ?? 0) + rowCount;
-      }
-    }
+  const counts = new Map<number, Record<string, number>>();
+  for (const row of countRows) {
+    if (row.gearId == null || !row.trainingType) continue;
+    const m = counts.get(row.gearId) ?? {};
+    m[row.trainingType] = (m[row.trainingType] ?? 0) + Number(row.count);
+    counts.set(row.gearId, m);
   }
 
-  const gearIds = [...statsMap.keys()];
-  const gearDetails = await Promise.all(
-    gearIds.map((id) => stravaApiService.getGear(accessToken, id)),
-  );
-
-  const stats = gearDetails
-    .filter((gear) => !gear.retired)
-    .map((gear) => {
-      const agg = statsMap.get(gear.id);
-      if (!agg) throw new Error(`Missing aggregated stats for gear ${gear.id}`);
-      return {
-        gearId: gear.id,
-        gearName: gear.name,
-        activityCount: agg.activityCount,
-        trainingTypeCounts: agg.trainingTypeCounts,
-        distanceKm: Math.round((gear.distance / 1000) * 10) / 10,
-      };
-    });
+  const stats = gearsList
+    .filter((g) => g.stravaGearId)
+    .map((g) => ({
+      gearId: g.stravaGearId as string,
+      gearName: gearDisplayName(g),
+      activityCount: g.activityCount,
+      trainingTypeCounts: counts.get(g.id) ?? {},
+      distanceKm:
+        Math.round(((g.baselineDistanceMeters + g.maintainedDistanceMeters) / 1000) * 10) / 10,
+    }));
 
   return { stats };
+}
+
+/** Assign (or clear, with gearId=null) the local gear on an activity. */
+export async function assignGear(
+  db: Db,
+  userId: string,
+  activityId: number,
+  gearId: number | null,
+): Promise<ActivityDto> {
+  const res = await gearRepo.assignActivityToGear(db, userId, activityId, gearId);
+  if (!res.found) throw new AppError(404, "Activity not found");
+  const [activity, events] = await Promise.all([
+    activityRepo.findByIdForUser(db, userId, activityId),
+    eventRepo.listForActivity(db, activityId),
+  ]);
+  if (!activity) throw new AppError(404, "Activity not found");
+  const gear = await resolveGearSummary(db, userId, activity.localGearId);
+  return toActivityDto(activity, events.map(toActivityEventDto), gear);
 }
 
 /**
