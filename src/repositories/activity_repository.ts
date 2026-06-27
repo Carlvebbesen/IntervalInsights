@@ -272,6 +272,8 @@ export function listPending(db: Db, userId: string, statuses: readonly AnalysisS
       description: activities.description,
       indoor: activities.indoor,
       feeling: activities.feeling,
+      sportType: activities.sportType,
+      localGearId: activities.localGearId,
     })
     .from(activities)
     .where(and(eq(activities.userId, userId), inArray(activities.analysisStatus, [...statuses])));

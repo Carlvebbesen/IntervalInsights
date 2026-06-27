@@ -6,7 +6,14 @@ import { AppError } from "../error";
 import type { Logger } from "../logger";
 import { recordAnalysisRun, recordTrainingTypeChange } from "../otel";
 import * as activityRepo from "../repositories/activity_repository";
-import type { AnalysisStatus, TrainingType } from "../schema";
+import * as gearRepo from "../repositories/gear_repository";
+import {
+  type AnalysisStatus,
+  type GearSurface,
+  surfaceForSportType,
+  trainingBucketFor,
+  type TrainingType,
+} from "../schema";
 import type { PendingActivitySchema } from "../schemas/api_schemas";
 import { ResumeValidationError, resumeAnalysis, startAnalysis } from "../services/analysis_service";
 import { getProposedPaceForStructure, getProposedPaceFromLaps } from "../services/pace_service";
@@ -30,7 +37,45 @@ export async function getPending(
     await requeueStaleActivities(db, userId, accessToken);
   }
   const rows = await activityRepo.listPending(db, userId, PENDING_STATUSES);
-  return rows.map((r) => ({ ...r, startDateLocal: r.startDateLocal.toISOString() }));
+
+  // Suggest a shoe per pending activity: the (bucket, surface) default, then the
+  // most-recently-used active shoe on that surface. Defaults fetched once; recents
+  // cached per surface so this stays a few queries regardless of row count.
+  const defaults = await gearRepo.getDefaults(db, userId);
+  const defaultMap = new Map(defaults.map((d) => [`${d.bucket}:${d.surface}`, d.gearId]));
+  const recentsBySurface = new Map<GearSurface, number[]>();
+  const recentsFor = async (surface: GearSurface): Promise<number[]> => {
+    const cached = recentsBySurface.get(surface);
+    if (cached) return cached;
+    const recents = await gearRepo.recentGearIdsBySurface(db, userId, surface, 3);
+    recentsBySurface.set(surface, recents);
+    return recents;
+  };
+
+  return Promise.all(
+    rows.map(async (r) => {
+      const surface = surfaceForSportType(r.sportType);
+      const trainingType = r.trainingType ?? r.draftAnalysisResult?.training_type ?? null;
+      const bucket = trainingBucketFor(trainingType);
+      const defaultGearId = bucket ? defaultMap.get(`${bucket}:${surface}`) : undefined;
+      const recents = await recentsFor(surface);
+
+      const gearSuggestions: number[] = [];
+      if (defaultGearId != null) gearSuggestions.push(defaultGearId);
+      for (const g of recents) {
+        if (gearSuggestions.length >= 3) break;
+        if (!gearSuggestions.includes(g)) gearSuggestions.push(g);
+      }
+      const suggestedGearId = r.localGearId ?? defaultGearId ?? recents[0] ?? null;
+
+      return {
+        ...r,
+        startDateLocal: r.startDateLocal.toISOString(),
+        suggestedGearId,
+        gearSuggestions,
+      };
+    }),
+  );
 }
 
 export function startActivityAnalysis(

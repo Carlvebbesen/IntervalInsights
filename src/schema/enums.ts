@@ -137,3 +137,41 @@ export const OTHER_SPORT_TYPES = [
 ] as const;
 
 export type OtherSportType = (typeof OTHER_SPORT_TYPES)[number];
+
+// ─── Gear ─────────────────────────────────────────────────────────────────────
+
+export const gearTypeEnum = pgEnum("gear_type", ["SHOES"]);
+export const gearSurfaceEnum = pgEnum("gear_surface", ["ROAD", "TRAIL"]);
+export const trainingBucketEnum = pgEnum("training_bucket", ["EASY", "LONG", "INTERVALS"]);
+
+export type GearType = (typeof gearTypeEnum.enumValues)[number];
+export type GearSurface = (typeof gearSurfaceEnum.enumValues)[number];
+export type TrainingBucket = (typeof trainingBucketEnum.enumValues)[number];
+
+/** Coarse bucket a shoe default/suggestion is keyed on (together with surface). */
+export function trainingBucketFor(
+  trainingType: TrainingType | null | undefined,
+): TrainingBucket | null {
+  switch (trainingType) {
+    case "EASY":
+    case "RECOVERY":
+      return "EASY";
+    case "LONG":
+    case "PROGRESSIVE_LONG":
+      return "LONG";
+    case "SHORT_INTERVALS":
+    case "LONG_INTERVALS":
+    case "HILL_SPRINTS":
+    case "SPRINTS":
+    case "FARTLEK":
+    case "TEMPO":
+      return "INTERVALS";
+    default:
+      return null;
+  }
+}
+
+/** Road vs trail surface inferred from a Strava sport type. */
+export function surfaceForSportType(sportType: string): GearSurface {
+  return sportType === "TrailRun" ? "TRAIL" : "ROAD";
+}
