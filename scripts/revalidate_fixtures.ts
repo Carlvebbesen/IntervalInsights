@@ -5,6 +5,7 @@ import { Pool } from "pg";
 import { getStravaAccessTokens } from "../src/middlewares/strava_middleware";
 import * as schema from "../src/schema";
 import { startAnalysis } from "../src/services/analysis_service";
+import { runScript } from "./_harness";
 
 /**
  * Gated LLM revalidation — re-runs the REAL analyze graph end-to-end on the
@@ -144,11 +145,6 @@ async function main() {
   ];
   await Bun.write(OUT, lines.join("\n"));
   console.log(`[reval] done. ${passed}/${rows.length} correct. report=${OUT}`);
-  await pool.end();
 }
 
-main().catch(async (err) => {
-  console.error("[reval] fatal:", err);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "revalidate_fixtures", once: false, db, pool }, main);

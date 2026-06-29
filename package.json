@@ -10,6 +10,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
+    "scripts:run": "bun run scripts/run_pending.ts",
     "brain:sync": "rm -rf knowledge/brain && mkdir -p knowledge && cp -R ../interval-brain/brain knowledge/brain && rm -rf knowledge/brain/_templates && rm -f knowledge/brain/log.md",
     "types:api": "openapi-typescript http://127.0.0.1:3000/api/openapi.json -o src/types/api.d.ts"
   },

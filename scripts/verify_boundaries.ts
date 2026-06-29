@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { getLaps } from "../src/controllers/activity_controller";
 import * as schema from "../src/schema";
+import { runScript } from "./_harness";
 
 /**
  * Verify the LIVE proposed interval boundaries against ground truth — NOT just
@@ -117,11 +118,6 @@ async function main() {
   }
   await Bun.write(OUT, lines.join("\n"));
   console.log(`[verify] report=${OUT}`);
-  await pool.end();
 }
 
-main().catch(async (e) => {
-  console.error("[verify] fatal:", e);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "verify_boundaries", once: false, db, pool }, main);

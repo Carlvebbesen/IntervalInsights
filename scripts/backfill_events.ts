@@ -5,6 +5,7 @@ import { Pool } from "pg";
 import * as schema from "../src/schema";
 import { activities } from "../src/schema";
 import { detectAndPersistEvents } from "../src/services/event_detection_service";
+import { runScript } from "./_harness";
 
 const DELAY_MS = Number(process.env.DELAY_MS ?? 1500);
 const LIMIT = process.env.LIMIT ? Number(process.env.LIMIT) : null;
@@ -54,7 +55,6 @@ async function main() {
 
   if (DRY_RUN) {
     console.log("[backfill] dry run — exiting without LLM calls");
-    await pool.end();
     return;
   }
 
@@ -87,11 +87,6 @@ async function main() {
   }
 
   console.log(`[backfill] done. processed=${processed} errors=${errors}`);
-  await pool.end();
 }
 
-main().catch(async (err) => {
-  console.error("[backfill] fatal:", err);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "backfill_events", once: true, db, pool }, main);

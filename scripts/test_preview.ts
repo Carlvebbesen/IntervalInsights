@@ -5,6 +5,7 @@ import { previewSegments } from "../src/controllers/activity_controller";
 import { logger } from "../src/logger";
 import * as schema from "../src/schema";
 import { getProposedPaceForStructure } from "../src/services/pace_service";
+import { runScript } from "./_harness";
 
 // Validate the unified preview flow end to end, mirroring the app:
 //   structure --(/proposed-pace || /parse-intervals)--> paced ExpandedIntervalSet[]
@@ -100,11 +101,6 @@ async function main() {
   console.log(
     `[preview] sentinel pass: injected target_pace=${SENTINEL} -> ${flowed}/${iv2.length} INTERVALS carry it (${flowed === iv2.length ? "PASS" : "FAIL"})`,
   );
-  await pool.end();
 }
 
-main().catch(async (e) => {
-  console.error("[preview] fatal:", e);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "test_preview", once: false, db, pool }, main);

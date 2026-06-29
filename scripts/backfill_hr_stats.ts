@@ -12,6 +12,7 @@ import {
   type WorkWindowSegment,
 } from "../src/services/hr_stats_service";
 import { stravaApiService } from "../src/services/strava_api_service";
+import { runScript } from "./_harness";
 
 // Backfills median/mode (+ work-interval) HR stats onto activities that predate
 // the analysis-pipeline change. Throttled per request to stay within Strava's
@@ -55,7 +56,6 @@ async function main() {
 
   if (DRY_RUN) {
     console.log("[hr-backfill] dry run — exiting without Strava calls");
-    await pool.end();
     return;
   }
 
@@ -121,11 +121,6 @@ async function main() {
   console.log(
     `[hr-backfill] done. processed=${processed} errors=${errors} skipped(noToken)=${skipped}`,
   );
-  await pool.end();
 }
 
-main().catch(async (err) => {
-  console.error("[hr-backfill] fatal:", err);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "backfill_hr_stats", once: true, db, pool }, main);

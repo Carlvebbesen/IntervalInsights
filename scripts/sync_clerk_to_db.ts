@@ -5,6 +5,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "../src/schema";
 import { type InsertUser, users } from "../src/schema";
+import { runScript } from "./_harness";
 
 const DRY_RUN = process.env.DRY_RUN === "1";
 const DELAY_MS = Number(process.env.DELAY_MS ?? 100);
@@ -119,11 +120,6 @@ async function main() {
     `[sync] done. total=${total} dbUpdated=${dbUpdated} metadataCleaned=${metadataCleaned} ` +
       `missingDbUser=${missingDbUser} errors=${errors}`,
   );
-  await pool.end();
 }
 
-main().catch(async (err) => {
-  console.error("[sync] fatal:", err);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "sync_clerk_to_db", once: true, db, pool }, main);

@@ -6,6 +6,7 @@ import { StravaError } from "../src/error";
 import { getStravaAccessTokens } from "../src/middlewares/strava_middleware";
 import * as schema from "../src/schema";
 import { syncUserGearFromStrava } from "../src/services/gear_strava_service";
+import { runScript } from "./_harness";
 
 /**
  * Seed local gear from Strava for every Strava-linked user: imports each user's
@@ -87,11 +88,6 @@ async function main() {
   console.log(
     `[backfill-gears] done. created=${totalCreated} updated=${totalUpdated} linked=${totalLinked} failed=${failed}${DRY_RUN ? " (DRY_RUN — nothing written)" : ""}`,
   );
-  await pool.end();
 }
 
-main().catch(async (e) => {
-  console.error("[backfill-gears] fatal:", e);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "backfill_gears", once: true, db, pool }, main);

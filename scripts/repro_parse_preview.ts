@@ -5,6 +5,7 @@ import { parseIntervals } from "../src/controllers/analysis_controller";
 import { previewSegments } from "../src/controllers/activity_controller";
 import { logger } from "../src/logger";
 import * as schema from "../src/schema";
+import { runScript } from "./_harness";
 
 // In-process replica of the app's "generate from text" (no token / HTTP): parse the
 // text into paced sets, then previewSegments on them — does the backend return
@@ -45,11 +46,6 @@ async function main() {
     console.log(
       `  ${String(s.type).padEnd(11)} tgt=${s.targetType}:${s.targetValue} dur=${Math.round(s.actualDuration ?? 0)}s dist=${Math.round(s.actualDistance ?? 0)}m`,
     );
-  await pool.end();
 }
 
-main().catch(async (e) => {
-  console.error("[repro] fatal:", e);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "repro_parse_preview", once: false, db, pool }, main);

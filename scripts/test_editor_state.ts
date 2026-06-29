@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import { getEditorState } from "../src/controllers/activity_controller";
 import { logger } from "../src/logger";
 import * as schema from "../src/schema";
+import { runScript } from "./_harness";
 
 // Validate the unified editor-state endpoint end to end (no Strava token → history +
 // db-stream path, so it runs free against the local DB):
@@ -94,12 +95,7 @@ async function main() {
   allPass = ok(`sentinel pace ${SENTINEL} flows to all INTERVALS (${flowed}/${iv3.length})`, iv3.length > 0 && flowed === iv3.length) && allPass;
 
   console.log(`[editor-state] ${allPass ? "ALL PASS" : "SOME FAILED"}`);
-  await pool.end();
-  if (!allPass) process.exit(1);
+  if (!allPass) throw new Error("editor-state assertions failed");
 }
 
-main().catch(async (e) => {
-  console.error("[editor-state] fatal:", e);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "test_editor_state", once: false, db, pool }, main);

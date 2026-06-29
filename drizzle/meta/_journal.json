@@ -127,6 +127,13 @@
       "when": 1782684908067,
       "tag": "0017_spicy_unicorn",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1782730856130,
+      "tag": "0018_curious_doomsday",
+      "breakpoints": true
     }
   ]
 }

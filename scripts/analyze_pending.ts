@@ -5,6 +5,7 @@ import { Pool } from "pg";
 import { getStravaAccessTokens } from "../src/middlewares/strava_middleware";
 import * as schema from "../src/schema";
 import { startAnalysis } from "../src/services/analysis_service";
+import { runScript } from "./_harness";
 
 /**
  * Run the REAL analyze graph on every `pending` activity (or IDS=...) and report
@@ -124,11 +125,6 @@ async function main() {
   ];
   await Bun.write(OUT, lines.join("\n"));
   console.log(`[pending] done. report=${OUT}`);
-  await pool.end();
 }
 
-main().catch(async (err) => {
-  console.error("[pending] fatal:", err);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "analyze_pending", once: false, db, pool }, main);

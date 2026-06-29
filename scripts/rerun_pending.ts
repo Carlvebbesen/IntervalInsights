@@ -5,6 +5,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { getStravaAccessTokens } from "../src/middlewares/strava_middleware";
 import * as schema from "../src/schema";
 import { startAnalysis } from "../src/services/analysis_service";
+import { runScript } from "./_harness";
 
 /**
  * Re-analyze every pending-review (`initial`) activity with the CURRENT code, to
@@ -129,11 +130,6 @@ async function main() {
   ];
   await Bun.write(OUT, lines.join("\n"));
   console.log(`[rerun] done. report=${OUT}`);
-  await pool.end();
 }
 
-main().catch(async (e) => {
-  console.error("[rerun] fatal:", e);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "rerun_pending", once: false, db, pool }, main);

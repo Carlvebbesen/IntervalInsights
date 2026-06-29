@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import * as schema from "../src/schema";
 import { intervalSegments } from "../src/schema";
 import { foldRestSegments, expandRestSegments } from "../src/services/segment_fold_service";
+import { runScript } from "./_harness";
 
 // Inserts a folded work+rest set against the REAL DB inside a transaction that is
 // ALWAYS rolled back, then reads it back and expands — proves the schema columns
@@ -44,12 +45,7 @@ async function main() {
     if (e.message !== "__rollback__") throw e;
   }
   console.log(`[verify] ${ok ? "ALL PASS" : "FAILED"} (transaction rolled back — no data changed)`);
-  await pool.end();
-  if (!ok) process.exit(1);
+  if (!ok) throw new Error("fold round-trip assertions failed");
 }
 
-main().catch(async (e) => {
-  console.error("[verify] fatal:", e);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "verify_fold_roundtrip", once: false, db, pool }, main);

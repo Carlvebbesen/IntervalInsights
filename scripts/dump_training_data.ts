@@ -12,6 +12,7 @@ import {
   mapIntervalsStreamsToStreamSet,
 } from "../src/services/intervals_mappers";
 import { stravaApiService } from "../src/services/strava_api_service";
+import { runScript } from "./_harness";
 
 /**
  * Activity training-data dump — builds the evaluation corpus for the analyze flow.
@@ -339,11 +340,6 @@ async function main() {
 
   await Bun.write(`${OUT_DIR}/manifest.json`, JSON.stringify(manifest, jsonReplacer, 2));
   console.log(`[dump] done. wrote=${ok} failed=${failed} manifest=${OUT_DIR}/manifest.json`);
-  await pool.end();
 }
 
-main().catch(async (err) => {
-  console.error("[dump] fatal:", err);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "dump_training_data", once: false, db, pool }, main);

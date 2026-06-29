@@ -36,8 +36,14 @@ export const intervalTypeEnum = pgEnum("interval_type", [
 ]);
 export const userRoleEnum = pgEnum("user_role_enum", ["guest", "premium", "admin"]);
 export const targetTypeEnum = pgEnum("target_type_enum", ["time", "distance", "custom"]);
+export const scriptRunStatusEnum = pgEnum("script_run_status_enum", [
+  "running",
+  "completed",
+  "failed",
+]);
 
 export type TargetTypeEnum = (typeof targetTypeEnum.enumValues)[number];
+export type ScriptRunStatus = (typeof scriptRunStatusEnum.enumValues)[number];
 export type UserRole = (typeof userRoleEnum.enumValues)[number];
 export type TrainingType = (typeof trainingTypeEnum.enumValues)[number];
 export type AnalysisStatus = (typeof analysisStatusEnum.enumValues)[number];

@@ -5,6 +5,7 @@ import { previewSegments } from "../src/controllers/activity_controller";
 import { logger } from "../src/logger";
 import * as schema from "../src/schema";
 import { generateCompleteIntervalSet } from "../src/services/utils";
+import { runScript } from "./_harness";
 
 // Characterize "generate segments from text" (previewSegments): does the returned
 // INTERVALS count match the USER's typed structure across activities?
@@ -43,7 +44,6 @@ async function main() {
       console.log(`${id}: error ${e instanceof Error ? e.message : e}`);
     }
   }
-  await pool.end();
 }
 
-main().catch(async (e) => { console.error(e); await pool.end().catch(() => {}); process.exit(1); });
+runScript({ name: "repro_preview_icu", once: false, db, pool }, main);

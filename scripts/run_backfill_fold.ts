@@ -5,6 +5,7 @@ import { Pool } from "pg";
 import * as schema from "../src/schema";
 import { intervalSegments } from "../src/schema";
 import { expandRestSegments } from "../src/services/segment_fold_service";
+import { runScript } from "./_harness";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const db = drizzle({ client: pool, schema });
@@ -84,18 +85,12 @@ async function main() {
   } catch (e: any) {
     if (e.message === "__rollback__") {
       console.log("[verify] FAILED — transaction rolled back, NO data changed. Backup kept.");
-      await pool.end();
-      process.exit(1);
+      throw new Error("round-trip verification failed; transaction rolled back");
     }
     throw e;
   }
   console.log("[done] backfill committed; round-trip verified on all samples.");
   console.log("       Backup table interval_segments_backup_optionb retained — DROP it once satisfied.");
-  await pool.end();
 }
 
-main().catch(async (e) => {
-  console.error("[backfill] FATAL:", e);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+runScript({ name: "run_backfill_fold", once: true, db, pool }, main);
