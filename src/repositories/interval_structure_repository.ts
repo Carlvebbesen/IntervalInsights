@@ -66,6 +66,47 @@ export function structureHistory(db: Db, userId: string, structureId: number) {
     .orderBy(asc(activities.startDateLocal));
 }
 
+/**
+ * The work segments of the most recent activity linked to a structure that
+ * actually has interval segments, ordered as performed. Used to reconstruct a
+ * workout shape for structures whose activities never stored a draft structure
+ * (e.g. sync-imported sessions).
+ */
+export async function representativeIntervalSegments(db: Db, userId: string, structureId: number) {
+  const rep = await db
+    .select({ id: activities.id })
+    .from(activities)
+    .innerJoin(
+      intervalSegments,
+      and(eq(intervalSegments.activityId, activities.id), eq(intervalSegments.type, "INTERVALS")),
+    )
+    .where(and(eq(activities.userId, userId), eq(activities.intervalStructureId, structureId)))
+    .groupBy(activities.id)
+    .orderBy(desc(activities.startDateLocal))
+    .limit(1);
+
+  const activityId = rep[0]?.id;
+  if (activityId == null) return [];
+
+  // All types (not just INTERVALS): between-set / single-rep-set recovery is
+  // stored as separate ACTIVE_REST rows whose target_value holds the rest.
+  return db
+    .select({
+      setGroupIndex: intervalSegments.setGroupIndex,
+      segmentIndex: intervalSegments.segmentIndex,
+      type: intervalSegments.type,
+      targetType: intervalSegments.targetType,
+      targetValue: intervalSegments.targetValue,
+      recoveryTargetType: intervalSegments.recoveryTargetType,
+      recoveryTargetValue: intervalSegments.recoveryTargetValue,
+      actualDuration: intervalSegments.actualDuration,
+      timeSeriesEndTime: intervalSegments.timeSeriesEndTime,
+    })
+    .from(intervalSegments)
+    .where(eq(intervalSegments.activityId, activityId))
+    .orderBy(asc(intervalSegments.segmentIndex));
+}
+
 export async function getStructureWithSets(db: Db, userId: string, structureId: number) {
   const structure = await db.query.intervalStructures.findFirst({
     where: eq(intervalStructures.id, structureId),

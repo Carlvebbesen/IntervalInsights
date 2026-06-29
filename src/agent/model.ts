@@ -51,9 +51,10 @@ export const gptMiniModel = new ChatOpenAI({
 });
 
 /**
- * Stronger tiers for the reasoning-heavy structured agents. Defined but NOT wired
- * into any agent yet — pass one explicitly to `invokeStructured(..., model)` to
- * A/B against `gptMiniModel`. `gptStrongModel` is a drop-in (temperature 0);
+ * Stronger tiers for the reasoning-heavy structured agents. `gptStrongModel` is
+ * wired into suggest-session "recommended" mode (open-ended coaching judgment
+ * where mini just echoes its input); pass one explicitly to
+ * `invokeStructured(..., model)` to A/B others. `gptStrongModel` is a drop-in (temperature 0);
  * `o4ReasoningModel` is an o-series reasoning model (no temperature — it reasons
  * at the default effort; bind `reasoningEffort` per-call to tune) with a longer
  * timeout since reasoning runs are slower.

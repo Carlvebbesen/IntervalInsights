@@ -25,6 +25,7 @@ type Db = IGlobalBindings["db"];
 type WorkoutSet = z.infer<typeof workoutSet>;
 type SuggestSessionResponse = z.infer<typeof SuggestSessionResponseSchema>;
 type ProposedTraining = z.infer<typeof ProposedTrainingArtifactSchema>;
+type SuggestionMode = "signature" | "recommended";
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const cache = new Map<string, { at: number; value: SuggestSessionResponse }>();
@@ -45,10 +46,11 @@ function cacheKey(
   structureId: number | undefined,
   sets: WorkoutSet[],
   weather: Weather | undefined,
+  mode: SuggestionMode,
 ): string {
   const shape = structureId != null ? `id:${structureId}` : `h:${hashStructure(sets)}`;
   const w = weather ? `|w:${Math.round(weather.temperatureC)}:${Math.round(weather.humidity)}` : "";
-  return `${userId}|${date}|${shape}${w}`;
+  return `${userId}|${date}|${shape}|m:${mode}${w}`;
 }
 
 function toWorkoutStructure(
@@ -116,6 +118,181 @@ async function buildHistorySummary(
   return lines.join("\n");
 }
 
+type WorkoutStep = WorkoutSet["steps"][number];
+
+/**
+ * Rebuild a workout shape from the segments actually performed, for structures
+ * whose activities never stored a draft structure (e.g. sync-imported sessions).
+ * Segments are grouped by set, consecutive same-target reps collapse into a
+ * step, and identical consecutive set-groups collapse into one set with reps.
+ */
+const MAX_TRUSTED_REST_S = 600;
+
+/** Round a derived rest to a clean number; treat sub-3s as no rest and >10min as untrustworthy. */
+function cleanRest(seconds: number | null): number | null {
+  if (seconds == null || seconds > MAX_TRUSTED_REST_S) return null;
+  if (seconds <= 2) return 0;
+  return Math.round(seconds / 5) * 5;
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? Math.round((sorted[mid - 1] + sorted[mid]) / 2) : sorted[mid];
+}
+
+export function setsFromSegments(
+  rows: Awaited<ReturnType<typeof structureRepo.representativeIntervalSegments>>,
+): WorkoutSet[] {
+  const mapType = (t: string | null): "TIME" | "DISTANCE" | null =>
+    t === "time" ? "TIME" : t === "distance" ? "DISTANCE" : null;
+
+  type Seg = {
+    setGroupIndex: number;
+    workType: "TIME" | "DISTANCE";
+    workValue: number;
+    recoveryType: "TIME" | "DISTANCE" | null;
+    recoveryValue: number | null;
+  };
+  const isWork = (r: (typeof rows)[number]) =>
+    r.type === "INTERVALS" && mapType(r.targetType) != null && !!r.targetValue;
+  const isRest = (r: (typeof rows)[number]) => r.type === "REST" || r.type === "ACTIVE_REST";
+
+  // Resolve each work rep's recovery in priority order: folded normal-REST on
+  // the work row → a separate REST/ACTIVE_REST row before the next rep → the
+  // measured timing gap (last resort). Exact stored rest beats approximation.
+  const segs: Seg[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (!isWork(r)) continue;
+
+    let j = i + 1;
+    while (j < rows.length && !isWork(rows[j])) j++;
+    const next = j < rows.length ? rows[j] : null;
+
+    let restValue: number | null = null;
+    let restType: "TIME" | "DISTANCE" | null = null;
+    if (next != null) {
+      if (r.recoveryTargetValue != null) {
+        restValue = r.recoveryTargetValue;
+        restType = mapType(r.recoveryTargetType) ?? "TIME";
+      } else {
+        for (let k = i + 1; k < j; k++) {
+          const rr = rows[k];
+          if (isRest(rr) && rr.targetValue && mapType(rr.targetType) != null) {
+            restValue = rr.targetValue;
+            restType = mapType(rr.targetType);
+            break;
+          }
+        }
+        if (restValue == null) {
+          restValue = cleanRest(next.timeSeriesEndTime - next.actualDuration - r.timeSeriesEndTime);
+          restType = restValue == null ? null : "TIME";
+        }
+      }
+    }
+
+    segs.push({
+      setGroupIndex: r.setGroupIndex,
+      workType: mapType(r.targetType) as "TIME" | "DISTANCE",
+      workValue: r.targetValue,
+      recoveryType: restValue == null ? null : restType,
+      recoveryValue: restValue,
+    });
+  }
+
+  const groups: Seg[][] = [];
+  for (const s of segs) {
+    const g = groups[groups.length - 1];
+    if (g && g[0].setGroupIndex === s.setGroupIndex) g.push(s);
+    else groups.push([s]);
+  }
+
+  // Each group → (steps, setRecovery). The last seg's recovery is the rest
+  // *between* groups, so it becomes set_recovery rather than a rep recovery.
+  type Group = { steps: WorkoutStep[]; setRecovery: number | null };
+  const built: Group[] = groups
+    .map((segsInGroup) => {
+      const setRecovery = segsInGroup[segsInGroup.length - 1].recoveryValue;
+      const innerRecoveries = new Map<number, number[]>();
+      const steps: WorkoutStep[] = [];
+      for (let i = 0; i < segsInGroup.length; i++) {
+        const s = segsInGroup[i];
+        const isLast = i === segsInGroup.length - 1;
+        const prev = steps[steps.length - 1];
+        let stepIdx: number;
+        if (prev && prev.work_type === s.workType && prev.work_value === s.workValue) {
+          prev.reps += 1;
+          stepIdx = steps.length - 1;
+        } else {
+          steps.push({
+            reps: 1,
+            work_type: s.workType,
+            work_value: s.workValue,
+            recovery_type: null,
+            recovery_value: null,
+          });
+          stepIdx = steps.length - 1;
+        }
+        if (!isLast && s.recoveryValue != null) {
+          const list = innerRecoveries.get(stepIdx) ?? [];
+          list.push(s.recoveryValue);
+          innerRecoveries.set(stepIdx, list);
+        }
+      }
+      steps.forEach((step, idx) => {
+        const rec = median(innerRecoveries.get(idx) ?? []);
+        if (rec != null) {
+          step.recovery_value = rec;
+          step.recovery_type = "TIME";
+        }
+      });
+      return { steps, setRecovery };
+    })
+    .filter((g) => g.steps.length > 0);
+
+  const sameSteps = (a: WorkoutStep[], b: WorkoutStep[]) =>
+    a.length === b.length &&
+    a.every(
+      (s, i) =>
+        s.work_type === b[i].work_type &&
+        s.work_value === b[i].work_value &&
+        s.reps === b[i].reps &&
+        s.recovery_value === b[i].recovery_value,
+    );
+
+  // Collapse identical consecutive groups into one set; set_recovery is the
+  // typical between-group rest across the repeats.
+  const sets: WorkoutSet[] = [];
+  const groupRests: number[][] = [];
+  for (const g of built) {
+    const last = sets[sets.length - 1];
+    if (last && sameSteps(last.steps, g.steps)) {
+      last.set_reps += 1;
+      if (g.setRecovery != null) groupRests[groupRests.length - 1].push(g.setRecovery);
+    } else {
+      sets.push({ set_reps: 1, set_recovery: null, steps: g.steps });
+      groupRests.push(g.setRecovery != null ? [g.setRecovery] : []);
+    }
+  }
+  sets.forEach((set, i) => {
+    set.set_recovery = median(groupRests[i]);
+  });
+  return sets;
+}
+
+async function buildTrainingHistorySummary(db: Db, userId: string): Promise<string> {
+  const rows = await structureRepo.listDistinctForUser(db, userId);
+  if (rows.length === 0) return "";
+  const recent = rows.slice(0, 8);
+  const lines = recent.map((r) => {
+    const last = r.lastDoneAt ? new Date(r.lastDoneAt).toISOString().slice(0, 10) : "unknown";
+    return `- ${r.name}: done ${r.activityCount}x, last on ${last}`;
+  });
+  return lines.join("\n");
+}
+
 async function resolveReadiness(clerkUserId: string, date: string): Promise<ReadinessSignals> {
   const [day, summary] = await Promise.all([
     fetchFitnessDayBlock(clerkUserId, date).catch(() => null),
@@ -138,11 +315,18 @@ export async function suggestSession(
   db: Db,
   userId: string,
   clerkUserId: string,
-  input: { structureId?: number; structure?: WorkoutSet[]; date?: string; weather?: Weather },
+  input: {
+    structureId?: number;
+    structure?: WorkoutSet[];
+    date?: string;
+    weather?: Weather;
+    mode?: SuggestionMode;
+  },
   logger: Logger,
 ): Promise<SuggestSessionResponse> {
   const date = input.date ?? toISODate(new Date());
-  const log = logger.child({ route: "suggest-session", date, structureId: input.structureId });
+  const mode: SuggestionMode = input.mode ?? "signature";
+  const log = logger.child({ route: "suggest-session", date, structureId: input.structureId, mode });
 
   let baseStructure: WorkoutSet[] | null = input.structure ?? null;
   let structureName: string | null = null;
@@ -151,20 +335,29 @@ export async function suggestSession(
     const stored = await structureRepo.getStructureWithSets(db, userId, input.structureId);
     if (!stored) throw new AppError(404, "Interval structure not found");
     structureName = stored.name;
-    if (!stored.sets || stored.sets.length === 0) {
+    let sets = stored.sets;
+    if (!sets || sets.length === 0) {
+      const segRows = await structureRepo.representativeIntervalSegments(db, userId, input.structureId);
+      const reconstructed = setsFromSegments(segRows);
+      if (reconstructed.length > 0) {
+        log.info({ setCount: reconstructed.length }, "reconstructed structure shape from segments");
+        sets = reconstructed;
+      }
+    }
+    if (!sets || sets.length === 0) {
       throw new AppError(
         422,
         "This saved structure has no stored workout shape yet — pass an explicit `structure` instead.",
       );
     }
-    baseStructure = stored.sets;
+    baseStructure = sets;
   }
 
   if (!baseStructure || baseStructure.length === 0) {
     throw new AppError(400, "Provide either structureId or a non-empty structure.");
   }
 
-  const key = cacheKey(userId, date, input.structureId, baseStructure, input.weather);
+  const key = cacheKey(userId, date, input.structureId, baseStructure, input.weather, mode);
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
     log.info("suggest-session cache hit");
@@ -174,7 +367,10 @@ export async function suggestSession(
   const readiness = await resolveReadiness(clerkUserId, date);
   const basePaces = await getProposedPaceForStructure(db, userId, clerkUserId, baseStructure);
   const { paces, advisory } = applyReadinessAdjustment(basePaces, readiness);
-  const historySummary = await buildHistorySummary(db, userId, input.structureId);
+  const historySummary =
+    mode === "recommended"
+      ? await buildTrainingHistorySummary(db, userId)
+      : await buildHistorySummary(db, userId, input.structureId);
 
   const suggestion = await invokeSuggestSessionAgent({
     date,
@@ -183,6 +379,7 @@ export async function suggestSession(
     historySummary,
     readiness,
     advisory,
+    mode,
   });
 
   let finalSets = baseStructure;

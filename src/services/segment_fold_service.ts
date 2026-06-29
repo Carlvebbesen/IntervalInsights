@@ -68,7 +68,10 @@ export function expandRestSegments(folded: SelectIntervalSegment[]): SelectInter
         targetPace: null,
         timeSeriesEndTime: seg.recoveryEndTime,
         actualDistance: seg.recoveryDistance ?? 0,
-        actualDuration: seg.recoveryDuration ?? 0,
+        // recoveryDuration is always set when recoveryEndTime is; fall back to
+        // the timestamp span so a synthesised REST can never be zero-duration.
+        actualDuration:
+          seg.recoveryDuration ?? Math.max(0, Math.round(seg.recoveryEndTime - seg.timeSeriesEndTime)),
         avgHeartRate: seg.recoveryAvgHeartRate ?? null,
       });
     } else {

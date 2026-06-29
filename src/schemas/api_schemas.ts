@@ -1182,6 +1182,13 @@ export const SuggestSessionRequestSchema = z
     weather: WeatherSchema.optional().describe(
       "Optional device weather snapshot; when present, target paces are also heat-adjusted by session type.",
     ),
+    mode: z
+      .enum(["signature", "recommended"])
+      .optional()
+      .default("signature")
+      .describe(
+        "'signature' keeps the picked structure's shape (only modest readiness tweaks). 'recommended' lets the coach recommend the best-fitting session for today from the athlete's training context, free to reshape it.",
+      ),
   })
   .refine((b) => b.structureId != null || (b.structure != null && b.structure.length > 0), {
     message: "Provide either structureId or a non-empty structure.",
