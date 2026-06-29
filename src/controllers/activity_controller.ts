@@ -36,7 +36,8 @@ import {
   mapIntervalsStreamsToStreamSet,
 } from "../services/intervals_mappers";
 import { produceSegments } from "../agent/segment_production";
-import type { WorkoutAnalysisOutput } from "../agent/initial_analysis_agent";
+import type { WorkoutAnalysisOutput, workoutSet } from "../agent/initial_analysis_agent";
+import { getProposedPace } from "./analysis_controller";
 import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import { getSegmentsForActivity } from "../services/lap_derivation_service";
@@ -46,6 +47,7 @@ import {
   SegmentMappingError,
 } from "../services/segment_mapping_service";
 import { findMatchingStructure, persistSegmentsAndStructure } from "../services/signature_service";
+import { expandRestSegments } from "../services/segment_fold_service";
 import { stravaApiService } from "../services/strava_api_service";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { StreamSet } from "../types/strava/IStream";
@@ -225,7 +227,8 @@ async function applySegmentEdit(
 
   recordSegmentEdit({ editKind, source: src.kind, trainingType: activity.trainingType });
 
-  return { intervalSegments: await loadStoredSegments(db, activity.id) };
+  // Option B: expand folded recovery back into REST rows for the response shape.
+  return { intervalSegments: expandRestSegments(await loadStoredSegments(db, activity.id)) };
 }
 
 function loadStoredSegments(db: Db, activityId: number) {
@@ -263,7 +266,8 @@ export async function editSingleSegment(
     throw new AppError(404, "Activity not found");
   }
 
-  const existing = await loadStoredSegments(db, activityId);
+  // Option B: expand folded rests so edits operate on the full work + REST list.
+  const existing = expandRestSegments(await loadStoredSegments(db, activityId));
   if (!existing.some((s) => s.id === segmentId)) {
     throw new AppError(404, "Segment not found for this activity");
   }
@@ -610,22 +614,89 @@ export async function getDraftSegments(
   }
 
   const proposedSegments = activity.draftAnalysisResult?.proposedSegments ?? [];
-  const consent = await userHasHeartRateConsent(db, userId);
+  const streams = await loadEditorStreams(db, userId, accessToken, activity.stravaActivityId);
 
+  return { proposedSegments, streams };
+}
+
+type WorkoutSet = z.infer<typeof workoutSet>;
+
+type EditorStreams = { time: number[]; heartrate: number[] | null; velocity: number[] };
+
+async function loadEditorStreams(
+  db: Db,
+  userId: string,
+  accessToken: string,
+  stravaActivityId: number,
+): Promise<EditorStreams> {
+  const consent = await userHasHeartRateConsent(db, userId);
   const keys = ["time", "velocity_smooth", "distance"] as const;
   const streamKeys = consent ? ([...keys, "heartrate"] as const) : keys;
-  const streams = await stravaApiService.getActivityStreams(
-    accessToken,
-    activity.stravaActivityId,
-    [...streamKeys],
+  const streams = await stravaApiService.getActivityStreams(accessToken, stravaActivityId, [
+    ...streamKeys,
+  ]);
+  return {
+    time: streams?.time?.data ?? [],
+    heartrate: consent ? (streams?.heartrate?.data ?? null) : null,
+    velocity: streams?.velocity_smooth?.data ?? [],
+  };
+}
+
+/**
+ * Hydrate BOTH editor views from one source of truth in a single call. The paced
+ * rep-list (`sets`) drives the derived per-rep `segments`, so the proposed-pace view
+ * and the segment editor cannot diverge. Two modes via the input:
+ *   - `structure` (WorkoutSet[]) → initial load: compute proposed paces (lap-preferred,
+ *     same logic as /proposed-pace), then derive segments from them.
+ *   - `sets` (paced ExpandedIntervalSet[]) → re-derive after a STRUCTURAL edit
+ *     (add/remove/delete a rep) or parse-from-text: the supplied paces flow verbatim.
+ * `streams` is returned for the chart unless `includeStreams === false`. Read-only.
+ */
+export async function getEditorState(
+  db: Db,
+  userId: string,
+  clerkUserId: string,
+  accessToken: string | undefined,
+  activityId: number,
+  input: {
+    structure?: WorkoutSet[];
+    sets?: ExpandedIntervalSet[];
+    trainingType: TrainingType;
+    includeStreams?: boolean;
+  },
+  logger: Logger,
+): Promise<{ sets: ExpandedIntervalSet[]; segments: ProposedSegmentDraft[]; streams: EditorStreams | null }> {
+  const log = logger.child({ fn: "getEditorState", activityId });
+
+  const sets =
+    input.sets ??
+    (await getProposedPace(
+      db,
+      userId,
+      clerkUserId,
+      accessToken,
+      input.structure ?? [],
+      activityId,
+      log,
+    ));
+
+  const segments = await previewSegments(
+    db,
+    userId,
+    clerkUserId,
+    activityId,
+    sets,
+    input.trainingType,
+    log,
   );
 
-  return {
-    proposedSegments,
-    streams: {
-      time: streams?.time?.data ?? [],
-      heartrate: consent ? (streams?.heartrate?.data ?? null) : null,
-      velocity: streams?.velocity_smooth?.data ?? [],
-    },
-  };
+  let streams: EditorStreams | null = null;
+  if (input.includeStreams !== false && accessToken) {
+    const activity = await activityRepo.findByIdForUser(db, userId, activityId);
+    if (activity?.stravaActivityId != null) {
+      streams = await loadEditorStreams(db, userId, accessToken, activity.stravaActivityId);
+    }
+  }
+
+  return { sets, segments, streams };
 }

@@ -9,6 +9,7 @@ import {
 } from "../schema";
 import type { DraftAnalysisResult } from "../schema/activities";
 import type { TrainingType } from "../schema/enums";
+import { foldRestSegments } from "./segment_fold_service";
 import {
   determineIntervalType,
   generateIntervalSignature,
@@ -166,8 +167,10 @@ export async function persistSegmentsAndStructure(
 
     await tx.delete(intervalSegments).where(eq(intervalSegments.activityId, activityId));
     if (persistSegments) {
-      await tx.insert(intervalSegments).values(segments);
-      log.info({ count: segments.length }, "inserted segments");
+      // Option B: fold normal REST rows into the preceding work row before insert.
+      const folded = foldRestSegments(segments);
+      await tx.insert(intervalSegments).values(folded);
+      log.info({ count: folded.length, expanded: segments.length }, "inserted segments");
     } else {
       log.info(
         { count: segments.length },

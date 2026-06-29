@@ -1,5 +1,6 @@
 import "zod-openapi/extend";
 import { z } from "zod";
+import { workoutSet } from "../agent/initial_analysis_agent";
 import {
   analysisStatusEnum,
   eventStatusEnum,
@@ -405,6 +406,43 @@ export const DraftSegmentsResponseSchema = z
     }),
   })
   .openapi({ ref: "DraftSegmentsResponse" });
+
+export const EditorStreamsSchema = z.object({
+  time: z.array(z.number()),
+  heartrate: z.array(z.number()).nullable(),
+  velocity: z.array(z.number()),
+});
+
+/**
+ * Editor-state request: pass exactly one of `structure` (initial load → compute paces)
+ * or `sets` (re-derive after a structural edit → paces verbatim). `structure` mirrors
+ * the `/proposed-pace` body's `structure: workoutSet[]`.
+ */
+export const EditorStateRequestSchema = z
+  .object({
+    structure: z.array(workoutSet).optional(),
+    sets: z.array(ExpandedIntervalSetSchema).optional(),
+    trainingType: z.enum(trainingTypeEnum.enumValues),
+    includeStreams: z.boolean().optional(),
+  })
+  .refine((v) => (v.structure == null) !== (v.sets == null), {
+    message: "Provide exactly one of `structure` or `sets`",
+  });
+
+/**
+ * One call that hydrates BOTH the proposed-pace view and the segment editor from a
+ * single source of truth: the paced rep-list (`sets`) drives the derived `segments`,
+ * so the two views cannot diverge. Replaces the separate /proposed-pace + /draft-segments
+ * round-trips. `streams` is null when `includeStreams: false` (e.g. a re-derive after a
+ * structural edit, where the client already holds the streams).
+ */
+export const EditorStateResponseSchema = z
+  .object({
+    sets: z.array(ExpandedIntervalSetSchema),
+    segments: z.array(ProposedSegmentSchema),
+    streams: EditorStreamsSchema.nullable(),
+  })
+  .openapi({ ref: "EditorStateResponse" });
 
 export const ActivityStreamsSchema = z
   .object({

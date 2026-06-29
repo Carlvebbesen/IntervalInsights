@@ -6,6 +6,7 @@ import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import { activities, intervalSegments } from "../schema";
 import type { InsertIntervalSegment } from "../schema/interval_segments";
+import { expandRestSegments } from "./segment_fold_service";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { Lap } from "../types/strava/IDetailedActivity";
@@ -306,8 +307,11 @@ export async function getSegmentsForActivity(
     .orderBy(asc(intervalSegments.segmentIndex));
 
   if (stored.length > 0) {
-    log.info({ segments: stored.length }, "returning stored segments");
-    return stored;
+    // Option B: stored rows have normal rests FOLDED into work rows — expand
+    // them back so callers see the same work + REST shape as before.
+    const expanded = expandRestSegments(stored);
+    log.info({ stored: stored.length, expanded: expanded.length }, "returning stored segments");
+    return expanded;
   }
 
   const activity = await db.query.activities.findFirst({

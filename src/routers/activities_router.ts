@@ -11,6 +11,8 @@ import {
   AssignGearSchema,
   DraftSegmentsResponseSchema,
   EditSegmentsRequestSchema,
+  EditorStateRequestSchema,
+  EditorStateResponseSchema,
   ErrorSchema,
   ExpandedIntervalSetSchema,
   GearStatsResponseSchema,
@@ -553,6 +555,44 @@ activitiesRouter.post(
       id,
       sets,
       trainingType,
+      c.var.logger,
+    );
+    return c.json(result);
+  },
+);
+
+stravaActivitiesRouter.post(
+  "/:id/editor-state",
+  describeRoute({
+    description:
+      "Hydrate the unified pace/segment editor in ONE call. Pass `structure` (WorkoutSet[]) on initial load to compute proposed paces + derive segments, or `sets` (paced ExpandedIntervalSet[]) to re-derive segments after a structural edit (add/remove/delete a rep) — the paces flow through verbatim. The returned `sets` drive the derived `segments`, so the pace view and segment list cannot diverge. Replaces the separate /proposed-pace + /draft-segments round-trips. Read-only.",
+    responses: {
+      200: {
+        description: "Paced rep-list + derived segments (+ streams for the chart)",
+        content: { "application/json": { schema: resolver(EditorStateResponseSchema) } },
+      },
+      400: {
+        description: "Bad request",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      404: {
+        description: "Activity not found",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("param", activityIdParamSchema),
+  validator("json", EditorStateRequestSchema),
+  async (c) => {
+    const { id } = c.req.valid("param");
+    const body = c.req.valid("json");
+    const result = await activityController.getEditorState(
+      c.env.db,
+      c.get("userId"),
+      c.get("clerkUserId"),
+      c.get("stravaAccessToken"),
+      id,
+      body,
       c.var.logger,
     );
     return c.json(result);
