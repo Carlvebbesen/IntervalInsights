@@ -36,11 +36,13 @@ export function listDistinctForUser(db: Db, userId: string) {
  */
 export function structureHistory(db: Db, userId: string, structureId: number) {
   const workPaceExpr = sql`CASE WHEN ${intervalSegments.actualDistance} > 0 THEN ${intervalSegments.actualDuration}::float / ${intervalSegments.actualDistance} * 1000 ELSE NULL END`;
+  const targetWorkPaceExpr = sql`CASE WHEN ${intervalSegments.targetPace} > 0 THEN 1000.0 / ${intervalSegments.targetPace} ELSE NULL END`;
   return db
     .select({
       activityId: activities.id,
       date: activities.startDateLocal,
       title: activities.title,
+      indoor: activities.indoor,
       distance: activities.distance,
       movingTime: activities.movingTime,
       avgHeartRate: activities.averageHeartRate,
@@ -49,6 +51,7 @@ export function structureHistory(db: Db, userId: string, structureId: number) {
       avgWorkPaceSecPerKm: avg(workPaceExpr),
       fastestWorkPaceSecPerKm: sql<string | null>`MIN(${workPaceExpr})`,
       slowestWorkPaceSecPerKm: sql<string | null>`MAX(${workPaceExpr})`,
+      targetWorkPaceSecPerKm: avg(targetWorkPaceExpr),
       avgWorkHr: avg(intervalSegments.avgHeartRate),
       minWorkHr: sql<string | null>`MIN(${intervalSegments.avgHeartRate})`,
       maxWorkHr: sql<string | null>`MAX(${intervalSegments.avgHeartRate})`,
