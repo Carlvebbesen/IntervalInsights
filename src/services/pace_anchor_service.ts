@@ -197,7 +197,7 @@ function pacesFromVdot(vdot: number): PaceSet {
   };
   const round = (n: number | null) => (n == null ? null : Math.round(n));
   return {
-    easySecPerKm: round(velocityForPct(0.7)),
+    easySecPerKm: round(velocityForPct(0.6)),
     thresholdSecPerKm: round(velocityForPct(0.88)),
     intervalSecPerKm: round(velocityForPct(0.98)),
     repSecPerKm: round(velocityForPct(1.06)),
@@ -230,21 +230,26 @@ function predictRaces(vdot: number): PredictedRace[] {
   return races;
 }
 
-function pickVdotReference(efforts: MaximalEffort[]): MaximalEffort | null {
-  const candidates = efforts.filter(
-    (e) =>
-      e.durationSec >= 180 &&
-      e.durationSec <= 1200 &&
-      e.velocityMps >= MIN_PLAUSIBLE_MPS &&
-      e.velocityMps <= MAX_PLAUSIBLE_MPS,
-  );
-  if (candidates.length === 0) return null;
-  return candidates.reduce((best, e) => (e.velocityMps > best.velocityMps ? e : best));
+const VDOT_MIN_DURATION_SEC = 180;
+const VDOT_MAX_DURATION_SEC = 1200;
+
+export function averageVdot(efforts: MaximalEffort[]): number | null {
+  const vdots = efforts
+    .filter(
+      (e) =>
+        e.durationSec >= VDOT_MIN_DURATION_SEC &&
+        e.durationSec <= VDOT_MAX_DURATION_SEC &&
+        e.velocityMps >= MIN_PLAUSIBLE_MPS &&
+        e.velocityMps <= MAX_PLAUSIBLE_MPS,
+    )
+    .map((e) => computeVdot(e.velocityMps, e.durationSec))
+    .filter((v): v is number => v != null);
+  if (vdots.length === 0) return null;
+  return vdots.reduce((sum, v) => sum + v, 0) / vdots.length;
 }
 
 export function deriveAnchor(efforts: MaximalEffort[]): PaceAnchor {
-  const ref = pickVdotReference(efforts);
-  const vdot = ref ? computeVdot(ref.velocityMps, ref.durationSec) : null;
+  const vdot = averageVdot(efforts);
   const predictedRaces = vdot != null ? predictRaces(vdot) : [];
 
   const cs = computeCriticalSpeed(efforts);

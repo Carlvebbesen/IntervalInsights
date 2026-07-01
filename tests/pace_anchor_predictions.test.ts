@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  averageVdot,
   computeVdot,
   deriveAnchor,
   type MaximalEffort,
@@ -183,5 +184,36 @@ describe("deriveAnchor end-to-end from interval efforts", () => {
     const anchor = deriveAnchor([{ durationSec: 45, distanceM: 200, velocityMps: 200 / 45 }]);
     expect(anchor.anchorSource).toBe("none");
     expect(anchor.predictedRaces).toHaveLength(0);
+  });
+});
+
+describe("averageVdot averages across efforts instead of anchoring to the fastest", () => {
+  const efforts: MaximalEffort[] = [
+    { durationSec: 200, distanceM: 1100, velocityMps: 1100 / 200 },
+    { durationSec: 600, distanceM: 2900, velocityMps: 2900 / 600 },
+    { durationSec: 1000, distanceM: 4600, velocityMps: 4600 / 1000 },
+  ];
+
+  test("result is the mean of the per-effort VDOTs, not the single fastest", () => {
+    const perEffort = efforts.map((e) => computeVdot(e.velocityMps, e.durationSec)!);
+    const mean = perEffort.reduce((s, v) => s + v, 0) / perEffort.length;
+    const fastest = Math.max(...perEffort);
+
+    const avg = averageVdot(efforts)!;
+    expect(avg).toBeCloseTo(mean, 6);
+    expect(avg).toBeLessThan(fastest);
+  });
+
+  test("efforts outside the 180–1200 s window are excluded", () => {
+    const withOutliers: MaximalEffort[] = [
+      ...efforts,
+      { durationSec: 45, distanceM: 320, velocityMps: 320 / 45 },
+      { durationSec: 1800, distanceM: 7800, velocityMps: 7800 / 1800 },
+    ];
+    expect(averageVdot(withOutliers)).toBeCloseTo(averageVdot(efforts)!, 6);
+  });
+
+  test("no in-window efforts yields null", () => {
+    expect(averageVdot([{ durationSec: 45, distanceM: 200, velocityMps: 200 / 45 }])).toBeNull();
   });
 });
