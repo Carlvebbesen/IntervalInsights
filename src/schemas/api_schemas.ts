@@ -1189,6 +1189,13 @@ export const SuggestSessionRequestSchema = z
       .describe(
         "'signature' keeps the picked structure's shape (only modest readiness tweaks). 'recommended' lets the coach recommend the best-fitting session for today from the athlete's training context, free to reshape it.",
       ),
+    recentlySuggested: z
+      .array(z.string())
+      .max(10)
+      .optional()
+      .describe(
+        "Titles of sessions already suggested to the athlete in this sitting (client-held state). Passed back on a 'suggest another' tap so the coach proposes something different and the brief response cache is bypassed. Recommended mode only.",
+      ),
   })
   .refine((b) => b.structureId != null || (b.structure != null && b.structure.length > 0), {
     message: "Provide either structureId or a non-empty structure.",
