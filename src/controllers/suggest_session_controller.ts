@@ -9,6 +9,7 @@ import type {
   SuggestSessionResponseSchema,
   Weather,
 } from "../schemas/api_schemas";
+import { buildAthleteProfileBlock } from "../services/athlete_profile_service";
 import { fetchFitnessDayBlock } from "../services/fitness_service";
 import { applyHeatAdjustment, heatZoneForTrainingType } from "../services/heat_service";
 import { fetchTrainingSummary } from "../services/intervals_wellness_service";
@@ -47,10 +48,14 @@ function cacheKey(
   sets: WorkoutSet[],
   weather: Weather | undefined,
   mode: SuggestionMode,
+  recentlySuggested: string[],
 ): string {
   const shape = structureId != null ? `id:${structureId}` : `h:${hashStructure(sets)}`;
   const w = weather ? `|w:${Math.round(weather.temperatureC)}:${Math.round(weather.humidity)}` : "";
-  return `${userId}|${date}|${shape}|m:${mode}${w}`;
+  // A growing exclusion list on 'suggest another' changes the key, so the brief
+  // cache never re-serves an already-shown suggestion.
+  const r = recentlySuggested.length > 0 ? `|r:${recentlySuggested.join("~")}` : "";
+  return `${userId}|${date}|${shape}|m:${mode}${w}${r}`;
 }
 
 function toWorkoutStructure(
@@ -321,11 +326,14 @@ export async function suggestSession(
     date?: string;
     weather?: Weather;
     mode?: SuggestionMode;
+    recentlySuggested?: string[];
   },
   logger: Logger,
 ): Promise<SuggestSessionResponse> {
-  const date = input.date ?? toISODate(new Date());
+  const now = new Date();
+  const date = input.date ?? toISODate(now);
   const mode: SuggestionMode = input.mode ?? "signature";
+  const recentlySuggested = input.recentlySuggested ?? [];
   const log = logger.child({ route: "suggest-session", date, structureId: input.structureId, mode });
 
   let baseStructure: WorkoutSet[] | null = input.structure ?? null;
@@ -357,7 +365,15 @@ export async function suggestSession(
     throw new AppError(400, "Provide either structureId or a non-empty structure.");
   }
 
-  const key = cacheKey(userId, date, input.structureId, baseStructure, input.weather, mode);
+  const key = cacheKey(
+    userId,
+    date,
+    input.structureId,
+    baseStructure,
+    input.weather,
+    mode,
+    recentlySuggested,
+  );
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
     log.info("suggest-session cache hit");
@@ -367,16 +383,20 @@ export async function suggestSession(
   const readiness = await resolveReadiness(clerkUserId, date);
   const basePaces = await getProposedPaceForStructure(db, userId, clerkUserId, baseStructure);
   const { paces, advisory } = applyReadinessAdjustment(basePaces, readiness);
-  const historySummary =
+  const [historySummary, athleteProfile] = await Promise.all([
     mode === "recommended"
-      ? await buildTrainingHistorySummary(db, userId)
-      : await buildHistorySummary(db, userId, input.structureId);
+      ? buildTrainingHistorySummary(db, userId)
+      : buildHistorySummary(db, userId, input.structureId),
+    buildAthleteProfileBlock(db, userId, clerkUserId, now).catch(() => ""),
+  ]);
 
   const suggestion = await invokeSuggestSessionAgent({
     date,
     baseStructure,
     structureName,
     historySummary,
+    athleteProfile,
+    recentlySuggested,
     readiness,
     advisory,
     mode,

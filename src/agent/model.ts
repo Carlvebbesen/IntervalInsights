@@ -67,6 +67,20 @@ export const gptStrongModel = new ChatOpenAI({
   callbacks: [new TokenUsageCallback(STRONG_MODEL)],
 });
 
+/**
+ * Strong model at a non-zero temperature, for open-ended *generation* where we
+ * WANT variety across otherwise-identical inputs (suggest-session "recommended"
+ * mode: re-asking should yield a genuinely different session, not the same one).
+ * Do NOT use for extraction/classification — those must stay deterministic.
+ */
+export const gptStrongCreativeModel = new ChatOpenAI({
+  model: STRONG_MODEL,
+  temperature: 0.6,
+  maxRetries: 2,
+  timeout: 60_000,
+  callbacks: [new TokenUsageCallback(STRONG_MODEL)],
+});
+
 export const o4ReasoningModel = new ChatOpenAI({
   model: REASONING_MODEL,
   maxRetries: 2,
