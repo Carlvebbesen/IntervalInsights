@@ -78,6 +78,9 @@ export const activities = pgTable(
     gearId: text("gear_id"),
     // FK to the local `gears` table — the source of truth going forward.
     localGearId: integer("local_gear_id").references(() => gears.id),
+    // Set when a Strava `update` webhook changed the gear post-import — the
+    // user's deliberate Strava choice, which wins the pending preselect chain.
+    gearUpdatedFromStrava: boolean("gear_updated_from_strava").notNull().default(false),
     hasHeartrate: boolean("has_heart_rate"),
     title: text("title").notNull(),
     description: text("description"),
