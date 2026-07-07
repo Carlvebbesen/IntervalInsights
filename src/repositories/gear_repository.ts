@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, arrayContains, asc, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { AppError } from "../error";
 import {
   activities,
@@ -10,6 +10,7 @@ import {
   type InsertGear,
   type SelectGear,
   type TrainingBucket,
+  type TrainingType,
 } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 
@@ -471,6 +472,42 @@ export async function recentGearIdsBySurface(
     .orderBy(desc(sql`max(${activities.startDateLocal})`))
     .limit(limit);
   return rows.map((r) => r.gearId).filter((x): x is number => x !== null);
+}
+
+/** Ids of the user's active (non-retired) gears — for filtering suggestion candidates. */
+export async function activeGearIds(db: Db, userId: string): Promise<Set<number>> {
+  const rows = await db
+    .select({ id: gears.id })
+    .from(gears)
+    .where(and(eq(gears.userId, userId), eq(gears.isActive, true)));
+  return new Set(rows.map((r) => r.id));
+}
+
+/** Active gears on a surface whose `useTypes` contains the training type,
+ * most recently used first (never-used ones last, newest-created first). */
+export async function gearIdsByUseType(
+  db: Db,
+  userId: string,
+  trainingType: TrainingType,
+  surface: GearSurface,
+  limit = 3,
+): Promise<number[]> {
+  const rows = await db
+    .select({ id: gears.id })
+    .from(gears)
+    .leftJoin(activities, eq(activities.localGearId, gears.id))
+    .where(
+      and(
+        eq(gears.userId, userId),
+        eq(gears.surface, surface),
+        eq(gears.isActive, true),
+        arrayContains(gears.useTypes, [trainingType]),
+      ),
+    )
+    .groupBy(gears.id)
+    .orderBy(sql`max(${activities.startDateLocal}) desc nulls last`, desc(gears.createdAt))
+    .limit(limit);
+  return rows.map((r) => r.id);
 }
 
 /** One row per (gear, trainingType) with a count — for the per-shoe stats chips. */

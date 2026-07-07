@@ -44,6 +44,9 @@ export async function insertActivity(
     notes: string | null;
     feeling: number | null;
     gearId: string | null;
+    localGearId: number | null;
+    gearUpdatedFromStrava: boolean;
+    intervalStructureId: number | null;
   }> = {},
 ): Promise<SeededActivity> {
   const db = getDb();
@@ -65,6 +68,9 @@ export async function insertActivity(
       notes: overrides.notes ?? null,
       feeling: overrides.feeling ?? null,
       gearId: overrides.gearId ?? null,
+      localGearId: overrides.localGearId ?? null,
+      gearUpdatedFromStrava: overrides.gearUpdatedFromStrava ?? false,
+      intervalStructureId: overrides.intervalStructureId ?? null,
     })
     .returning();
   return { id: row.id, stravaActivityId: row.stravaActivityId as number };

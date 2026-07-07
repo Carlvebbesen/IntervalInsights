@@ -75,6 +75,8 @@ export const PendingActivitySchema = z
     feeling: z.number().nullable(),
     sportType: z.string(),
     localGearId: z.number().nullable(),
+    gearUpdatedFromStrava: z.boolean(),
+    intervalStructureId: z.number().nullable(),
     suggestedGearId: z.number().nullable(),
     gearSuggestions: z.array(z.number()),
   })
