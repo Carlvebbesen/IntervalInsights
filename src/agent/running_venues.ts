@@ -23,7 +23,7 @@ export const RUNNING_VENUES: RunningVenue[] = [
     token: "BSL",
     lat: 59.925024,
     lng: 10.7334,
-    radiusMeters: 180,
+    radiusMeters: 300,
   },
   {
     name: "Nordre gravlund",
@@ -33,7 +33,7 @@ export const RUNNING_VENUES: RunningVenue[] = [
     token: "NG",
     lat: 59.938758,
     lng: 10.74794,
-    radiusMeters: 180,
+    radiusMeters: 300,
   },
   {
     name: "Voldsløkka",
