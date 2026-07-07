@@ -69,6 +69,24 @@ describe("/api/v1/gear", () => {
       expect(list.data.some((g: { id: number }) => g.id === created.id)).toBe(true);
     }));
 
+  it("sets and clears the RACE default like the other buckets", () =>
+    withIdentity(identity(), async () => {
+      const created = await createGear({
+        model: "Vaporfly",
+        surface: "ROAD",
+        defaultRace: true,
+      });
+      expect(created.isDefaultRace).toBe(true);
+      expect(created.isDefaultEasy).toBe(false);
+
+      const clearRes = await app.fetch(
+        jsonReq(`http://test/api/v1/gear/${created.id}`, "PATCH", { defaultRace: false }),
+      );
+      expect(clearRes.status).toBe(200);
+      const cleared = await clearRes.json();
+      expect(cleared.isDefaultRace).toBe(false);
+    }));
+
   it("rejects a create without a model", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(

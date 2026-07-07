@@ -35,6 +35,7 @@ export const GearSchema = z
     isDefaultEasy: z.boolean(),
     isDefaultLong: z.boolean(),
     isDefaultIntervals: z.boolean(),
+    isDefaultRace: z.boolean(),
     trainingTypeCounts: z.record(z.string(), z.number()),
     createdAt: z.string().nullable(),
   })
@@ -54,6 +55,7 @@ export const CreateGearSchema = z
     defaultEasy: z.boolean().optional(),
     defaultLong: z.boolean().optional(),
     defaultIntervals: z.boolean().optional(),
+    defaultRace: z.boolean().optional(),
   })
   .openapi({ ref: "CreateGear" });
 
@@ -67,6 +69,7 @@ export const UpdateGearSchema = z
     defaultEasy: z.boolean().optional(),
     defaultLong: z.boolean().optional(),
     defaultIntervals: z.boolean().optional(),
+    defaultRace: z.boolean().optional(),
   })
   .openapi({ ref: "UpdateGear" });
 

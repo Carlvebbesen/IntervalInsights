@@ -58,6 +58,7 @@ export function toGearDto(dao: GearDao, extras: GearDtoExtras = {}): GearDto {
     isDefaultEasy: defaults.has("EASY"),
     isDefaultLong: defaults.has("LONG"),
     isDefaultIntervals: defaults.has("INTERVALS"),
+    isDefaultRace: defaults.has("RACE"),
     trainingTypeCounts: extras.trainingTypeCounts ?? {},
     createdAt: dao.createdAt.toISOString(),
   };

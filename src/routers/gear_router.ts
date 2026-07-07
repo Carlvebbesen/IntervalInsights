@@ -59,7 +59,7 @@ gearRouter.post(
   "/",
   describeRoute({
     description:
-      "Create a shoe. Optional `defaultEasy/Long/Intervals` set it as the default for those buckets on its surface.",
+      "Create a shoe. Optional `defaultEasy/Long/Intervals/Race` set it as the default for those buckets on its surface.",
     responses: {
       201: okJson(GearSchema, "Created gear"),
       400: errJson("Bad request"),

@@ -154,7 +154,7 @@ export type OtherSportType = (typeof OTHER_SPORT_TYPES)[number];
 
 export const gearTypeEnum = pgEnum("gear_type", ["SHOES"]);
 export const gearSurfaceEnum = pgEnum("gear_surface", ["ROAD", "TRAIL"]);
-export const trainingBucketEnum = pgEnum("training_bucket", ["EASY", "LONG", "INTERVALS"]);
+export const trainingBucketEnum = pgEnum("training_bucket", ["EASY", "LONG", "INTERVALS", "RACE"]);
 
 export type GearType = (typeof gearTypeEnum.enumValues)[number];
 export type GearSurface = (typeof gearSurfaceEnum.enumValues)[number];
@@ -178,6 +178,8 @@ export function trainingBucketFor(
     case "FARTLEK":
     case "TEMPO":
       return "INTERVALS";
+    case "RACE":
+      return "RACE";
     default:
       return null;
   }

@@ -16,7 +16,7 @@ type Db = IGlobalBindings["db"];
 type CreateGearInput = z.infer<typeof CreateGearSchema>;
 type UpdateGearInput = z.infer<typeof UpdateGearSchema>;
 
-const BUCKETS: TrainingBucket[] = ["EASY", "LONG", "INTERVALS"];
+const BUCKETS: TrainingBucket[] = ["EASY", "LONG", "INTERVALS", "RACE"];
 
 /** Set/clear the (bucket, surface) defaults for a gear from the create/edit toggles. */
 async function applyDefaultToggles(
@@ -24,12 +24,18 @@ async function applyDefaultToggles(
   userId: string,
   gearId: number,
   surface: GearSurface,
-  toggles: { defaultEasy?: boolean; defaultLong?: boolean; defaultIntervals?: boolean },
+  toggles: {
+    defaultEasy?: boolean;
+    defaultLong?: boolean;
+    defaultIntervals?: boolean;
+    defaultRace?: boolean;
+  },
 ): Promise<void> {
   const wanted: Record<TrainingBucket, boolean | undefined> = {
     EASY: toggles.defaultEasy,
     LONG: toggles.defaultLong,
     INTERVALS: toggles.defaultIntervals,
+    RACE: toggles.defaultRace,
   };
   for (const bucket of BUCKETS) {
     const want = wanted[bucket];
