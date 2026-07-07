@@ -6,7 +6,6 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { closePool, createTestUser, deleteTestUser, getPool } from "./helpers/db";
 import { insertActivity } from "./helpers/fixtures";
 import { buildTestApp, withIdentity } from "./helpers/test_app";
-import { clerkUsersMock } from "./setup";
 
 const app = buildTestApp(getPool());
 
@@ -14,18 +13,13 @@ let user: { id: string; clerkId: string };
 let activityId: number;
 
 beforeAll(async () => {
-  user = await createTestUser({ role: "premium" });
+  // No Strava (or intervals.icu) tokens for this suite, so strava-only routes 403.
+  user = await createTestUser({ role: "premium", strava: false, intervals: false });
   const a = await insertActivity(user.id, { title: "Mount Order Run" });
   activityId = a.id;
-  // No Strava (and no intervals.icu) tokens in Clerk metadata for this suite.
-  clerkUsersMock.getUser = async () => ({
-    privateMetadata: { strava: {} },
-    publicMetadata: {},
-  });
 });
 
 afterAll(async () => {
-  clerkUsersMock.reset();
   await deleteTestUser(user.id);
   await closePool();
 });

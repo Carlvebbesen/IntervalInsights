@@ -6,9 +6,9 @@ import { activities, gears, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
 import { triggerAnalysisByStravaId } from "./analysis_service";
-import { clerkClient } from "./clerk_client";
 import { linkActivityGearOnIngest, relinkActivityGearFromStrava } from "./gear_strava_service";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
+import { deleteProviderToken } from "./oauth_token_store";
 import { progressService } from "./progress_service";
 import { stravaApiService } from "./strava_api_service";
 import { getDbInsertActivity } from "./strava_mappers";
@@ -48,9 +48,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
 
     await context.db.update(users).set({ stravaId: null }).where(eq(users.id, user.id));
 
-    await clerkClient.users.updateUserMetadata(user.clerkId, {
-      privateMetadata: { strava: null },
-    });
+    await deleteProviderToken(context.db, user.id, "strava");
 
     logger.info({ athleteId: body.owner_id }, "Processed Strava deauthorization");
     return;

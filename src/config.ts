@@ -16,6 +16,11 @@ const envSchema = z.object({
   CLERK_PUBLISHABLE_KEY: z.string().min(1),
   OPENAI_API_KEY: z.string().min(1),
 
+  // Symmetric key for encrypting provider OAuth tokens at rest
+  // (better-auth/crypto). Railway secret; keep stable — rotating it makes every
+  // stored Strava/intervals.icu token undecryptable (users re-link).
+  TOKEN_ENC_KEY: z.string().min(32),
+
   // App
   APP_BASE_URL: z.string().url(),
   PORT: z.coerce.number().default(3000),

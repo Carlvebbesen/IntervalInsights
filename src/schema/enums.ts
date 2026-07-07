@@ -35,6 +35,8 @@ export const intervalTypeEnum = pgEnum("interval_type", [
   "RECOVERY_INTERVALS",
 ]);
 export const userRoleEnum = pgEnum("user_role_enum", ["guest", "premium", "admin"]);
+export const oauthProviderEnum = pgEnum("oauth_provider", ["strava", "intervals"]);
+export type OAuthProvider = (typeof oauthProviderEnum.enumValues)[number];
 export const targetTypeEnum = pgEnum("target_type_enum", ["time", "distance", "custom"]);
 export const scriptRunStatusEnum = pgEnum("script_run_status_enum", [
   "running",

@@ -6,9 +6,9 @@ import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import { activities, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsActivity } from "../types/intervals/IIntervalsActivity";
-import { clerkClient } from "./clerk_client";
 import { intervalsApiService } from "./intervals_api_service";
 import { mapIntervalsActivityToInsert } from "./intervals_mappers";
+import { deleteProviderToken } from "./oauth_token_store";
 import { publishSync } from "./progress_service";
 
 type EnrichmentFields = Partial<
@@ -530,13 +530,12 @@ export async function disconnectIntervals(
   context: IGlobalBindings,
   clerkUserId: string,
 ): Promise<void> {
-  await clerkClient.users.updateUserMetadata(clerkUserId, {
-    privateMetadata: { intervals: null },
-  });
-  await context.db
+  const [row] = await context.db
     .update(users)
     .set({ intervalsAthleteId: null })
-    .where(eq(users.clerkId, clerkUserId));
+    .where(eq(users.clerkId, clerkUserId))
+    .returning({ id: users.id });
+  if (row) await deleteProviderToken(context.db, row.id, "intervals");
 }
 
 export async function handleIntervalsScopeChange(

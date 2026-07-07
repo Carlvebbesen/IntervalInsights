@@ -6,30 +6,31 @@ import {
   INTERVALS_TOKEN_URL,
 } from "../routers/intervals/intervals_oauth_config";
 import { getFreshOAuthTokens } from "../services/oauth_token_refresh";
+import type { StoredOAuthToken } from "../services/oauth_token_store";
 import type { TIntervalsEnv } from "../types/IRouters";
 import type { IIntervalsTokenResponse } from "../types/intervals/IIntervalsAuth";
 
-interface IntervalsClerkData {
+interface IntervalsTokens {
   access_token: string;
   refresh_token?: string;
   expires_at?: number;
   athlete_id?: string;
 }
 
-type UserMetadata = {
-  intervals?: IntervalsClerkData;
-};
-
 export const getIntervalsAccessToken = async (clerkUserId: string): Promise<string> => {
-  const tokens = await getFreshOAuthTokens<IntervalsClerkData>({
+  const tokens = await getFreshOAuthTokens<IntervalsTokens>({
     provider: "intervals",
     clerkUserId,
-    read: (privateMetadata) => {
-      const stored = (privateMetadata as UserMetadata).intervals;
+    read: (stored) => {
       if (!stored?.access_token) {
         throw new IntervalsError(403, "Intervals.icu account not linked");
       }
-      return stored;
+      return {
+        access_token: stored.access_token,
+        refresh_token: stored.refresh_token,
+        expires_at: stored.expires_at,
+        athlete_id: stored.athlete_id,
+      };
     },
     isExpired: (tokens) =>
       tokens.expires_at != null && tokens.expires_at < Math.floor(Date.now() / 1000) + 300,
@@ -60,6 +61,7 @@ export const getIntervalsAccessToken = async (clerkUserId: string): Promise<stri
         athlete_id: tokens.athlete_id,
       };
     },
+    toStored: (tokens): StoredOAuthToken => tokens,
   });
   return tokens.access_token;
 };

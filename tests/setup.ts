@@ -22,6 +22,7 @@ const ENV_DEFAULTS: Record<string, string> = {
   APP_BASE_URL: "http://localhost:3000/",
   OPENAI_API_KEY: "sk-test-openai-dummy",
   PROGRESS_HEARTBEAT_MS: "200",
+  TOKEN_ENC_KEY: "test-token-enc-key-0123456789-abcdefghij",
 };
 
 for (const [key, value] of Object.entries(ENV_DEFAULTS)) {
