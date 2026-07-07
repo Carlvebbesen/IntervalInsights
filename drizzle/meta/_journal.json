@@ -145,8 +145,29 @@
     {
       "idx": 20,
       "version": "7",
-      "when": 1783449229139,
-      "tag": "0020_woozy_black_panther",
+      "when": 1783430027454,
+      "tag": "0020_abandoned_menace",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1783430115662,
+      "tag": "0021_closed_proemial_gods",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1783430289128,
+      "tag": "0022_medical_radioactive_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1783430858953,
+      "tag": "0023_lying_dragon_lord",
       "breakpoints": true
     }
   ]

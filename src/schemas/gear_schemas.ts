@@ -1,6 +1,6 @@
 import "zod-openapi/extend";
 import { z } from "zod";
-import { gearSurfaceEnum, gearTypeEnum } from "../schema/enums";
+import { gearSurfaceEnum, gearTypeEnum, trainingTypeEnum } from "../schema/enums";
 
 export const GearSummarySchema = z
   .object({
@@ -23,6 +23,7 @@ export const GearSchema = z
     nickname: z.string().nullable(),
     displayName: z.string(),
     surface: z.enum(gearSurfaceEnum.enumValues),
+    useTypes: z.array(z.enum(trainingTypeEnum.enumValues)),
     isActive: z.boolean(),
     retiredAt: z.string().nullable(),
     stravaGearId: z.string().nullable(),
@@ -35,6 +36,7 @@ export const GearSchema = z
     isDefaultEasy: z.boolean(),
     isDefaultLong: z.boolean(),
     isDefaultIntervals: z.boolean(),
+    isDefaultRace: z.boolean(),
     trainingTypeCounts: z.record(z.string(), z.number()),
     createdAt: z.string().nullable(),
   })
@@ -51,9 +53,11 @@ export const CreateGearSchema = z
     nickname: z.string().nullable().optional(),
     surface: z.enum(gearSurfaceEnum.enumValues),
     gearType: z.enum(gearTypeEnum.enumValues).optional(),
+    useTypes: z.array(z.enum(trainingTypeEnum.enumValues)).optional(),
     defaultEasy: z.boolean().optional(),
     defaultLong: z.boolean().optional(),
     defaultIntervals: z.boolean().optional(),
+    defaultRace: z.boolean().optional(),
   })
   .openapi({ ref: "CreateGear" });
 
@@ -63,16 +67,37 @@ export const UpdateGearSchema = z
     model: z.string().min(1).optional(),
     nickname: z.string().nullable().optional(),
     surface: z.enum(gearSurfaceEnum.enumValues).optional(),
+    useTypes: z.array(z.enum(trainingTypeEnum.enumValues)).optional(),
     isActive: z.boolean().optional(),
     defaultEasy: z.boolean().optional(),
     defaultLong: z.boolean().optional(),
     defaultIntervals: z.boolean().optional(),
+    defaultRace: z.boolean().optional(),
   })
   .openapi({ ref: "UpdateGear" });
 
 export const BrandsResponseSchema = z
   .object({ brands: z.array(z.string()) })
   .openapi({ ref: "BrandsResponse" });
+
+export const GearSignatureDefaultSchema = z
+  .object({
+    intervalStructureId: z.number(),
+    gearId: z.number(),
+  })
+  .openapi({ ref: "GearSignatureDefault" });
+
+export const GearSignatureDefaultListResponseSchema = z
+  .object({ data: z.array(GearSignatureDefaultSchema) })
+  .openapi({ ref: "GearSignatureDefaultListResponse" });
+
+export const SetGearSignatureDefaultSchema = z
+  .object({ gearId: z.number().int().positive() })
+  .openapi({ ref: "SetGearSignatureDefault" });
+
+export const ClearGearSignatureDefaultResponseSchema = z
+  .object({ success: z.boolean() })
+  .openapi({ ref: "ClearGearSignatureDefaultResponse" });
 
 export const AssignGearSchema = z
   .object({ gearId: z.number().nullable() })

@@ -1,0 +1,1 @@
+ALTER TABLE "activities" ADD COLUMN "gear_updated_from_strava" boolean DEFAULT false NOT NULL;

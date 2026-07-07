@@ -1,6 +1,6 @@
 {
-  "id": "fa6d9ecf-ad17-4b9a-bc44-3d830f72b358",
-  "prevId": "f80edbfc-d445-433e-b2f0-2ba8b3e79cf0",
+  "id": "19323e68-3e87-406c-9c30-1539651b74bd",
+  "prevId": "993bba28-4b7f-48e4-a53c-d0bf567628ff",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -90,6 +90,13 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": false
+        },
+        "gear_updated_from_strava": {
+          "name": "gear_updated_from_strava",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "has_heart_rate": {
           "name": "has_heart_rate",
@@ -1182,6 +1189,108 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.gear_signature_defaults": {
+      "name": "gear_signature_defaults",
+      "schema": "",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "interval_structure_id": {
+          "name": "interval_structure_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "gear_id": {
+          "name": "gear_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "gear_signature_defaults_gear_idx": {
+          "name": "gear_signature_defaults_gear_idx",
+          "columns": [
+            {
+              "expression": "gear_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "gear_signature_defaults_user_id_users_id_fk": {
+          "name": "gear_signature_defaults_user_id_users_id_fk",
+          "tableFrom": "gear_signature_defaults",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "gear_signature_defaults_interval_structure_id_interval_structures_id_fk": {
+          "name": "gear_signature_defaults_interval_structure_id_interval_structures_id_fk",
+          "tableFrom": "gear_signature_defaults",
+          "tableTo": "interval_structures",
+          "columnsFrom": [
+            "interval_structure_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "gear_signature_defaults_gear_id_gears_id_fk": {
+          "name": "gear_signature_defaults_gear_id_gears_id_fk",
+          "tableFrom": "gear_signature_defaults",
+          "tableTo": "gears",
+          "columnsFrom": [
+            "gear_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "gear_signature_defaults_user_id_interval_structure_id_pk": {
+          "name": "gear_signature_defaults_user_id_interval_structure_id_pk",
+          "columns": [
+            "user_id",
+            "interval_structure_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.gears": {
       "name": "gears",
       "schema": "",
@@ -1231,6 +1340,14 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'ROAD'"
+        },
+        "use_types": {
+          "name": "use_types",
+          "type": "training_type[]",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'"
         },
         "is_active": {
           "name": "is_active",

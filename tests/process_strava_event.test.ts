@@ -10,7 +10,8 @@
 
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { eq } from "drizzle-orm";
-import { activities } from "../src/schema";
+import * as gearRepo from "../src/repositories/gear_repository";
+import { activities, gears } from "../src/schema";
 import { stravaApiService } from "../src/services/strava_api_service";
 import { closePool, createTestUser, deleteTestUser, getDb } from "./helpers/db";
 import { insertActivity } from "./helpers/fixtures";
@@ -214,6 +215,100 @@ describe("processStravaWebhook (real implementation)", () => {
       );
       const [updated] = await activitiesFor(user.id);
       expect(updated.title).toBe("Renamed run");
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  const insertGear = async (userId: string, model: string, stravaGearId: string) => {
+    const [row] = await db
+      .insert(gears)
+      .values({ userId, model, surface: "ROAD", stravaGearId })
+      .returning();
+    return row;
+  };
+
+  const gearById = async (id: number) => {
+    const [row] = await db.select().from(gears).where(eq(gears.id, id));
+    return row;
+  };
+
+  it("re-links gear on an update whose gear_id changed, keeping both gears' counters", async () => {
+    const user = await createStravaUser();
+    try {
+      const stravaActivityId = nextAthleteId() * 1000;
+      const gearA = await insertGear(user.id, "Old Shoe", "g-old");
+      const gearB = await insertGear(user.id, "New Shoe", "g-new");
+      const seeded = await insertActivity(user.id, {
+        stravaActivityId,
+        distance: 5000,
+        gearId: "g-old",
+      });
+      await gearRepo.assignActivityToGear(db, user.id, seeded.id, gearA.id);
+
+      getActivityResult = stravaActivity(stravaActivityId, user.athleteId, {
+        gear_id: "g-new",
+        distance: 5000,
+      });
+      await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "update"), context);
+
+      const [row] = await activitiesFor(user.id);
+      expect(row.localGearId).toBe(gearB.id);
+      expect(row.gearUpdatedFromStrava).toBe(true);
+      expect(row.gearId).toBe("g-new");
+
+      const oldGear = await gearById(gearA.id);
+      expect(oldGear.activityCount).toBe(0);
+      expect(oldGear.maintainedDistanceMeters).toBe(0);
+      const newGear = await gearById(gearB.id);
+      expect(newGear.activityCount).toBe(1);
+      expect(newGear.maintainedDistanceMeters).toBe(5000);
+      // Attributes refreshed from the (mocked) getGear response.
+      expect(newGear.model).toBe("Mock Gear g-new");
+
+      // A gear_id change to null clears the link and decrements the counters.
+      getActivityResult = stravaActivity(stravaActivityId, user.athleteId, {
+        gear_id: null,
+        distance: 5000,
+      });
+      await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "update"), context);
+
+      const [cleared] = await activitiesFor(user.id);
+      expect(cleared.localGearId).toBeNull();
+      expect(cleared.gearUpdatedFromStrava).toBe(true);
+      const newGearAfter = await gearById(gearB.id);
+      expect(newGearAfter.activityCount).toBe(0);
+      expect(newGearAfter.maintainedDistanceMeters).toBe(0);
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  it("lazy-imports an unknown gear on update and does not flag when gear_id is unchanged", async () => {
+    const user = await createStravaUser();
+    try {
+      const stravaActivityId = nextAthleteId() * 1000;
+      const seeded = await insertActivity(user.id, { stravaActivityId, distance: 5000 });
+
+      // Unchanged gear_id (null → null): no re-link, no flag.
+      getActivityResult = stravaActivity(stravaActivityId, user.athleteId, { distance: 5000 });
+      await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "update"), context);
+      let [row] = await activitiesFor(user.id);
+      expect(row.gearUpdatedFromStrava).toBe(false);
+
+      getActivityResult = stravaActivity(stravaActivityId, user.athleteId, {
+        gear_id: "g-fresh",
+        distance: 5000,
+      });
+      await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "update"), context);
+
+      [row] = await activitiesFor(user.id);
+      expect(row.gearUpdatedFromStrava).toBe(true);
+      expect(row.localGearId).not.toBeNull();
+      const imported = await gearById(row.localGearId as number);
+      expect(imported.stravaGearId).toBe("g-fresh");
+      expect(imported.activityCount).toBe(1);
+      expect(seeded.id).toBe(row.id);
     } finally {
       await deleteTestUser(user.id);
     }

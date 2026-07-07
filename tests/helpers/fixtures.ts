@@ -1,6 +1,6 @@
 // Small factories for inserting common test rows under a given test user.
 
-import { activityEvents, activities, events } from "../../src/schema";
+import { activityEvents, activities, events, intervalStructures } from "../../src/schema";
 import { getDb } from "./db";
 
 export type SeededActivity = {
@@ -44,6 +44,9 @@ export async function insertActivity(
     notes: string | null;
     feeling: number | null;
     gearId: string | null;
+    localGearId: number | null;
+    gearUpdatedFromStrava: boolean;
+    intervalStructureId: number | null;
   }> = {},
 ): Promise<SeededActivity> {
   const db = getDb();
@@ -65,6 +68,9 @@ export async function insertActivity(
       notes: overrides.notes ?? null,
       feeling: overrides.feeling ?? null,
       gearId: overrides.gearId ?? null,
+      localGearId: overrides.localGearId ?? null,
+      gearUpdatedFromStrava: overrides.gearUpdatedFromStrava ?? false,
+      intervalStructureId: overrides.intervalStructureId ?? null,
     })
     .returning();
   return { id: row.id, stravaActivityId: row.stravaActivityId as number };
@@ -93,6 +99,26 @@ export async function insertEvent(
       startTime: overrides.startTime ?? now,
       lastOccurrence: overrides.lastOccurrence ?? now,
       status: overrides.status ?? "active",
+    })
+    .returning();
+  return row;
+}
+
+// Global table (no userId) — delete by id in the test's afterAll.
+export async function insertIntervalStructure(
+  overrides: Partial<{
+    name: string;
+    signature: string | null;
+    trainingType: "SHORT_INTERVALS" | "LONG_INTERVALS" | "TEMPO" | "FARTLEK";
+  }> = {},
+) {
+  const db = getDb();
+  const [row] = await db
+    .insert(intervalStructures)
+    .values({
+      name: overrides.name ?? "10x1000m",
+      signature: overrides.signature ?? `test-sig-${Math.random().toString(36).slice(2)}`,
+      trainingType: overrides.trainingType ?? "LONG_INTERVALS",
     })
     .returning();
   return row;

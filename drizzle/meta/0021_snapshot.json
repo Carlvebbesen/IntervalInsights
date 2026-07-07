@@ -1,6 +1,6 @@
 {
-  "id": "fa6d9ecf-ad17-4b9a-bc44-3d830f72b358",
-  "prevId": "f80edbfc-d445-433e-b2f0-2ba8b3e79cf0",
+  "id": "4ddc85fb-83da-49f0-b5c0-7e5cf418cd7e",
+  "prevId": "fa6d9ecf-ad17-4b9a-bc44-3d830f72b358",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1231,6 +1231,14 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'ROAD'"
+        },
+        "use_types": {
+          "name": "use_types",
+          "type": "training_type[]",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'"
         },
         "is_active": {
           "name": "is_active",
