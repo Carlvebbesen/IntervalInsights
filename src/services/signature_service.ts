@@ -10,7 +10,6 @@ import {
 import type { DraftAnalysisResult } from "../schema/activities";
 import type { TrainingType } from "../schema/enums";
 import {
-  determineIntervalType,
   generateIntervalSignature,
   generateStructureName,
   mapSegmentsToComponents,
@@ -132,7 +131,6 @@ export async function persistSegmentsAndStructure(
         name: generateStructureName(components),
         signature: check.signature || null,
         trainingType,
-        intervalType: determineIntervalType(segments),
       })
       .onConflictDoNothing({ target: intervalStructures.signature })
       .returning();
