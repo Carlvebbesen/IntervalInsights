@@ -171,6 +171,34 @@ export async function syncUserGearFromStrava(
   return { created, updated, linked };
 }
 
+interface GearLinkOpts {
+  stravaGearId: string;
+  sportType: string;
+  startDateLocal: Date;
+}
+
+async function importGearFromStrava(
+  db: Db,
+  userId: string,
+  accessToken: string,
+  opts: GearLinkOpts,
+): Promise<gearRepo.GearDao> {
+  const g = await stravaApiService.getGear(accessToken, opts.stravaGearId);
+  const { brand, model } = parseBrandModel(g.name);
+  return gearRepo.create(db, userId, {
+    gearType: "SHOES",
+    brand,
+    model,
+    nickname: null,
+    surface: surfaceForSportType(opts.sportType),
+    isActive: !(g.retired ?? false),
+    retiredAt: g.retired ? new Date() : null,
+    stravaGearId: opts.stravaGearId,
+    baselineDistanceMeters: g.distance ?? 0,
+    baselineDate: opts.startDateLocal,
+  });
+}
+
 /**
  * On Strava ingest, resolve (lazy-importing if needed) the local gear for an
  * activity's Strava gear id and assign it. A newly-imported gear's baseline is
@@ -182,25 +210,12 @@ export async function linkActivityGearOnIngest(
   userId: string,
   accessToken: string,
   activityId: number,
-  opts: { stravaGearId: string; sportType: string; startDateLocal: Date },
+  opts: GearLinkOpts,
 ): Promise<void> {
   let gear = await gearRepo.findByStravaGearId(db, userId, opts.stravaGearId);
   if (!gear) {
     try {
-      const g = await stravaApiService.getGear(accessToken, opts.stravaGearId);
-      const { brand, model } = parseBrandModel(g.name);
-      gear = await gearRepo.create(db, userId, {
-        gearType: "SHOES",
-        brand,
-        model,
-        nickname: null,
-        surface: surfaceForSportType(opts.sportType),
-        isActive: !(g.retired ?? false),
-        retiredAt: g.retired ? new Date() : null,
-        stravaGearId: opts.stravaGearId,
-        baselineDistanceMeters: g.distance ?? 0,
-        baselineDate: opts.startDateLocal,
-      });
+      gear = await importGearFromStrava(db, userId, accessToken, opts);
     } catch (err) {
       logger.warn(
         { err, userId, stravaGearId: opts.stravaGearId },
@@ -210,4 +225,56 @@ export async function linkActivityGearOnIngest(
     }
   }
   await gearRepo.assignActivityToGear(db, userId, activityId, gear.id);
+}
+
+/**
+ * A Strava `update` webhook changed the activity's gear: re-resolve the local
+ * gear (lazy-importing like ingest), refresh a known gear's attributes from
+ * Strava, and move the activity onto it via assignActivityToGear (which keeps
+ * both gears' counters correct). Null clears the link. Returns whether the
+ * re-link was applied — false only when a lazy import failed.
+ */
+export async function relinkActivityGearFromStrava(
+  db: Db,
+  userId: string,
+  accessToken: string,
+  activityId: number,
+  opts: { stravaGearId: string | null; sportType: string; startDateLocal: Date },
+): Promise<boolean> {
+  if (opts.stravaGearId === null) {
+    await gearRepo.assignActivityToGear(db, userId, activityId, null);
+    return true;
+  }
+
+  const linkOpts = { ...opts, stravaGearId: opts.stravaGearId };
+  let gear = await gearRepo.findByStravaGearId(db, userId, opts.stravaGearId);
+  if (!gear) {
+    try {
+      gear = await importGearFromStrava(db, userId, accessToken, linkOpts);
+    } catch (err) {
+      logger.warn(
+        { err, userId, stravaGearId: opts.stravaGearId },
+        "lazy gear import failed on webhook update; keeping existing link",
+      );
+      return false;
+    }
+  } else {
+    try {
+      const g = await stravaApiService.getGear(accessToken, opts.stravaGearId);
+      const { brand, model } = parseBrandModel(g.name);
+      await gearRepo.update(db, userId, gear.id, {
+        brand,
+        model,
+        isActive: !(g.retired ?? false),
+        retiredAt: g.retired ? (gear.retiredAt ?? new Date()) : null,
+      });
+    } catch (err) {
+      logger.warn(
+        { err, userId, stravaGearId: opts.stravaGearId },
+        "gear attribute refresh failed on webhook update; linking anyway",
+      );
+    }
+  }
+  await gearRepo.assignActivityToGear(db, userId, activityId, gear.id);
+  return true;
 }
