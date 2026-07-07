@@ -21,6 +21,20 @@ export const SEGMENTER_CONFIG = {
     boundaryHrFraction: 0.6,
     /** Per-rep mode: a work lap is one whose avg speed ≥ frac·max-lap-speed. */
     perRepSpeedFraction: 0.75,
+    /**
+     * Trailing-cooldown guard (per-rep): a slow jog after the last rep can sit
+     * just above `perRepSpeedFraction`×max and be miscounted as a work rep (e.g.
+     * a 1900 m @ 4:50/km cooldown after 5×~1500 m @ 3:50/km). Drop the FINAL work
+     * lap only when it is BOTH slower than `trailingCooldownSpeedFraction`× the
+     * median speed of the other reps AND longer than
+     * `trailingCooldownDurationFraction`× their median duration — both required so
+     * a faster finisher or a mildly-fading final rep (incl. an ascending pyramid's
+     * long last rep) is never dropped. Only fires with ≥ `trailingCooldownMinReps`
+     * remaining reps.
+     */
+    trailingCooldownSpeedFraction: 0.85,
+    trailingCooldownDurationFraction: 1.25,
+    trailingCooldownMinReps: 3,
   },
 
   /** Windowed speed derivation (`deriveSpeed`). */

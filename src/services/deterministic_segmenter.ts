@@ -147,13 +147,36 @@ export function classifyLaps(
 
   const speeds = meaningful.map((l) => l.average_speed ?? 0);
   const thr = CFG.laps.perRepSpeedFraction * Math.max(...speeds);
-  const work = meaningful.filter((_, i) => speeds[i] >= thr);
+  const work = dropTrailingCooldown(meaningful.filter((_, i) => speeds[i] >= thr));
   return {
     mode: "per-rep",
     ws: lapWindow(work[0], time).start,
     we: lapWindow(work[work.length - 1], time).end,
     workLaps: work,
   };
+}
+
+const lapDurationSec = (l: Lap): number => l.moving_time ?? l.elapsed_time ?? 0;
+
+/**
+ * Drop a trailing cooldown lap that slipped past the per-rep speed gate. A slow
+ * jog after the final rep can sit just above `perRepSpeedFraction`×maxSpeed, so
+ * it lands in the work set and inflates the rep count (observed: a 1900 m @
+ * 4:50/km cooldown counted as a 6th rep after a 5×NG session). It is removed
+ * only when it is BOTH clearly slower AND clearly longer than the other reps —
+ * both required so a faster finisher or a mildly-fading last rep survives.
+ */
+function dropTrailingCooldown(work: Lap[]): Lap[] {
+  if (work.length < CFG.laps.trailingCooldownMinReps + 1) return work;
+  const rest = work.slice(0, -1);
+  const last = work[work.length - 1];
+  const medSpeed = median(rest.map((l) => l.average_speed ?? 0));
+  const medDur = median(rest.map(lapDurationSec));
+  const slower =
+    medSpeed > 0 && (last.average_speed ?? 0) < CFG.laps.trailingCooldownSpeedFraction * medSpeed;
+  const longer =
+    medDur > 0 && lapDurationSec(last) > CFG.laps.trailingCooldownDurationFraction * medDur;
+  return slower && longer ? rest : work;
 }
 
 /**
