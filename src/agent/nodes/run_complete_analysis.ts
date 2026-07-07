@@ -48,7 +48,7 @@ export async function runCompleteAnalysis(
 
   await db
     .update(activities)
-    .set({ analysisStatus: "ongoing_completed" })
+    .set({ analysisStatus: "ongoing_completed", analysisStartedAt: new Date() })
     .where(eq(activities.id, state.activityId));
 
   const boundaries: SegmentBoundary[] = state.userEditedSegments.length

@@ -124,8 +124,7 @@ export function mapIntervalsToLaps(intervals: IIntervalsInterval[]): Lap[] {
   return intervals.map((iv, idx) => {
     const movingTime = iv.moving_time ?? 0;
     const elapsedTime = iv.elapsed_time ?? movingTime;
-    const averageSpeed =
-      iv.average_speed ?? (movingTime > 0 ? (iv.distance ?? 0) / movingTime : 0);
+    const averageSpeed = iv.average_speed ?? (movingTime > 0 ? (iv.distance ?? 0) / movingTime : 0);
     return {
       id: iv.id,
       resource_state: 2,

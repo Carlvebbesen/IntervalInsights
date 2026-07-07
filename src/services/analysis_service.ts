@@ -1,10 +1,11 @@
 import { Command } from "@langchain/langgraph";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNull, notInArray, or } from "drizzle-orm";
 import { buildAnalysisGraph, resetAnalysisThread } from "../agent/analysis_graph";
 import type { SegmentBoundary } from "../agent/graph_state";
-import { logger } from "../logger";
+import { type Logger, logger } from "../logger";
 import { activities, users } from "../schema";
 import {
+  ACTIVE_RUN_STATUSES,
   type AnalysisStatus,
   SKIP_RESTART_STATUSES,
   SKIP_START_STATUSES,
@@ -31,6 +32,26 @@ function toDoneStatus(status: AnalysisStatus | null | undefined, fallback: DoneS
   return fallback;
 }
 
+// Flip to `error` only while the run is still in an in-flight status: a late
+// failure (e.g. after persistResults wrote `completed`, or a duplicate resume
+// on a finished thread) must not clobber a terminal status and trigger the
+// requeue's auto-rerun.
+async function markErrorIfStatusIn(
+  db: IGlobalBindings["db"],
+  activityId: number,
+  statuses: AnalysisStatus[],
+  log: Logger,
+): Promise<void> {
+  try {
+    await db
+      .update(activities)
+      .set({ analysisStatus: "error" })
+      .where(and(eq(activities.id, activityId), inArray(activities.analysisStatus, statuses)));
+  } catch (dbErr) {
+    log.error({ err: dbErr }, "Could not set error status in DB");
+  }
+}
+
 async function getUserContext(
   db: IGlobalBindings["db"],
   userId: string,
@@ -52,21 +73,37 @@ export const startAnalysis = async (
   force = false,
 ): Promise<void> => {
   const log = logger.child({ fn: "startAnalysis", activityId, force });
-  const current = await db.query.activities.findFirst({
-    where: eq(activities.id, activityId),
-    columns: { analysisStatus: true },
-  });
-  // `force` is the user-driven re-analyze path (e.g. from the activity details
-  // view): re-run even on a completed / sync-imported activity. The thread reset
-  // below + the persist node's delete-before-insert make this a clean overwrite.
-  if (!force && current?.analysisStatus && SKIP_START_STATUSES.has(current.analysisStatus)) {
-    log.info({ status: current.analysisStatus }, "skipping — already in this status");
+  // Atomic claim: flip to ongoing_init only if no other starter got there first.
+  // A read-then-invoke check leaves a window where two starters (webhook +
+  // manual + requeue) both pass, then each resetAnalysisThread deletes the
+  // other's checkpoints mid-run. `force` is the user-driven re-analyze path
+  // (details view): it may re-run a completed/paused activity, but never one
+  // whose graph is actively running.
+  const blockedStatuses: AnalysisStatus[] = force
+    ? [...ACTIVE_RUN_STATUSES]
+    : [...SKIP_START_STATUSES];
+  const claimed = await db
+    .update(activities)
+    .set({ analysisStatus: "ongoing_init", analysisStartedAt: new Date() })
+    .where(
+      and(
+        eq(activities.id, activityId),
+        or(
+          isNull(activities.analysisStatus),
+          notInArray(activities.analysisStatus, blockedStatuses),
+        ),
+      ),
+    )
+    .returning({ id: activities.id });
+  if (claimed.length === 0) {
+    log.info("skipping — another run already claimed or completed this activity");
     return;
   }
 
   const userCtx = await getUserContext(db, userId);
   if (!userCtx) {
-    log.error({ userId }, "user not found — aborting");
+    log.error({ userId }, "user not found — releasing claim");
+    await markErrorIfStatusIn(db, activityId, ["ongoing_init"], log);
     return;
   }
 
@@ -107,14 +144,7 @@ export const startAnalysis = async (
     });
   } catch (err) {
     log.error({ err }, "Error in startAnalysis");
-    try {
-      await db
-        .update(activities)
-        .set({ analysisStatus: "error" })
-        .where(eq(activities.id, activityId));
-    } catch (dbErr) {
-      log.error({ err: dbErr }, "Could not set error status in DB");
-    }
+    await markErrorIfStatusIn(db, activityId, ["pending", "ongoing_init"], log);
     await progressService.publish(userId, {
       type: "done",
       data: { id: activityId, analysisStatus: "error" },
@@ -185,33 +215,37 @@ export const resumeAnalysis = async (
   }
 
   log.info("graph-path: invoking Command resume");
+  const graph = await buildAnalysisGraph();
+  const graphConfig = {
+    configurable: {
+      thread_id: String(activityId),
+      db,
+      stravaAccessToken,
+      clerkUserId: userCtx.clerkId,
+      intervalsAthleteId: userCtx.intervalsAthleteId,
+    },
+  };
+
+  // Pre-check OUTSIDE the try: a duplicate/late resume (double-tap, client
+  // retry after completion) is a request problem, not a run failure — it must
+  // map to 400 and never flip a `completed` activity to `error` (which would
+  // trigger the requeue's full auto-rerun).
+  const before = await graph.getState(graphConfig);
+  const beforeInterrupts = before.tasks.reduce((sum, t) => sum + t.interrupts.length, 0);
+  const hasPendingWork = before.next.length > 0;
+  log.info({ next: before.next, taskInterrupts: beforeInterrupts }, "pre-invoke graph state");
+  if (!hasPendingWork && beforeInterrupts === 0) {
+    throw new ResumeValidationError(
+      `Cannot resume activity ${activityId} — thread has no pending interrupt. The analysis may already be completed or was never started.`,
+    );
+  }
+
+  await progressService.publish(current.userId, {
+    type: "progress",
+    data: { id: activityId, kind: "analysis", phase: "processing" },
+  });
+
   try {
-    const graph = await buildAnalysisGraph();
-    const graphConfig = {
-      configurable: {
-        thread_id: String(activityId),
-        db,
-        stravaAccessToken,
-        clerkUserId: userCtx.clerkId,
-        intervalsAthleteId: userCtx.intervalsAthleteId,
-      },
-    };
-
-    const before = await graph.getState(graphConfig);
-    const beforeInterrupts = before.tasks.reduce((sum, t) => sum + t.interrupts.length, 0);
-    const hasPendingWork = before.next.length > 0;
-    log.info({ next: before.next, taskInterrupts: beforeInterrupts }, "pre-invoke graph state");
-    if (!hasPendingWork && beforeInterrupts === 0) {
-      throw new Error(
-        `Cannot resume activity ${activityId} — thread has no pending interrupt (next=[], no tasks). The checkpoint may be missing or the thread already finished.`,
-      );
-    }
-
-    await progressService.publish(current.userId, {
-      type: "progress",
-      data: { id: activityId, kind: "analysis", phase: "processing" },
-    });
-
     await graph.invoke(
       new Command({
         resume: { notes, sets, trainingType: finalTrainingType, feeling, editedSegments },
@@ -219,39 +253,38 @@ export const resumeAnalysis = async (
       graphConfig,
     );
     log.info("graph.invoke returned without throwing");
-
-    const after = await graph.getState(graphConfig);
-    const afterInterrupts = after.tasks.reduce((sum, t) => sum + t.interrupts.length, 0);
-    if (afterInterrupts > 0) {
-      throw new Error(
-        `Graph resume did not progress activity ${activityId} — still paused at interrupt (next=[${after.next.join(",")}])`,
-      );
-    }
-
-    const final = await db.query.activities.findFirst({
-      where: eq(activities.id, activityId),
-      columns: { analysisStatus: true },
-    });
-    await progressService.publish(current.userId, {
-      type: "done",
-      data: { id: activityId, analysisStatus: toDoneStatus(final?.analysisStatus, "completed") },
-    });
   } catch (err) {
     log.error({ err }, "FAILED");
-    try {
-      await db
-        .update(activities)
-        .set({ analysisStatus: "error" })
-        .where(eq(activities.id, activityId));
-    } catch (dbErr) {
-      log.error({ err: dbErr }, "Could not set error status in DB");
-    }
+    await markErrorIfStatusIn(db, activityId, ["initial", "ongoing_completed"], log);
     await progressService.publish(current.userId, {
       type: "done",
       data: { id: activityId, analysisStatus: "error" },
     });
     throw err;
   }
+
+  const after = await graph.getState(graphConfig);
+  const afterInterrupts = after.tasks.reduce((sum, t) => sum + t.interrupts.length, 0);
+  const final = await db.query.activities.findFirst({
+    where: eq(activities.id, activityId),
+    columns: { analysisStatus: true },
+  });
+  if (afterInterrupts > 0) {
+    // Still parked at an interrupt: the resume didn't progress, but nothing
+    // failed server-side — leave the status alone so the user can resubmit.
+    await progressService.publish(current.userId, {
+      type: "done",
+      data: { id: activityId, analysisStatus: toDoneStatus(final?.analysisStatus, "initial") },
+    });
+    throw new Error(
+      `Graph resume did not progress activity ${activityId} — still paused at interrupt (next=[${after.next.join(",")}])`,
+    );
+  }
+
+  await progressService.publish(current.userId, {
+    type: "done",
+    data: { id: activityId, analysisStatus: toDoneStatus(final?.analysisStatus, "completed") },
+  });
 };
 
 export const startAnalysisByStravaId = async (

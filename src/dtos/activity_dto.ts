@@ -1,16 +1,11 @@
 import type { z } from "zod";
 import type { ActivityDao, ActivityListRow } from "../repositories/activity_repository";
-import type {
-  ActivityListItemSchema,
-  ActivitySchema,
-  GearStatsItemSchema,
-} from "../schemas/api_schemas";
+import type { ActivityListItemSchema, ActivitySchema } from "../schemas/api_schemas";
 import type { ActivityEventDto } from "./event_dto";
 import type { GearSummaryDto } from "./gear_dto";
 
 export type ActivityDto = z.infer<typeof ActivitySchema>;
 export type ActivityListItemDto = z.infer<typeof ActivityListItemSchema>;
-export type GearStatsItemDto = z.infer<typeof GearStatsItemSchema>;
 
 const iso = (d: Date | null | undefined): string | null => d?.toISOString() ?? null;
 

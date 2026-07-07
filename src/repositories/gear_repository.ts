@@ -2,9 +2,9 @@ import { and, asc, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm"
 import { AppError } from "../error";
 import {
   activities,
-  gearDefaults,
   type GearSurface,
   type GearType,
+  gearDefaults,
   gears,
   type InsertGear,
   type SelectGear,
@@ -219,11 +219,7 @@ export async function clearDefault(
     );
 }
 
-export async function clearDefaultsForGear(
-  db: Db,
-  userId: string,
-  gearId: number,
-): Promise<void> {
+export async function clearDefaultsForGear(db: Db, userId: string, gearId: number): Promise<void> {
   await db
     .delete(gearDefaults)
     .where(and(eq(gearDefaults.userId, userId), eq(gearDefaults.gearId, gearId)));

@@ -31,7 +31,7 @@ beforeEach(async () => {
   patch("getActivityWithMeta", (async () => ({
     data: { description: "" },
     rateLimit: null,
-  })) as typeof stravaApiService.getActivityWithMeta);
+  })) as unknown as typeof stravaApiService.getActivityWithMeta);
 });
 
 afterEach(async () => {

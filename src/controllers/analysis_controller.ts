@@ -2,6 +2,7 @@ import type { z } from "zod";
 import type { SegmentBoundary } from "../agent/graph_state";
 import type { workoutSet } from "../agent/initial_analysis_agent";
 import { invokeParseIntervalsAgent } from "../agent/parse_intervals_agent";
+import { runInBackground } from "../background";
 import { AppError } from "../error";
 import type { Logger } from "../logger";
 import { recordAnalysisRun, recordTrainingTypeChange } from "../otel";
@@ -11,8 +12,8 @@ import {
   type AnalysisStatus,
   type GearSurface,
   surfaceForSportType,
-  trainingBucketFor,
   type TrainingType,
+  trainingBucketFor,
 } from "../schema";
 import type { PendingActivitySchema } from "../schemas/api_schemas";
 import { ResumeValidationError, resumeAnalysis, startAnalysis } from "../services/analysis_service";
@@ -78,21 +79,27 @@ export async function getPending(
   );
 }
 
-export function startActivityAnalysis(
+export async function startActivityAnalysis(
   db: Db,
   accessToken: string | undefined,
   activityId: number,
-  stravaActivityId: number | null | undefined,
   userId: string,
   force = false,
-): { success: true } {
+): Promise<{ success: true }> {
   if (!accessToken) {
     throw new AppError(400, "Access token missing");
   }
+  const owned = await activityRepo.requireOwnedActivity(db, userId, activityId);
   // Fire-and-forget — the pipeline runs in the background. `force` re-runs an
   // already-analysed / sync-imported activity (overwrites its draft + segments).
+  // The Strava id comes from the owned row, never the request body: a mismatched
+  // client value would write another activity's streams onto this row.
   recordAnalysisRun({ phase: "start", trigger: force ? "reanalyze" : "manual" });
-  startAnalysis(db, accessToken, activityId, stravaActivityId, userId, force);
+  runInBackground(
+    "analysis.start",
+    () => startAnalysis(db, accessToken, activityId, owned.stravaActivityId, userId, force),
+    { attributes: { "activity.id": activityId, "user.id": userId } },
+  );
   return { success: true };
 }
 
@@ -108,6 +115,7 @@ export interface ResumeAnalysisInput {
 export async function resumeActivityAnalysis(
   db: Db,
   accessToken: string | undefined,
+  userId: string,
   input: ResumeAnalysisInput,
   logger: Logger,
 ): Promise<{ success: true }> {
@@ -127,6 +135,7 @@ export async function resumeActivityAnalysis(
   if (!accessToken) {
     throw new AppError(400, "Access token missing");
   }
+  await activityRepo.requireOwnedActivity(db, userId, activityId);
   try {
     await resumeAnalysis(
       db,

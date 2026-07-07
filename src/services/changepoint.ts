@@ -111,7 +111,10 @@ export function noiseVariance(values: number[]): number {
  * segments). Self-adjusts: noisy treadmill data raises σ² (fewer false reps),
  * clean track data lowers it (resolves short rests).
  */
-export function defaultPenalty(values: number[], scale = SEGMENTER_CONFIG.pelt.penaltyScale): number {
+export function defaultPenalty(
+  values: number[],
+  scale = SEGMENTER_CONFIG.pelt.penaltyScale,
+): number {
   const sigma2 = noiseVariance(values);
   const n = Math.max(2, values.length);
   return scale * Math.max(sigma2, 1e-9) * Math.log(n);

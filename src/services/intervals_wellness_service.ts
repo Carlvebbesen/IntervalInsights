@@ -12,6 +12,7 @@ import type {
   NumericMetric,
 } from "../types/intervals/IIntervalsWellness";
 import { intervalsApiService } from "./intervals_api_service";
+import { withIntervalsToken } from "./intervals_token_helper";
 import { toISODate } from "./utils";
 
 export async function fetchWellnessSummary(
@@ -249,16 +250,17 @@ export async function fetchWellnessSeries(
   oldest: string,
   newest: string,
 ): Promise<IIntervalsWellnessSeriesResult> {
-  let accessToken: string;
-  try {
-    accessToken = await getIntervalsAccessToken(clerkUserId);
-  } catch (err) {
-    if (err instanceof IntervalsError && (err.status === 403 || err.status === 401)) {
-      return { status: "not_linked", data: null };
-    }
-    throw err;
-  }
+  const result = await withIntervalsToken(clerkUserId, (accessToken) =>
+    fetchWellnessSeriesWithToken(accessToken, oldest, newest),
+  );
+  return result.status === "not_linked" ? { status: "not_linked", data: null } : result.data;
+}
 
+async function fetchWellnessSeriesWithToken(
+  accessToken: string,
+  oldest: string,
+  newest: string,
+): Promise<IIntervalsWellnessSeriesResult> {
   const records = await intervalsApiService.getWellness(accessToken, oldest, newest);
   if (records.length === 0) return { status: "no_data", data: null };
 

@@ -41,7 +41,7 @@ describe("/api/activity", () => {
   it("POST / returns paginated list", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/activity", {
+        new Request("http://test/api/v1/activity", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ page: 1 }),
@@ -57,7 +57,7 @@ describe("/api/activity", () => {
   it("POST / supports filters", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/activity", {
+        new Request("http://test/api/v1/activity", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -74,7 +74,7 @@ describe("/api/activity", () => {
 
   it("GET /:id returns activity with linked events", () =>
     withIdentity(identity(), async () => {
-      const res = await app.fetch(new Request(`http://test/api/activity/${activityId}`));
+      const res = await app.fetch(new Request(`http://test/api/v1/activity/${activityId}`));
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.id).toBe(activityId);
@@ -84,83 +84,81 @@ describe("/api/activity", () => {
 
   it("GET /:id with bad id returns 400", () =>
     withIdentity(identity(), async () => {
-      const res = await app.fetch(new Request("http://test/api/activity/abc"));
+      const res = await app.fetch(new Request("http://test/api/v1/activity/abc"));
       expect(res.status).toBe(400);
     }));
 
   it("GET /:id 404s for foreign activity", () =>
     withIdentity(identity(), async () => {
-      const res = await app.fetch(new Request("http://test/api/activity/99999999"));
+      const res = await app.fetch(new Request("http://test/api/v1/activity/99999999"));
       expect(res.status).toBe(404);
     }));
 
   it("GET /:id/segments returns intervalSegments array", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request(`http://test/api/activity/${activityId}/segments`),
+        new Request(`http://test/api/v1/activity/${activityId}/segments`),
       );
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(Array.isArray(body.intervalSegments)).toBe(true);
     }));
 
-  it("POST /update updates trainingType + notes", () =>
+  const patchReq = (id: number | string, body: unknown) =>
+    new Request(`http://test/api/v1/activity/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("PATCH /:id updates trainingType", () =>
     withIdentity(identity(), async () => {
-      const res = await app.fetch(
-        new Request("http://test/api/activity/update", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: activityId,
-            trainingType: "TEMPO",
-            notes: "felt easy",
-          }),
-        }),
-      );
+      const res = await app.fetch(patchReq(activityId, { trainingType: "TEMPO" }));
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.trainingType).toBe("TEMPO");
+    }));
+
+  it("PATCH /:id updates notes", () =>
+    withIdentity(identity(), async () => {
+      const res = await app.fetch(patchReq(activityId, { notes: "felt easy" }));
+      expect(res.status).toBe(200);
+      const body = await res.json();
       expect(body.notes).toBe("felt easy");
     }));
 
-  it("POST /update with no fields returns 400", () =>
+  it("PATCH /:id updates feeling", () =>
     withIdentity(identity(), async () => {
-      const res = await app.fetch(
-        new Request("http://test/api/activity/update", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: activityId }),
-        }),
-      );
+      const res = await app.fetch(patchReq(activityId, { feeling: 4 }));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.feeling).toBe(4);
+    }));
+
+  it("PATCH /:id with no fields returns 400", () =>
+    withIdentity(identity(), async () => {
+      const res = await app.fetch(patchReq(activityId, {}));
       expect(res.status).toBe(400);
     }));
 
-  it("POST /update on foreign activity returns 404", () =>
+  it("PATCH /:id rejects an invalid trainingType", () =>
     withIdentity(identity(), async () => {
-      const res = await app.fetch(
-        new Request("http://test/api/activity/update", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: 99999999, notes: "x" }),
-        }),
-      );
+      const res = await app.fetch(patchReq(activityId, { trainingType: "BOGUS" }));
+      expect(res.status).toBe(400);
+    }));
+
+  it("PATCH /:id on a foreign activity returns 404", () =>
+    withIdentity(identity(), async () => {
+      const res = await app.fetch(patchReq(99999999, { notes: "x" }));
       expect(res.status).toBe(404);
     }));
 });
 
 describe("/api/activity (Strava-backed)", () => {
-  it("GET /gear/stats returns stats array", () =>
-    withIdentity(identity(), async () => {
-      const res = await app.fetch(new Request("http://test/api/activity/gear/stats"));
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(Array.isArray(body.stats)).toBe(true);
-    }));
-
   it("GET /:id/laps returns laps array", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request(`http://test/api/activity/${activityId}/laps`),
+        new Request(`http://test/api/v1/activity/${activityId}/laps`),
       );
       expect(res.status).toBe(200);
       const body = await res.json();
@@ -170,39 +168,10 @@ describe("/api/activity (Strava-backed)", () => {
   it("GET /:id/splits returns splits_metric array", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request(`http://test/api/activity/${activityId}/splits`),
+        new Request(`http://test/api/v1/activity/${activityId}/splits`),
       );
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(Array.isArray(body.splits_metric)).toBe(true);
-    }));
-
-  it("GET /:id/heartrate returns 403 without consent", async () => {
-    const noConsentUser = await createTestUser({ processHeartRate: false });
-    const seeded = await insertActivity(noConsentUser.id);
-    try {
-      const res = await withIdentity(
-        {
-          userId: noConsentUser.id,
-          clerkUserId: noConsentUser.clerkId,
-          role: "premium",
-        },
-        () =>
-          app.fetch(
-            new Request(`http://test/api/activity/${seeded.id}/heartrate`),
-          ),
-      );
-      expect(res.status).toBe(403);
-    } finally {
-      await deleteTestUser(noConsentUser.id);
-    }
-  });
-
-  it("GET /:id/heartrate returns 200 with consent", () =>
-    withIdentity(identity(), async () => {
-      const res = await app.fetch(
-        new Request(`http://test/api/activity/${activityId}/heartrate`),
-      );
-      expect(res.status).toBe(200);
     }));
 });

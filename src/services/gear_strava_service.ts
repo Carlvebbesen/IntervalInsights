@@ -85,7 +85,10 @@ export async function syncUserGearFromStrava(
       shoeData.set(s.id, { name: s.name, distance: s.distance ?? 0, retired: s.retired ?? false });
     }
   } catch (err) {
-    logger.warn({ err, userId }, "getAthlete failed during gear sync; using activity gear ids only");
+    logger.warn(
+      { err, userId },
+      "getAthlete failed during gear sync; using activity gear ids only",
+    );
   }
 
   // 2. Supplement with gear referenced by the user's running activities (catches

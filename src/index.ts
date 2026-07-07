@@ -80,7 +80,7 @@ app.use(
       const level = status >= 500 ? "error" : status >= 400 ? "warn" : "info";
       // streamSSE resolves the handler at stream-open, so the elapsed here is the
       // open time, not the connection lifetime — label it so it isn't misread.
-      const isStream = c.req.path === "/api/progress/stream";
+      const isStream = c.req.path === "/api/v1/progress/stream";
       log[level](
         {
           method: c.req.method,
@@ -103,7 +103,6 @@ app.use(
     allowHeaders: ["Content-Type", "Authorization"],
     exposeHeaders: ["Content-Length", "X-Request-Id"],
     maxAge: 3600,
-    credentials: true,
   }),
 );
 app.use("/api/*", async (c, next) => {
@@ -112,7 +111,7 @@ app.use("/api/*", async (c, next) => {
 });
 app.route("/api", publicRouter);
 app.route("/", mcpRouter);
-if (process.env.NODE_ENV !== "production") {
+if (config.NODE_ENV !== "production") {
   app.get(
     "/api/openapi.json",
     openAPIRouteHandler(app, {
@@ -134,32 +133,37 @@ if (process.env.NODE_ENV !== "production") {
 app.use("/api/*", clerkMiddleware());
 app.use("/api/*", authGuard);
 
-app.route("/api/activity", activitiesRouter);
-app.route("/api/activity", stravaActivitiesRouter);
-app.route("/api/agents", suggestSessionRouter);
-app.route("/api/agents", agentsRouter);
-app.route("/api/strava", stravaEntryRouter);
-app.route("/api/interval-structures", intervalStructureRouter);
-app.route("/api/dashboard", dashboardRouter);
-app.route("/api/heart-rate", heartRateRouter);
-app.route("/api/events", eventsRouter);
-app.route("/api/gear", gearRouter);
-app.route("/api/gear", gearStravaRouter);
-app.route("/api/admin", adminRouter);
-app.route("/api/user", userRouter);
-app.route("/api/intervals", intervalsEntryRouter);
-app.route("/api/chat", trainingRouter);
-app.route("/api/progress", progressRouter);
+const v1 = new Hono<TGlobalEnv>();
+// Mount-order invariant: for each shared prefix the plain router MUST mount
+// before its strava-middleware twin (activity, agents, gear), or every plain
+// route would silently require a Strava link. Guarded by tests/mount_order.test.ts.
+v1.route("/activity", activitiesRouter);
+v1.route("/activity", stravaActivitiesRouter);
+v1.route("/agents", suggestSessionRouter); // order matters: before agentsRouter
+v1.route("/agents", agentsRouter);
+v1.route("/strava", stravaEntryRouter);
+v1.route("/interval-structures", intervalStructureRouter);
+v1.route("/dashboard", dashboardRouter);
+v1.route("/heart-rate", heartRateRouter);
+v1.route("/events", eventsRouter);
+v1.route("/gear", gearRouter);
+v1.route("/gear", gearStravaRouter);
+v1.route("/admin", adminRouter);
+v1.route("/user", userRouter);
+v1.route("/intervals", intervalsEntryRouter);
+v1.route("/chat", trainingRouter);
+v1.route("/progress", progressRouter);
+// Transitional dual-mount: also serve the authed routers at the legacy unversioned
+// /api/* so already-installed app builds (which pin BACKEND_URL=…/api/ at compile
+// time) keep working during the /api/v1 rollout. Registered AFTER publicRouter so the
+// public webhook/health/legal paths still win their exact routes. Remove this line once
+// legacy /api/* traffic drains — see docs/backend-followups-plan.md, Phase 0.
+app.route("/api", v1);
+app.route("/api/v1", v1);
 
 // 404 handler
 app.notFound((c) => {
-  return c.json(
-    {
-      status: 404,
-      message: "Not Found",
-    },
-    404,
-  );
+  return c.json({ error: "Not Found" }, 404);
 });
 app.onError((err, c) => {
   const span = trace.getActiveSpan();

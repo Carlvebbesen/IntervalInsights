@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, mock } from "bun:test";
-import { eq } from "drizzle-orm";
-import { activities, intervalSegments } from "../src/schema";
-import { closePool, createTestUser, deleteTestUser, getDb, getPool } from "./helpers/db";
+import { closePool, createTestUser, deleteTestUser, getPool } from "./helpers/db";
 import { insertActivity } from "./helpers/fixtures";
 import { buildTestApp, withIdentity } from "./helpers/test_app";
 
@@ -41,115 +39,17 @@ function fullStreams() {
 }
 
 let user: { id: string; clerkId: string };
-let noConsentUser: { id: string; clerkId: string };
-let draftActivityId: number;
-let noConsentDraftActivityId: number;
 let putActivityId: number;
-let patchActivityId: number;
-let warmupSegId: number;
-let intervalSegId: number;
-
-const proposedSegments = [
-  {
-    segmentIndex: 0,
-    setGroupIndex: 0,
-    type: "WARMUP",
-    timeSeriesEndTime: 20,
-    actualDistance: 60,
-    actualDuration: 20,
-    avgHeartRate: 110,
-    targetType: "custom",
-    targetValue: 0,
-    targetPace: null,
-  },
-  {
-    segmentIndex: 1,
-    setGroupIndex: 1,
-    type: "INTERVALS",
-    timeSeriesEndTime: 60,
-    actualDistance: 120,
-    actualDuration: 40,
-    avgHeartRate: 140,
-    targetType: "distance",
-    targetValue: 1000,
-    targetPace: 3.2,
-  },
-] as const;
-
-async function seedDraft(activityId: number) {
-  await getDb()
-    .update(activities)
-    .set({
-      analysisStatus: "initial",
-      draftAnalysisResult: {
-        classification_reasoning: "1000m reps; 1000 >= 800 -> LONG_INTERVALS",
-        training_type: "LONG_INTERVALS",
-        confidence_score: 0.9,
-        proposedSegments: [...proposedSegments],
-      },
-    })
-    .where(eq(activities.id, activityId));
-}
 
 beforeAll(async () => {
   user = await createTestUser({ role: "premium", processHeartRate: true });
-  noConsentUser = await createTestUser({ role: "premium", processHeartRate: false });
-
-  draftActivityId = (
-    await insertActivity(user.id, { trainingType: "LONG_INTERVALS", title: "Draft" })
-  ).id;
-  await seedDraft(draftActivityId);
-
-  noConsentDraftActivityId = (
-    await insertActivity(noConsentUser.id, { trainingType: "LONG_INTERVALS", title: "DraftNC" })
-  ).id;
-  await seedDraft(noConsentDraftActivityId);
-
   putActivityId = (
     await insertActivity(user.id, { trainingType: "LONG_INTERVALS", title: "Put" })
   ).id;
-
-  patchActivityId = (
-    await insertActivity(user.id, { trainingType: "LONG_INTERVALS", title: "Patch" })
-  ).id;
-  const seeded = await getDb()
-    .insert(intervalSegments)
-    .values([
-      {
-        activityId: patchActivityId,
-        segmentIndex: 0,
-        setGroupIndex: 0,
-        type: "WARMUP",
-        targetType: "custom",
-        targetValue: 0,
-        targetPace: null,
-        timeSeriesEndTime: 20,
-        actualDistance: 60,
-        actualDuration: 20,
-        avgHeartRate: 110,
-      },
-      {
-        activityId: patchActivityId,
-        segmentIndex: 1,
-        setGroupIndex: 1,
-        type: "INTERVALS",
-        targetType: "distance",
-        targetValue: 1000,
-        targetPace: 3.2,
-        timeSeriesEndTime: 60,
-        actualDistance: 120,
-        actualDuration: 40,
-        avgHeartRate: 140,
-      },
-    ])
-    .returning();
-  warmupSegId = seeded[0].id;
-  intervalSegId = seeded[1].id;
 });
 
 afterAll(async () => {
   await deleteTestUser(user.id);
-  await deleteTestUser(noConsentUser.id);
   await closePool();
 });
 
@@ -166,48 +66,7 @@ const jsonReq = (url: string, method: string, body: unknown) =>
     body: JSON.stringify(body),
   });
 
-describe("GET /api/activity/:id/draft-segments", () => {
-  it("404s for a foreign activity", () =>
-    withIdentity(identity(), async () => {
-      streamsResult = fullStreams();
-      const res = await app.fetch(
-        new Request("http://test/api/activity/99999999/draft-segments"),
-      );
-      expect(res.status).toBe(404);
-    }));
-
-  it("returns proposedSegments + HR/pace streams with consent", () =>
-    withIdentity(identity(), async () => {
-      streamsResult = fullStreams();
-      const res = await app.fetch(
-        new Request(`http://test/api/activity/${draftActivityId}/draft-segments`),
-      );
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body.proposedSegments).toHaveLength(2);
-      expect(body.proposedSegments[0].type).toBe("WARMUP");
-      expect(body.streams.time).toEqual([0, 10, 20, 30, 40, 50, 60]);
-      expect(body.streams.heartrate).toEqual([100, 110, 120, 130, 140, 150, 160]);
-      expect(body.streams.velocity).toEqual([3, 3, 3, 3, 3, 3, 3]);
-    }));
-
-  it("returns heartrate=null without HR consent", () =>
-    withIdentity(
-      { userId: noConsentUser.id, clerkUserId: noConsentUser.clerkId, role: "premium" },
-      async () => {
-        streamsResult = fullStreams();
-        const res = await app.fetch(
-          new Request(`http://test/api/activity/${noConsentDraftActivityId}/draft-segments`),
-        );
-        expect(res.status).toBe(200);
-        const body = await res.json();
-        expect(body.streams.heartrate).toBeNull();
-        expect(body.streams.velocity).toEqual([3, 3, 3, 3, 3, 3, 3]);
-      },
-    ));
-});
-
-describe("PUT /api/activity/:id/segments", () => {
+describe("PUT /api/v1/activity/:id/segments", () => {
   const validBody = {
     segments: [
       {
@@ -233,7 +92,7 @@ describe("PUT /api/activity/:id/segments", () => {
     withIdentity(identity(), async () => {
       streamsResult = fullStreams();
       const res = await app.fetch(
-        jsonReq("http://test/api/activity/99999999/segments", "PUT", validBody),
+        jsonReq("http://test/api/v1/activity/99999999/segments", "PUT", validBody),
       );
       expect(res.status).toBe(404);
     }));
@@ -242,7 +101,7 @@ describe("PUT /api/activity/:id/segments", () => {
     withIdentity(identity(), async () => {
       streamsResult = {};
       const res = await app.fetch(
-        jsonReq(`http://test/api/activity/${putActivityId}/segments`, "PUT", validBody),
+        jsonReq(`http://test/api/v1/activity/${putActivityId}/segments`, "PUT", validBody),
       );
       expect(res.status).toBe(400);
     }));
@@ -251,7 +110,7 @@ describe("PUT /api/activity/:id/segments", () => {
     withIdentity(identity(), async () => {
       streamsResult = fullStreams();
       const res = await app.fetch(
-        jsonReq(`http://test/api/activity/${putActivityId}/segments`, "PUT", {
+        jsonReq(`http://test/api/v1/activity/${putActivityId}/segments`, "PUT", {
           segments: [{ ...validBody.segments[0], timeSeriesEndTime: 9999 }],
         }),
       );
@@ -262,7 +121,7 @@ describe("PUT /api/activity/:id/segments", () => {
     withIdentity(identity(), async () => {
       streamsResult = fullStreams();
       const res = await app.fetch(
-        jsonReq(`http://test/api/activity/${putActivityId}/segments`, "PUT", { segments: [] }),
+        jsonReq(`http://test/api/v1/activity/${putActivityId}/segments`, "PUT", { segments: [] }),
       );
       expect(res.status).toBe(400);
     }));
@@ -271,7 +130,7 @@ describe("PUT /api/activity/:id/segments", () => {
     withIdentity(identity(), async () => {
       streamsResult = fullStreams();
       const res = await app.fetch(
-        jsonReq(`http://test/api/activity/${putActivityId}/segments`, "PUT", validBody),
+        jsonReq(`http://test/api/v1/activity/${putActivityId}/segments`, "PUT", validBody),
       );
       expect(res.status).toBe(200);
       const body = await res.json();
@@ -297,62 +156,11 @@ describe("PUT /api/activity/:id/segments", () => {
     }));
 });
 
-describe("PATCH /api/activity/:id/segments/:segmentId", () => {
-  it("404s for a foreign activity", () =>
-    withIdentity(identity(), async () => {
-      streamsResult = fullStreams();
-      const res = await app.fetch(
-        jsonReq("http://test/api/activity/99999999/segments/1", "PATCH", {
-          timeSeriesEndTime: 30,
-        }),
-      );
-      expect(res.status).toBe(404);
-    }));
-
-  it("404s when the segment id is not on the activity", () =>
-    withIdentity(identity(), async () => {
-      streamsResult = fullStreams();
-      const res = await app.fetch(
-        jsonReq(`http://test/api/activity/${patchActivityId}/segments/99999999`, "PATCH", {
-          timeSeriesEndTime: 30,
-        }),
-      );
-      expect(res.status).toBe(404);
-    }));
-
-  it("400s for an empty patch body", () =>
-    withIdentity(identity(), async () => {
-      const res = await app.fetch(
-        jsonReq(`http://test/api/activity/${patchActivityId}/segments/${warmupSegId}`, "PATCH", {}),
-      );
-      expect(res.status).toBe(400);
-    }));
-
-  it("moves one boundary and recomputes the whole activity", () =>
-    withIdentity(identity(), async () => {
-      streamsResult = fullStreams();
-      const res = await app.fetch(
-        jsonReq(`http://test/api/activity/${patchActivityId}/segments/${warmupSegId}`, "PATCH", {
-          timeSeriesEndTime: 30,
-        }),
-      );
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body.intervalSegments).toHaveLength(2);
-      const warmup = body.intervalSegments.find((s: { type: string }) => s.type === "WARMUP");
-      const work = body.intervalSegments.find((s: { type: string }) => s.type === "INTERVALS");
-      expect(warmup.timeSeriesEndTime).toBe(30);
-      expect(warmup.actualDuration).toBe(30);
-      expect(work.actualDuration).toBe(30);
-      expect(work.targetPace).toBe(3.2);
-    }));
-});
-
-describe("POST /api/agents/resume-analysis (editedSegments)", () => {
+describe("POST /api/v1/agents/resume-analysis (editedSegments)", () => {
   it("accepts valid editedSegments", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        jsonReq("http://test/api/agents/resume-analysis", "POST", {
+        jsonReq("http://test/api/v1/agents/resume-analysis", "POST", {
           activityId: putActivityId,
           notes: "",
           trainingType: "LONG_INTERVALS",
@@ -368,7 +176,7 @@ describe("POST /api/agents/resume-analysis (editedSegments)", () => {
   it("rejects editedSegments with an invalid type", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        jsonReq("http://test/api/agents/resume-analysis", "POST", {
+        jsonReq("http://test/api/v1/agents/resume-analysis", "POST", {
           activityId: putActivityId,
           notes: "",
           editedSegments: [{ type: "BOGUS", setGroupIndex: 0, timeSeriesEndTime: 0 }],
@@ -380,7 +188,7 @@ describe("POST /api/agents/resume-analysis (editedSegments)", () => {
   it("rejects editedSegments with a negative setGroupIndex", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        jsonReq("http://test/api/agents/resume-analysis", "POST", {
+        jsonReq("http://test/api/v1/agents/resume-analysis", "POST", {
           activityId: putActivityId,
           notes: "",
           editedSegments: [{ type: "WARMUP", setGroupIndex: -1, timeSeriesEndTime: 0 }],

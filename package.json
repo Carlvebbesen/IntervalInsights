@@ -11,8 +11,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "scripts:run": "bun run scripts/run_pending.ts",
-    "brain:sync": "rm -rf knowledge/brain && mkdir -p knowledge && cp -R ../interval-brain/brain knowledge/brain && rm -rf knowledge/brain/_templates && rm -f knowledge/brain/log.md",
-    "types:api": "openapi-typescript http://127.0.0.1:3000/api/openapi.json -o src/types/api.d.ts"
+    "brain:sync": "rm -rf knowledge/brain && mkdir -p knowledge && cp -R ../interval-brain/brain knowledge/brain && rm -rf knowledge/brain/_templates && rm -f knowledge/brain/log.md"
   },
   "dependencies": {
     "@clerk/backend": "^2.29.0",
@@ -41,18 +40,14 @@
     "@opentelemetry/sdk-metrics": "^2.7.1",
     "@opentelemetry/sdk-node": "^0.217.0",
     "@opentelemetry/semantic-conventions": "^1.41.1",
-    "biome": "^0.3.3",
     "drizzle-kit": "^0.31.8",
     "drizzle-orm": "^0.45.1",
     "hono": "^4.11.3",
     "hono-openapi": "^1.3.0",
-    "interval-insights": ".",
     "langchain": "^1.0.0-alpha.6",
     "langsmith": "^0.6.3",
-    "openapi-typescript": "^7.10.1",
     "pg": "^8.16.3",
     "pino": "^10.3.1",
-    "swagger-typescript-api": "^13.2.16",
     "zod": "^3.25.76",
     "zod-openapi": "^4"
   },

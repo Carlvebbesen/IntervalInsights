@@ -1,5 +1,5 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { logger } from "../../logger";
 import { activities, type ProposedSegmentDraft } from "../../schema";
 import { getProposedPaceForStructure, getProposedPaceFromLaps } from "../../services/pace_service";
@@ -76,16 +76,15 @@ export async function proposeSegments(
     targetPace: s.targetPace,
   }));
 
-  const existing = await db.query.activities.findFirst({
-    where: eq(activities.id, state.activityId),
-    columns: { draftAnalysisResult: true },
-  });
-  if (existing?.draftAnalysisResult) {
-    await db
-      .update(activities)
-      .set({ draftAnalysisResult: { ...existing.draftAnalysisResult, proposedSegments: slim } })
-      .where(eq(activities.id, state.activityId));
-  }
+  // Atomic jsonb merge instead of read-modify-write: a concurrent draft write
+  // (e.g. a forced re-analysis interleaving with run_initial_agent) must not be
+  // clobbered by a stale spread.
+  await db
+    .update(activities)
+    .set({
+      draftAnalysisResult: sql`(${activities.draftAnalysisResult}::jsonb || ${JSON.stringify({ proposedSegments: slim })}::jsonb)::json`,
+    })
+    .where(and(eq(activities.id, state.activityId), isNotNull(activities.draftAnalysisResult)));
 
   log.info({ proposedSegments: proposedSegments.length }, "segment proposal ready");
   return { proposedSegments };

@@ -1,10 +1,10 @@
+import type { z } from "zod";
 import * as intervalStructureRepo from "../repositories/interval_structure_repository";
 import type {
   IntervalStructureHistoryResponseSchema,
   IntervalStructureListResponseSchema,
 } from "../schemas/api_schemas";
 import type { IGlobalBindings } from "../types/IRouters";
-import type { z } from "zod";
 
 type Db = IGlobalBindings["db"];
 

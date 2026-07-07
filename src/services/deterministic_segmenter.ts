@@ -68,7 +68,11 @@ export function flattenReps(userSets: ExpandedIntervalSet[]): RepDesc[] {
 }
 
 /** Windowed speed (m/s) from cumulative distance; mirrors the app's deriveVelocity. */
-export function deriveSpeed(time: number[], distance: number[], windowSec = CFG.speed.windowSec): number[] {
+export function deriveSpeed(
+  time: number[],
+  distance: number[],
+  windowSec = CFG.speed.windowSec,
+): number[] {
   const n = time.length;
   const v = new Array<number>(n).fill(0);
   for (let i = 0; i < n; i++) {
@@ -86,7 +90,9 @@ export function isJunkLap(l: Lap): boolean {
   const dur = l.elapsed_time ?? 0;
   const dist = l.distance ?? 0;
   const spd = l.average_speed ?? 0;
-  return dur < MIN_LAP_SECONDS || (dist < CFG.laps.junkLapMinDistanceM && spd < CFG.laps.junkLapMinSpeed);
+  return (
+    dur < MIN_LAP_SECONDS || (dist < CFG.laps.junkLapMinDistanceM && spd < CFG.laps.junkLapMinSpeed)
+  );
 }
 
 function lapWindow(l: Lap, time: number[]): WorkBout {
@@ -212,7 +218,9 @@ export function detectBouts(
     }
   } else if (CFG.markov.enabled && winSpeed.length >= 2) {
     const labels = viterbiTwoState(winSpeed, restLvl, workLvl, CFG.markov.switchPenalty);
-    idxInWin.forEach((i, k) => labelOf.set(i, labels[k]));
+    idxInWin.forEach((i, k) => {
+      labelOf.set(i, labels[k]);
+    });
   } else {
     for (const i of idxInWin) labelOf.set(i, speed[i] > thr ? 1 : 0);
   }
@@ -338,13 +346,19 @@ export function templatePlace(
   time: number[],
   speed: number[],
 ): { bouts: WorkBout[]; snapped: number; total: number } {
-  const win = speed.filter((_, i) => time[i] >= ws && time[i] <= we && speed[i] > 0).sort((a, b) => a - b);
+  const win = speed
+    .filter((_, i) => time[i] >= ws && time[i] <= we && speed[i] > 0)
+    .sort((a, b) => a - b);
   const workLvl = percentile(win, CFG.template.workPercentile);
   const restLvl = percentile(win, CFG.template.restPercentile);
   const thr = (workLvl + restLvl) / 2;
 
   const workSecOf = (r: RepDesc): number =>
-    r.workType === "TIME" ? r.workValue : workLvl > 0 ? r.workValue / workLvl : CFG.template.paceFallbackSeconds;
+    r.workType === "TIME"
+      ? r.workValue
+      : workLvl > 0
+        ? r.workValue / workLvl
+        : CFG.template.paceFallbackSeconds;
   const restSecOf = (r: RepDesc): number =>
     r.recoveryType === "TIME"
       ? r.recoveryValue
@@ -408,16 +422,24 @@ function pickDetectionSignal(time: number[], speed: number[], hr: number[] | und
   return compensateHrLag(time, speed, hr);
 }
 
-function estimateStructSecs(reps: RepDesc[], time: number[], speed: number[]): number {
+function estimateStructSecs(reps: RepDesc[], _time: number[], speed: number[]): number {
   const positive = speed.filter((x) => x > 0).sort((a, b) => a - b);
   const workLvl = percentile(positive, CFG.template.estimateWorkPercentile);
   const restLvl = percentile(positive, CFG.template.estimateRestPercentile);
   let total = 0;
   for (const r of reps) {
     total +=
-      r.workType === "TIME" ? r.workValue : workLvl > 0 ? r.workValue / workLvl : CFG.template.paceFallbackSeconds;
+      r.workType === "TIME"
+        ? r.workValue
+        : workLvl > 0
+          ? r.workValue / workLvl
+          : CFG.template.paceFallbackSeconds;
     total +=
-      r.recoveryType === "TIME" ? r.recoveryValue : restLvl > CFG.template.restLevelFloor ? r.recoveryValue / restLvl : 0;
+      r.recoveryType === "TIME"
+        ? r.recoveryValue
+        : restLvl > CFG.template.restLevelFloor
+          ? r.recoveryValue / restLvl
+          : 0;
   }
   return total;
 }
@@ -595,7 +617,9 @@ export function alignBoutsToReps(
   const INF = Number.POSITIVE_INFINITY;
   // dp[i][j] = min total cost to bind the first i reps using the first j bouts.
   const dp: number[][] = Array.from({ length: N + 1 }, () => new Array<number>(M + 1).fill(INF));
-  const took: boolean[][] = Array.from({ length: N + 1 }, () => new Array<boolean>(M + 1).fill(false));
+  const took: boolean[][] = Array.from({ length: N + 1 }, () =>
+    new Array<boolean>(M + 1).fill(false),
+  );
   for (let j = 0; j <= M; j++) dp[0][j] = 0;
   for (let i = 1; i <= N; i++) {
     for (let j = i; j <= M; j++) {
@@ -688,7 +712,7 @@ export function buildSegmentsDeterministic(
   const inferred = reps.length === 0;
 
   const cls = classifyLaps(laps, time);
-  let mode: SegmentMode = inferred ? "inferred" : cls.mode;
+  const mode: SegmentMode = inferred ? "inferred" : cls.mode;
 
   let bouts: WorkBout[];
   let snapFrac = 1;
@@ -713,9 +737,7 @@ export function buildSegmentsDeterministic(
     // spurious extras when there are more laps than reps (622), else 1:1.
     const lapBouts = cls.workLaps.map((l) => lapWindow(l, time));
     bouts =
-      lapBouts.length > reps.length
-        ? alignBoutsToReps(lapBouts, reps, time, distance)
-        : lapBouts;
+      lapBouts.length > reps.length ? alignBoutsToReps(lapBouts, reps, time, distance) : lapBouts;
     countMatch = 1;
   } else {
     // Boundary / one-big-lap, OR per-rep UNDER-detection where the lap-level

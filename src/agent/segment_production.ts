@@ -1,17 +1,17 @@
 import type { Logger } from "../logger";
 import type { TrainingType } from "../schema/enums";
 import type { InsertIntervalSegment } from "../schema/interval_segments";
-import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
 import { buildSegmentsDeterministic } from "../services/deterministic_segmenter";
 import { buildSegmentsFromIntervalsIcu } from "../services/intervals_icu_segments";
 import { buildSegmentsFromLaps, structureShapeMatches } from "../services/lap_derivation_service";
+import { SEGMENTER_CONFIG } from "../services/segmenter_config";
 import { calculateSegmentStats, parsePaceStringToMetersPerSecond } from "../services/utils";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
+import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
 import type { Lap } from "../types/strava/IDetailedActivity";
 import type { StreamSet } from "../types/strava/IStream";
 import { invokeCompleteActivityAnalysisAgent } from "./full_analysis_agent";
 import type { WorkoutAnalysisOutput } from "./initial_analysis_agent";
-import { SEGMENTER_CONFIG } from "../services/segmenter_config";
 import { invokeWithRateLimitRetry } from "./model";
 
 type StatsStreams = Required<Pick<StreamSet, "time" | "distance">> & Pick<StreamSet, "heartrate">;
@@ -108,7 +108,11 @@ export async function produceSegments(params: {
   const deterministic = buildSegmentsDeterministic(activityId, laps, userSets, statsStreams);
   if (deterministic && deterministic.confidence >= DETERMINISTIC_CONFIDENCE_THRESHOLD) {
     log.info(
-      { segments: deterministic.segments.length, confidence: deterministic.confidence, mode: deterministic.mode },
+      {
+        segments: deterministic.segments.length,
+        confidence: deterministic.confidence,
+        mode: deterministic.mode,
+      },
       "deterministic segments",
     );
     return ensureWarmupFirst(deterministic.segments, activityId, t0);

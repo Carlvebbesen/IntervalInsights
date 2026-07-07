@@ -1,8 +1,7 @@
-import { IntervalsError } from "../error";
 import { logger } from "../logger";
-import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import type { IIntervalsPowerCurve } from "../types/intervals/IIntervalsActivity";
 import { intervalsApiService } from "./intervals_api_service";
+import { withIntervalsToken } from "./intervals_token_helper";
 
 export type BestEffortWindow = "this_season" | "last_season" | "custom";
 
@@ -68,16 +67,16 @@ export async function fetchBestEffortCurve(
   clerkUserId: string,
   opts: { type?: string; window?: BestEffortWindow; oldest?: string; newest?: string },
 ): Promise<BestEffortResult> {
-  let accessToken: string;
-  try {
-    accessToken = await getIntervalsAccessToken(clerkUserId);
-  } catch (err) {
-    if (err instanceof IntervalsError && (err.status === 403 || err.status === 401)) {
-      return { status: "not_linked", data: null };
-    }
-    throw err;
-  }
+  const result = await withIntervalsToken(clerkUserId, (accessToken) =>
+    fetchBestEffortCurveWithToken(accessToken, opts),
+  );
+  return result.status === "not_linked" ? { status: "not_linked", data: null } : result.data;
+}
 
+async function fetchBestEffortCurveWithToken(
+  accessToken: string,
+  opts: { type?: string; window?: BestEffortWindow; oldest?: string; newest?: string },
+): Promise<BestEffortResult> {
   const type = opts.type ?? "Run";
   const window = opts.window ?? "this_season";
   const curves = buildCurvesParam(window, opts.oldest, opts.newest);

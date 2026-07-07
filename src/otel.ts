@@ -166,7 +166,10 @@ export function recordAnalysisRun(attrs: {
 }
 
 /** An activity's training type changed — via a manual metadata edit or at analysis resume. */
-export function recordTrainingTypeChange(attrs: { trainingType: string; via: "manual" | "resume" }): void {
+export function recordTrainingTypeChange(attrs: {
+  trainingType: string;
+  via: "manual" | "resume";
+}): void {
   trainingTypeChangeCounter.add(1, {
     "training.type": attrs.trainingType,
     "change.via": attrs.via,

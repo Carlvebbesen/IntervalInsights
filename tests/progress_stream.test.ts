@@ -79,7 +79,7 @@ function frameReader(reader: ReadableStreamDefaultReader<Uint8Array>) {
 describe("GET /api/progress/stream", () => {
   it("sends a snapshot of in-flight activities on connect, then pushes live events", () =>
     withIdentity(identity(), async () => {
-      const res = await app.fetch(new Request("http://test/api/progress/stream"));
+      const res = await app.fetch(new Request("http://test/api/v1/progress/stream"));
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toContain("text/event-stream");
       if (!res.body) throw new Error("expected a streaming body");

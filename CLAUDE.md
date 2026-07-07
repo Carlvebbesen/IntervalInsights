@@ -15,15 +15,18 @@ bun run db:push      # Push schema directly (dev only)
 bun run db:studio    # Open Drizzle Studio UI
 ```
 
-TypeScript check (no dedicated test suite):
+Checks & tests:
 ```bash
-npx tsc --noEmit
+bunx tsc --noEmit    # Type-check (errors from node_modules/ are pre-existing — only care about src/)
+bun run test         # Endpoint + service suite (spins up a disposable Postgres via Docker)
+bun run test:pace    # Pace/readiness unit suite
 ```
-All errors from `node_modules/` are pre-existing third-party issues — only care about `src/` errors.
+See `tests/README.md` for how the endpoint suite stubs auth and provisions its DB.
 
 ## Architecture
 
-**Runtime:** Bun + Hono. The entry point is `src/index.ts`, which mounts all routers under `/api/*`.
+**Runtime:** Bun + Hono. The entry point is `src/index.ts`. Public routes mount at `/api`
+(before Clerk); all authenticated routers mount under a versioned `/api/v1` sub-app.
 
 **Auth flow:**
 1. `clerkMiddleware` + `authGuard` (`src/middlewares/auth_middleware.ts`) run on all `/api/*` routes. They resolve `clerkUserId` + internal `userId` (UUID) and `role` from the Postgres `users` table via a fresh `findFirst` on every request — the `users` table is the source of truth for identity/role; there is no Clerk session-claim cache.
@@ -35,15 +38,19 @@ All errors from `node_modules/` are pre-existing third-party issues — only car
 
 Routers that need Strava API access must use `TStravaEnv` and apply `stravaMiddleware`.
 
-**Routers:**
-- `GET/POST /api/activity` — activity list, update metadata (`TGlobalEnv`)
-- `GET /api/activity/:id/*` (laps, splits, heartrate, segments) — Strava data endpoints (`TStravaEnv`)
-- `GET/POST /api/agents` — trigger LLM analysis pipelines (`TStravaEnv`)
-- `GET /api/strava/auth/*` — OAuth exchange
-- `GET /api/strava/sync/*` — bulk import from Strava
-- `GET /api/strava/webhook/*` — manage Strava push subscriptions
-- `GET /api/dashboard`, `GET /api/interval-structures` — stats/filter helpers
-- `GET/POST /api/strava/event`, `GET /api/health` — public (no auth)
+**Public routes (unversioned, mounted at `/api` before Clerk — external systems pin these):**
+- `GET/POST /api/strava/event`, `POST /api/intervals/event` — inbound webhooks
+- `GET /api/health` — liveness probe
+- `GET /api/privacy-policy`, `GET /api/terms-of-service` — legal markdown
+- Plus the app-root routes `/`, `/app-icon.png`, `/favicon.ico`, `/.well-known/*`, and the MCP router.
+
+**Authenticated routers (mounted under `/api/v1`, behind `clerkMiddleware` + `authGuard`):**
+- `/api/v1/activity` — list, detail, `PATCH /:id` metadata, gear, segments, laps, splits, streams, editor-state (`TGlobalEnv` + `TStravaEnv` sub-router)
+- `/api/v1/agents` — pending, start/resume analysis, parse-intervals, suggest-session (`TStravaEnv`)
+- `/api/v1/strava/auth/*` (OAuth exchange), `/sync/*` (bulk import), `/webhook/*` (push-subscription mgmt — **admin-only**)
+- `/api/v1/intervals/*` — intervals.icu OAuth + sync
+- `/api/v1/dashboard`, `/api/v1/interval-structures`, `/api/v1/heart-rate/analysis`, `/api/v1/events`, `/api/v1/gear`, `/api/v1/user`, `/api/v1/chat`, `/api/v1/progress` — stats, filters, HR analysis, events, gear, profile, coach chat, SSE progress
+- `/api/v1/admin/*` — role management (`requireRole("admin")`)
 - `POST /mcp` — remote MCP server for Claude/ChatGPT; OAuth-token auth, **not** under `/api/*` (see MCP section)
 
 **MCP server** (`src/mcp/`, mounted via `src/routers/mcp_router.ts` at the app root):
@@ -64,7 +71,7 @@ Every activity flows through a single graph, paused mid-way for user confirmatio
 1. `fetchActivityContext` — Strava activity + streams (+ laps when outdoor). Sets `analysisStatus = 'ongoing_init'`.
 2. `maybeEnrichWithIntervalsIcu` — if the user has connected intervals.icu (`users.intervalsAthleteId != null`), polls up to 45s for both `activities.intervalsIcuId` and `intervalsAnalyzed`. When ready, fetches the predicted intervals + meta and attaches them to graph state.
 3. `runInitialAgent` — calls `invokeActivityAnalysisAgent` (GPT-4o-mini) with all context including the intervals.icu prediction block. Computes `lapsMatchStructure`. Persists everything into `draftAnalysisResult` JSON. Sets `analysisStatus = 'initial'`.
-4. `awaitUserInput` — `interrupt()` pauses the graph. Frontend submits training type, notes, sets, and optional `feeling` via `POST /api/agents/resume-analysis`.
+4. `awaitUserInput` — `interrupt()` pauses the graph. Frontend submits training type, notes, sets, and optional `feeling` via `POST /api/v1/agents/resume-analysis`.
 5. `runCompleteAnalysis` — for interval training types only, calls `invokeCompleteActivityAnalysisAgent` to produce per-segment data. Skipped for EASY/LONG/RECOVERY/RACE/OTHER. Sets `analysisStatus = 'ongoing_completed'`.
 6. `validateSignature` — exact + Jaccard 0.7 fuzzy match against the user's existing `interval_structures`.
 7. `persistResults` — writes `interval_segments` (if any), links activity to `intervalStructureId`, flips status to `completed`. Always runs even when no segments — single source of truth for completion.
@@ -72,7 +79,7 @@ Every activity flows through a single graph, paused mid-way for user confirmatio
 
 `analysisStatus` lifecycle: `pending` → `ongoing_init` → `initial` (paused, awaiting user) → `ongoing_completed` → `completed`. Plus `error` and `skipped_inactive` terminal/recoverable states.
 
-**Inactivity gate** (`process_strava_event.ts`): reads `lastSignInAt` from Clerk. If user inactive > 90d, drops the Strava activity entirely. If 14–90d inactive, inserts with `analysisStatus = 'skipped_inactive'` (no LLM calls). `GET /api/agents/pending` re-queues these on next pending fetch.
+**Inactivity gate** (`process_strava_event.ts`): reads `lastSignInAt` from Clerk. If user inactive > 90d, drops the Strava activity entirely. If 14–90d inactive, inserts with `analysisStatus = 'skipped_inactive'` (no LLM calls). `GET /api/v1/agents/pending` re-queues these on next pending fetch.
 
 **Auto-retry for errors**: `error` activities with `analysisAttemptCount < 2` are retried automatically by `/pending`. After two failures the user must manually retry.
 
@@ -82,7 +89,7 @@ Every activity flows through a single graph, paused mid-way for user confirmatio
 - `initial_analysis_agent.ts` — classify + draft structure, with optional intervals.icu prediction block.
 - `full_analysis_agent.ts` — per-segment time-series breakdown for interval types.
 - `event_detection_agent.ts` — extract health events.
-- `parse_intervals_agent.ts` — free-text → `workoutSet[]`. Powers `POST /api/agents/parse-intervals`.
+- `parse_intervals_agent.ts` — free-text → `workoutSet[]`. Powers `POST /api/v1/agents/parse-intervals`.
 
 **LLM:** GPT-4o-mini via `@langchain/openai`, zero temperature, defined in `src/agent/model.ts`. `invokeWithRateLimitRetry` honours OpenAI's `Retry-After` header with exponential backoff. `ANALYSIS_VERSION` constant tags every analysed activity.
 
@@ -96,9 +103,9 @@ Every activity flows through a single graph, paused mid-way for user confirmatio
 - For expected failures (not-found, forbidden, bad input that can't be expressed in the Zod schema), `throw new AppError(status, message, details?)` (`src/error.ts`); `app.onError` renders it. Integration failures use `StravaError` / `IntervalsError`.
 - `return c.json({ error }, status)` directly is fine for simple inline control flow (e.g. a 404 after a missing row).
 
-**Success responses:** the legacy endpoints use mixed shapes (bare arrays/objects, `{ success, message }`, `{ data, meta }` pagination wrappers, and `{ status: "ok" | ... }` discriminated unions). These can't be reshaped without breaking live app versions, so existing shapes are frozen. **New** list endpoints should use the `{ data, meta }` wrapper; new mutations should return the affected resource object. Document every response with a `resolver(Schema)` in `describeRoute`.
+**Success responses:** endpoints use mixed shapes (bare arrays/objects, `{ success, message }`, `{ data, meta }` pagination wrappers, and `{ status: "ok" | ... }` discriminated unions). **New** list endpoints should use the `{ data, meta }` wrapper; new mutations should return the affected resource object. Document every response with a `resolver(Schema)` in `describeRoute`.
 
-**Deprecating a route shape:** when a route's path or request shape changes, keep the old route working alongside the new one. Mark the old handler with a `/** @deprecated ... */` JSDoc comment, set `deprecated: true` in its `describeRoute`, and prefix its description with `[DEPRECATED — use <new route>]`. Remove only once all clients have migrated. Example: `POST /api/activity/update` is deprecated in favour of `PATCH /api/activity/:id`.
+**Versioning & breaking changes:** all clients ship on the latest release — there is no fleet of pinned old app versions to keep alive. Breaking changes (path, request, or response shape) are therefore allowed **within `v1`** as long as the backend and the Flutter app land in the **same release train**. Just change the route in place; don't keep a deprecated twin around. Only when we deliberately need two divergent generations of an endpoint live at once do we cut a new version prefix: add a `v2` sub-app in `src/index.ts` that cherry-picks the routers that changed (unchanged routers stay served from `v1`). The unversioned public routes (`/api/strava/event`, `/api/intervals/event`, `/api/health`, legal) are pinned by external systems and must stay put.
 
 ## Observability (OpenTelemetry → Grafana Cloud)
 

@@ -14,7 +14,6 @@ import {
   TrainingSummaryResponseSchema,
   WeekDetailResponseSchema,
   WellnessQuerySchema,
-  WellnessSeriesResponseSchema,
 } from "../schemas/api_schemas";
 import type { TGlobalEnv } from "../types/IRouters";
 
@@ -23,7 +22,8 @@ const dashboardRouter = new Hono<TGlobalEnv>();
 dashboardRouter.get(
   "/",
   describeRoute({
-    description: "Get dashboard summary, graph data, and averages",
+    description:
+      "Get dashboard summary, graph data, and averages. Pass `date` (YYYY-MM-DD, the athlete's local calendar date) so week boundaries are resolved against the athlete's day — activities store local-as-UTC timestamps, so the server's UTC clock puts near-midnight activities in the wrong week for far-from-UTC users. Falls back to the server date when omitted.",
     responses: {
       200: {
         description: "Dashboard data",
@@ -35,12 +35,17 @@ dashboardRouter.get(
       },
     },
   }),
+  validator("query", TrainingSummaryQuerySchema),
   async (c) => {
+    const { date } = c.req.valid("query");
+    // Anchor at end-of-day of the athlete's local date: startDateLocal is
+    // stored local-as-UTC, so all week math must run on the athlete's calendar.
+    const now = date ? new Date(`${date}T23:59:59.999Z`) : new Date();
     const result = await dashboardController.getDashboard(
       c.env.db,
       c.get("userId"),
       c.get("clerkUserId"),
-      new Date(),
+      now,
     );
     return c.json(result);
   },
@@ -101,34 +106,6 @@ dashboardRouter.get(
       c.get("userId"),
       c.get("clerkUserId"),
       weather,
-    );
-    return c.json(result);
-  },
-);
-
-dashboardRouter.get(
-  "/wellness",
-  describeRoute({
-    description:
-      "Daily intervals.icu wellness series for the requested date range. Discriminated by `status`: `ok` (per-day points + summary stats + metricsAvailable for the picker), `not_linked` (intervals.icu not connected), `no_data` (linked but no records in range). Each point groups fields into `fitness` (CTL/ATL/TSB/load), `sleep`, `recovery` (RHR/HRV/readiness/SpO2/respiration), `subjective` (soreness/fatigue/stress/mood/motivation, 1–4 scale), `health` (injury/sickness flags), `body` (weight/bodyFat/VO2max), and free-text `comments`. Range capped at 366 days; oldest must be ≤ newest.",
-    responses: {
-      200: {
-        description: "Discriminated wellness-series result",
-        content: { "application/json": { schema: resolver(WellnessSeriesResponseSchema) } },
-      },
-      400: {
-        description: "Invalid date range",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-    },
-  }),
-  validator("query", WellnessQuerySchema),
-  async (c) => {
-    const { oldest, newest } = c.req.valid("query");
-    const result = await dashboardController.getWellnessSeries(
-      c.get("clerkUserId"),
-      oldest,
-      newest,
     );
     return c.json(result);
   },

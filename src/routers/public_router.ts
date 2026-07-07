@@ -212,11 +212,6 @@ const IntervalsWebhookAckSchema = z.object({
 
 publicRouter.post(
   "/intervals/event",
-  async (c, next) => {
-    const raw = await c.req.raw.clone().text();
-    c.var.logger.info({ raw }, "intervals.icu raw inbound body");
-    return next();
-  },
   describeRoute({
     description:
       "Intervals.icu webhook delivery. Authenticated by matching the shared secret against INTERVALS_WEBHOOK_SECRET; processing is fire-and-forget.",
@@ -239,7 +234,5 @@ publicRouter.post(
     return ok ? c.json({ status: "ok" }, 200) : c.json({ status: "unauthorized" }, 401);
   },
 );
-
-publicRouter.route("/", publicRouter);
 
 export default publicRouter;

@@ -2,6 +2,7 @@ import { sleep } from "bun";
 import { eq } from "drizzle-orm";
 import { StravaError } from "../error";
 import { logger } from "../logger";
+import { existingStravaIdsForUser } from "../repositories/activity_repository";
 import { activities } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { SummaryActivity } from "../types/strava/IDetailedActivity";
@@ -158,9 +159,7 @@ export async function syncAllFromStrava(
     }
 
     const descriptionQueue: Array<{ internalId: number; stravaId: number }> = [];
-    const afterEpoch = Math.floor(
-      (Date.now() - LOOKBACK_YEARS * 365 * 24 * 60 * 60 * 1000) / 1000,
-    );
+    const afterEpoch = Math.floor((Date.now() - LOOKBACK_YEARS * 365 * 24 * 60 * 60 * 1000) / 1000);
     const seen = new Set<number>();
     let lastRateLimit: StravaRateLimit | null = null;
 
@@ -291,7 +290,10 @@ export async function syncAllFromStrava(
         if (description) result.descriptionsUpdated++;
       } catch (err) {
         if (err instanceof StravaError && err.status === 429) {
-          logger.warn({ stravaActivityId: item.stravaId }, "Strava 429 — stopping description pass");
+          logger.warn(
+            { stravaActivityId: item.stravaId },
+            "Strava 429 — stopping description pass",
+          );
           retryAt = nextStravaWindowMs();
           break;
         }
@@ -327,4 +329,40 @@ export async function syncAllFromStrava(
   }
 
   return result;
+}
+
+const MAX_PAGES_TO_SKIP = 10;
+
+/**
+ * Forward Strava's activity list, dropping activities already imported for
+ * this user. Pages whose activities were ALL already synced are skipped (up
+ * to a bounded number of pages) so the client always gets fresh rows or [].
+ */
+export async function listUnsyncedActivities(
+  db: IGlobalBindings["db"],
+  userId: string,
+  accessToken: string,
+  baseQuery: Record<string, string>,
+): Promise<SummaryActivity[]> {
+  const startPage = Number(baseQuery.page ?? "1");
+
+  for (let offset = 0; offset < MAX_PAGES_TO_SKIP; offset++) {
+    const stravaActivities = await stravaApiService.listAthleteActivities(accessToken, {
+      ...baseQuery,
+      page: String(startPage + offset),
+    });
+
+    if (stravaActivities.length === 0) return [];
+
+    const syncedIds = await existingStravaIdsForUser(
+      db,
+      userId,
+      stravaActivities.map((a) => a.id),
+    );
+    const filtered = stravaActivities.filter((a) => !syncedIds.has(a.id));
+
+    if (filtered.length > 0) return filtered;
+  }
+
+  return [];
 }

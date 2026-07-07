@@ -1,17 +1,16 @@
-import { createClerkClient } from "@clerk/backend";
 import { getAuth } from "@hono/clerk-auth";
-import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { describeRoute, resolver, validator } from "hono-openapi";
+import { describeRoute, validator } from "hono-openapi";
 import z from "zod";
 import { config } from "../../config";
-import { users } from "../../schema/users";
-import { ErrorSchema } from "../../schemas/api_schemas";
+import { errJson, okJson } from "../../schemas/route_helpers";
+import { linkStravaAccount } from "../../services/oauth_link_service";
 import type { TGlobalEnv } from "../../types/IRouters";
 
 const stravaAuthRouter = new Hono<TGlobalEnv>();
 
-const REDIRECT_URI = "https://intervalinsights.cvebbesen.no/strava-callback";
+// Externally pinned in the Strava app registration — non-prod deploys must register their own callback.
+const REDIRECT_URI = new URL("/strava-callback", config.APP_BASE_URL).toString();
 
 const STRAVA_CLIENT_ID = config.STRAVA_CLIENT_ID;
 
@@ -34,12 +33,7 @@ stravaAuthRouter.get(
     description:
       "Build the Strava OAuth authorization URL the client should redirect the user to. Always returns the same URL pattern for the configured client.",
     responses: {
-      200: {
-        description: "Authorization URL",
-        content: {
-          "application/json": { schema: resolver(StravaAuthUrlResponseSchema) },
-        },
-      },
+      200: okJson(StravaAuthUrlResponseSchema, "Authorization URL"),
     },
   }),
   (c) => {
@@ -63,92 +57,26 @@ stravaAuthRouter.post(
     description:
       "Exchange a Strava OAuth `code` for tokens, store them in Clerk private metadata, and link the Strava athlete to the authenticated Clerk user.",
     responses: {
-      200: {
-        description: "Strava account linked",
-        content: {
-          "application/json": { schema: resolver(StravaExchangeResponseSchema) },
-        },
-      },
-      400: {
-        description: "Missing authorization code",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      401: {
-        description: "Not signed in to Clerk, or Strava rejected the code",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
+      200: okJson(StravaExchangeResponseSchema, "Strava account linked"),
+      400: errJson("Missing authorization code"),
+      401: errJson("Not signed in to Clerk, or Strava rejected the code"),
+      500: errJson("Internal server error"),
     },
   }),
   validator("json", StravaExchangeBodySchema),
   async (c) => {
-    try {
-      const auth = getAuth(c);
-      if (!auth?.userId) {
-        return c.json({ error: "You must be logged in to connect Strava." }, 401);
-      }
-
-      const { code } = c.req.valid("json");
-
-      const tokenResponse = await fetch("https://www.strava.com/oauth/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_id: config.STRAVA_CLIENT_ID,
-          client_secret: config.STRAVA_CLIENT_SECRET,
-          code: code,
-          grant_type: "authorization_code",
-        }),
-      });
-
-      const tokenData = await tokenResponse.json();
-
-      if (!tokenResponse.ok) {
-        c.var.logger.error({ tokenData }, "Strava token exchange failed");
-        return c.json({ error: "Failed to exchange token with Strava" }, 401);
-      }
-      const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
-      await clerkClient.users.updateUserMetadata(auth.userId, {
-        privateMetadata: {
-          strava: {
-            access_token: tokenData.access_token,
-            refresh_token: tokenData.refresh_token,
-            expires_at: tokenData.expires_at,
-            athlete_id: tokenData.athlete.id,
-          },
-        },
-      });
-      const stravaId = String(tokenData.athlete.id);
-      const existingUser = await c.env.db.query.users.findFirst({
-        where: eq(users.clerkId, auth.userId),
-      });
-
-      if (existingUser) {
-        if (!existingUser.stravaId) {
-          await c.env.db.update(users).set({ stravaId }).where(eq(users.clerkId, auth.userId));
-          c.var.logger.info({ clerkUserId: auth.userId }, "Updated Strava ID for existing user");
-        }
-      } else {
-        await c.env.db.insert(users).values({
-          clerkId: auth.userId,
-          stravaId,
-        });
-        c.var.logger.info({ clerkUserId: auth.userId }, "Created new user record");
-      }
-
-      c.var.logger.info({ clerkUserId: auth.userId }, "Linked Strava account");
-
-      return c.json({
-        success: true,
-        message: "Strava connected successfully.",
-      });
-    } catch (err) {
-      c.var.logger.error({ err }, "Strava exchange failed");
-      return c.json({ error: "Internal Server Error" }, 500);
+    const auth = getAuth(c);
+    if (!auth?.userId) {
+      return c.json({ error: "You must be logged in to connect Strava." }, 401);
     }
+
+    const { code } = c.req.valid("json");
+    await linkStravaAccount(c.env.db, auth.userId, code, c.var.logger);
+
+    return c.json({
+      success: true,
+      message: "Strava connected successfully.",
+    });
   },
 );
 

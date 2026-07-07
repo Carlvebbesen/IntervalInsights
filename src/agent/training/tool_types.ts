@@ -20,6 +20,12 @@ export interface CoachTool {
   description: string;
   keywords: string[];
   requires: ToolRequirement;
+  /**
+   * The tool makes its own server-side OpenAI call. Declared at the definition
+   * site so MCP exposure (which must exclude these — external clients must not
+   * drive our model spend) can't silently drift when tools are added/renamed.
+   */
+  llmBacked?: boolean;
   params: z.ZodObject<z.ZodRawShape>;
   handler: (ctx: CoachCtx, args: Record<string, unknown>) => Promise<unknown>;
 }
@@ -29,6 +35,7 @@ export function defineTool<S extends z.ZodRawShape>(spec: {
   description: string;
   keywords: string[];
   requires: ToolRequirement;
+  llmBacked?: boolean;
   params: z.ZodObject<S>;
   handler: (ctx: CoachCtx, args: z.infer<z.ZodObject<S>>) => Promise<unknown>;
 }): CoachTool {

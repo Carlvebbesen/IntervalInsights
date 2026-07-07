@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { describeRoute, resolver, validator } from "hono-openapi";
+import { describeRoute, validator } from "hono-openapi";
 import { z } from "zod";
 import * as activityController from "../controllers/activity_controller";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
@@ -9,20 +9,15 @@ import {
   ActivitySchema,
   ActivityStreamsSchema,
   AssignGearSchema,
-  DraftSegmentsResponseSchema,
-  EditSegmentsRequestSchema,
   EditorStateRequestSchema,
   EditorStateResponseSchema,
-  ErrorSchema,
-  ExpandedIntervalSetSchema,
-  GearStatsResponseSchema,
+  EditSegmentsRequestSchema,
   IntervalSegmentSchema,
-  PatchSegmentSchema,
-  ProposedSegmentSchema,
   SegmentsResponseSchema,
   SplitMetricSchema,
   StravaLapSchema,
 } from "../schemas/api_schemas";
+import { errJson, okJson } from "../schemas/route_helpers";
 import type { TGlobalEnv, TStravaEnv } from "../types/IRouters";
 
 const activitiesRouter = new Hono<TGlobalEnv>();
@@ -45,24 +40,13 @@ const activityIdParamSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
 
-const segmentParamSchema = z.object({
-  id: z.coerce.number().int().positive(),
-  segmentId: z.coerce.number().int().positive(),
-});
-
 activitiesRouter.post(
   "/",
   describeRoute({
     description: "List activities for the authenticated user",
     responses: {
-      200: {
-        description: "Paginated activity list",
-        content: { "application/json": { schema: resolver(ActivityListResponseSchema) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
+      200: okJson(ActivityListResponseSchema, "Paginated activity list"),
+      500: errJson("Internal server error"),
     },
   }),
   validator("json", bodySchema),
@@ -81,22 +65,10 @@ activitiesRouter.get(
   describeRoute({
     description: "Get full activity details (all stored columns) for a single activity",
     responses: {
-      200: {
-        description: "Activity",
-        content: { "application/json": { schema: resolver(ActivitySchema) } },
-      },
-      400: {
-        description: "Invalid activity ID",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      404: {
-        description: "Activity not found",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
+      200: okJson(ActivitySchema, "Activity"),
+      400: errJson("Invalid activity ID"),
+      404: errJson("Activity not found"),
+      500: errJson("Internal server error"),
     },
   }),
   validator("param", activityIdParamSchema),
@@ -118,38 +90,31 @@ activitiesRouter.get(
   describeRoute({
     description: "Get interval segments for an activity",
     responses: {
-      200: {
-        description: "Interval segments",
-        content: {
-          "application/json": {
-            schema: resolver(z.object({ intervalSegments: z.array(IntervalSegmentSchema) })),
-          },
-        },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
+      200: okJson(
+        z.object({ intervalSegments: z.array(IntervalSegmentSchema) }),
+        "Interval segments",
+      ),
+      500: errJson("Internal server error"),
     },
   }),
   validator("param", activityIdParamSchema),
   async (c) => {
     const { id } = c.req.valid("param");
-    const result = await activityController.getSegments(c.env.db, c.get("clerkUserId"), id);
+    const result = await activityController.getSegments(
+      c.env.db,
+      c.get("userId"),
+      c.get("clerkUserId"),
+      id,
+    );
     return c.json(result);
   },
 );
 
-// Editable activity-metadata fields, shared by PATCH /:id and the deprecated POST /update.
+// Editable activity-metadata fields for PATCH /:id.
 const activityMetadataSchema = z.object({
   trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),
   notes: z.string().nullable().optional(),
   feeling: z.number().nullable().optional(),
-});
-
-// POST /update carries the id in the body; PATCH /:id takes it from the path.
-const updateActivitySchema = activityMetadataSchema.extend({
-  id: z.number(),
 });
 
 // PATCH /:id — preferred update route.
@@ -158,22 +123,10 @@ activitiesRouter.patch(
   describeRoute({
     description: "Update activity metadata (trainingType, notes, feeling)",
     responses: {
-      200: {
-        description: "Updated activity",
-        content: { "application/json": { schema: resolver(ActivitySchema) } },
-      },
-      400: {
-        description: "Bad request",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      404: {
-        description: "Activity not found",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
+      200: okJson(ActivitySchema, "Updated activity"),
+      400: errJson("Bad request"),
+      404: errJson("Activity not found"),
+      500: errJson("Internal server error"),
     },
   }),
   validator("param", activityIdParamSchema),
@@ -195,18 +148,9 @@ activitiesRouter.patch(
   describeRoute({
     description: "Assign (or clear with gearId=null) the local shoe on an activity.",
     responses: {
-      200: {
-        description: "Updated activity",
-        content: { "application/json": { schema: resolver(ActivitySchema) } },
-      },
-      404: {
-        description: "Activity not found",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
+      200: okJson(ActivitySchema, "Updated activity"),
+      404: errJson("Activity not found"),
+      500: errJson("Internal server error"),
     },
   }),
   validator("param", activityIdParamSchema),
@@ -219,69 +163,8 @@ activitiesRouter.patch(
   },
 );
 
-/**
- * @deprecated Use `PATCH /activity/:id` instead. Kept for older app versions that
- * send the activity id in the request body. Remove once all clients have migrated.
- */
-activitiesRouter.post(
-  "/update",
-  describeRoute({
-    description:
-      "[DEPRECATED — use PATCH /activity/:id] Update activity metadata (trainingType, notes, feeling)",
-    deprecated: true,
-    responses: {
-      200: {
-        description: "Updated activity",
-        content: { "application/json": { schema: resolver(ActivitySchema) } },
-      },
-      400: {
-        description: "Bad request",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      404: {
-        description: "Activity not found",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-    },
-  }),
-  validator("json", updateActivitySchema),
-  async (c) => {
-    const { id, ...data } = c.req.valid("json");
-    const updated = await activityController.updateMetadata(c.env.db, c.get("userId"), id, data);
-    return c.json(updated);
-  },
-);
-
 const stravaActivitiesRouter = new Hono<TStravaEnv>();
 stravaActivitiesRouter.use("*", stravaMiddleware);
-
-// Served from LOCAL gear now (no Strava token needed) → on the global router.
-activitiesRouter.get(
-  "/gear/stats",
-  describeRoute({
-    description:
-      "[DEPRECATED — use GET /api/gear] Aggregated usage stats per shoe, from local gear (no Strava call).",
-    deprecated: true,
-    responses: {
-      200: {
-        description: "Gear stats",
-        content: { "application/json": { schema: resolver(GearStatsResponseSchema) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-    },
-  }),
-  async (c) => {
-    const result = await activityController.getGearStats(c.env.db, c.get("userId"));
-    return c.json(result);
-  },
-);
 
 // intervals.icu-preferred (falls back to Strava); on the global router so
 // intervals-only users (no Strava link) can reach it. Path id is the INTERNAL id.
@@ -290,16 +173,8 @@ activitiesRouter.get(
   describeRoute({
     description: "Get laps/intervals for an activity (intervals.icu-preferred, Strava fallback)",
     responses: {
-      200: {
-        description: "Activity laps",
-        content: {
-          "application/json": { schema: resolver(z.object({ laps: z.array(StravaLapSchema) })) },
-        },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
+      200: okJson(z.object({ laps: z.array(StravaLapSchema) }), "Activity laps"),
+      500: errJson("Internal server error"),
     },
   }),
   validator("param", activityIdParamSchema),
@@ -318,20 +193,11 @@ activitiesRouter.get(
 activitiesRouter.get(
   "/:id/splits",
   describeRoute({
-    description: "Get metric splits for an activity (Strava; empty for intervals-only — app derives)",
+    description:
+      "Get metric splits for an activity (Strava; empty for intervals-only — app derives)",
     responses: {
-      200: {
-        description: "Activity splits",
-        content: {
-          "application/json": {
-            schema: resolver(z.object({ splits_metric: z.array(SplitMetricSchema) })),
-          },
-        },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
+      200: okJson(z.object({ splits_metric: z.array(SplitMetricSchema) }), "Activity splits"),
+      500: errJson("Internal server error"),
     },
   }),
   validator("param", activityIdParamSchema),
@@ -347,48 +213,14 @@ activitiesRouter.get(
   },
 );
 
-stravaActivitiesRouter.get(
-  "/:id/heartrate",
-  describeRoute({
-    description: "Get heartrate stream for an activity",
-    responses: {
-      200: {
-        description: "Heartrate stream data",
-        content: { "application/json": { schema: resolver(z.unknown()) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-    },
-  }),
-  validator("param", activityIdParamSchema),
-  async (c) => {
-    const { id } = c.req.valid("param");
-    const streams = await activityController.getHeartrateStream(
-      c.env.db,
-      c.get("userId"),
-      c.get("stravaAccessToken"),
-      id,
-    );
-    return c.json(streams);
-  },
-);
-
 activitiesRouter.get(
   "/:id/streams",
   describeRoute({
     description:
       "Time-series streams (time, distance, altitude, cadence, velocity, heartrate when consented), intervals.icu-preferred with Strava fallback. Path id is the INTERNAL id.",
     responses: {
-      200: {
-        description: "Activity stream data",
-        content: { "application/json": { schema: resolver(ActivityStreamsSchema) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
+      200: okJson(ActivityStreamsSchema, "Activity stream data"),
+      500: errJson("Internal server error"),
     },
   }),
   validator("param", activityIdParamSchema),
@@ -404,61 +236,16 @@ activitiesRouter.get(
   },
 );
 
-stravaActivitiesRouter.get(
-  "/:id/draft-segments",
-  describeRoute({
-    description:
-      "Get the proposed draft segments + HR/pace streams for the visual segment editor (activity must be in 'initial' status).",
-    responses: {
-      200: {
-        description: "Draft segments and streams",
-        content: { "application/json": { schema: resolver(DraftSegmentsResponseSchema) } },
-      },
-      404: {
-        description: "Activity not found",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-    },
-  }),
-  validator("param", activityIdParamSchema),
-  async (c) => {
-    const { id } = c.req.valid("param");
-    const result = await activityController.getDraftSegments(
-      c.env.db,
-      c.get("userId"),
-      c.get("stravaAccessToken"),
-      id,
-    );
-    return c.json(result);
-  },
-);
-
 activitiesRouter.put(
   "/:id/segments",
   describeRoute({
     description:
       "Replace all interval segments for an activity (post-analysis edit). Recomputes actual stats from intervals.icu-preferred streams (Strava fallback) over the supplied boundaries.",
     responses: {
-      200: {
-        description: "Updated interval segments",
-        content: { "application/json": { schema: resolver(SegmentsResponseSchema) } },
-      },
-      400: {
-        description: "Bad request",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      404: {
-        description: "Activity not found",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
+      200: okJson(SegmentsResponseSchema, "Updated interval segments"),
+      400: errJson("Bad request"),
+      404: errJson("Activity not found"),
+      500: errJson("Internal server error"),
     },
   }),
   validator("param", activityIdParamSchema),
@@ -477,108 +264,18 @@ activitiesRouter.put(
   },
 );
 
-activitiesRouter.patch(
-  "/:id/segments/:segmentId",
-  describeRoute({
-    description:
-      "Edit a single interval segment (post-analysis). Recomputes stats for the whole activity since boundaries are contiguous.",
-    responses: {
-      200: {
-        description: "Updated interval segments",
-        content: { "application/json": { schema: resolver(SegmentsResponseSchema) } },
-      },
-      400: {
-        description: "Bad request",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      404: {
-        description: "Activity or segment not found",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-    },
-  }),
-  validator("param", segmentParamSchema),
-  validator("json", PatchSegmentSchema),
-  async (c) => {
-    const { id, segmentId } = c.req.valid("param");
-    const patch = c.req.valid("json");
-    const result = await activityController.editSingleSegment(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-      id,
-      segmentId,
-      patch,
-    );
-    return c.json(result);
-  },
-);
-
-const previewSegmentsSchema = z.object({
-  sets: z.array(ExpandedIntervalSetSchema),
-  trainingType: z.enum(trainingTypeEnum.enumValues),
-});
-
-activitiesRouter.post(
-  "/:id/preview-segments",
-  describeRoute({
-    description:
-      "Re-segment an activity for a user-supplied rep-list (the paced ExpandedIntervalSet[] returned by /parse-intervals or /proposed-pace, e.g. after re-describing the workout via text). The supplied paces flow straight through, so the returned per-rep segments — boundaries + paces — are the single source the segment list and pace view both render. Same cascade the analyze graph uses. Read-only; persists nothing.",
-    responses: {
-      200: {
-        description: "Proposed segments (boundaries + paces) for the supplied structure",
-        content: { "application/json": { schema: resolver(z.array(ProposedSegmentSchema)) } },
-      },
-      400: {
-        description: "Bad request",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      404: {
-        description: "Activity not found",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-    },
-  }),
-  validator("param", activityIdParamSchema),
-  validator("json", previewSegmentsSchema),
-  async (c) => {
-    const { id } = c.req.valid("param");
-    const { sets, trainingType } = c.req.valid("json");
-    const result = await activityController.previewSegments(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-      id,
-      sets,
-      trainingType,
-      c.var.logger,
-    );
-    return c.json(result);
-  },
-);
-
 stravaActivitiesRouter.post(
   "/:id/editor-state",
   describeRoute({
     description:
       "Hydrate the unified pace/segment editor in ONE call. Pass `structure` (WorkoutSet[]) on initial load to compute proposed paces + derive segments, or `sets` (paced ExpandedIntervalSet[]) to re-derive segments after a structural edit (add/remove/delete a rep) — the paces flow through verbatim. The returned `sets` drive the derived `segments`, so the pace view and segment list cannot diverge. Replaces the separate /proposed-pace + /draft-segments round-trips. Read-only.",
     responses: {
-      200: {
-        description: "Paced rep-list + derived segments (+ streams for the chart)",
-        content: { "application/json": { schema: resolver(EditorStateResponseSchema) } },
-      },
-      400: {
-        description: "Bad request",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-      404: {
-        description: "Activity not found",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
+      200: okJson(
+        EditorStateResponseSchema,
+        "Paced rep-list + derived segments (+ streams for the chart)",
+      ),
+      400: errJson("Bad request"),
+      404: errJson("Activity not found"),
     },
   }),
   validator("param", activityIdParamSchema),

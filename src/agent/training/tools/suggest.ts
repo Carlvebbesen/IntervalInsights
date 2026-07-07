@@ -22,6 +22,7 @@ const proposePaces = defineTool({
 
 const parseWorkout = defineTool({
   name: "parse_workout",
+  llmBacked: true,
   description:
     "Convert a free-text workout description (e.g. '6x800m @ 3:45 with 90s rest') into structured sets/steps (METERS + SECONDS). Pair with propose_paces to fill personalised paces.",
   keywords: ["parse", "workout", "free text", "describe", "structure", "convert"],

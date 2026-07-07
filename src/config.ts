@@ -21,6 +21,12 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   LOG_LEVEL: z.string().optional(),
+  PROGRESS_HEARTBEAT_MS: z.coerce.number().default(25000),
+  BRAIN_DIR: z.string().optional(),
+  MCP_ENFORCE_AUDIENCE: z
+    .string()
+    .optional()
+    .transform((v) => v === "true"),
 
   // Strava integration
   STRAVA_CLIENT_ID: z.string().min(1),

@@ -1,5 +1,4 @@
-import { and, asc, avg, count, desc, eq } from "drizzle-orm";
-import { max, sql } from "drizzle-orm";
+import { and, asc, avg, count, desc, eq, max, sql } from "drizzle-orm";
 import { activities, intervalSegments, intervalStructures } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 
@@ -123,9 +122,7 @@ export async function getStructureWithSets(db: Db, userId: string, structureId: 
     .orderBy(desc(activities.startDateLocal))
     .limit(5);
 
-  let sets: NonNullable<
-    NonNullable<(typeof rows)[number]["structure"]>["structure"]
-  > | null = null;
+  let sets: NonNullable<NonNullable<(typeof rows)[number]["structure"]>["structure"]> | null = null;
   for (const r of rows) {
     const candidate = r.structure?.structure;
     if (candidate && candidate.length > 0) {

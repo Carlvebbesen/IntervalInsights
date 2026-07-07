@@ -33,7 +33,7 @@ const identity = () => ({
 describe("/api/agents", () => {
   it("GET /pending returns array of pending activities", () =>
     withIdentity(identity(), async () => {
-      const res = await app.fetch(new Request("http://test/api/agents/pending"));
+      const res = await app.fetch(new Request("http://test/api/v1/agents/pending"));
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(Array.isArray(body)).toBe(true);
@@ -44,7 +44,7 @@ describe("/api/agents", () => {
   it("POST /start-analysis succeeds (analysis service mocked)", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/agents/start-analysis", {
+        new Request("http://test/api/v1/agents/start-analysis", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ activityId, stravaActivityId }),
@@ -58,7 +58,7 @@ describe("/api/agents", () => {
   it("POST /resume-analysis succeeds with valid payload", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/agents/resume-analysis", {
+        new Request("http://test/api/v1/agents/resume-analysis", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -73,51 +73,10 @@ describe("/api/agents", () => {
       expect(res.status).toBe(200);
     }));
 
-  it("POST /proposed-pace with empty structure returns []", () =>
-    withIdentity(identity(), async () => {
-      const res = await app.fetch(
-        new Request("http://test/api/agents/proposed-pace", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ structure: [] }),
-        }),
-      );
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual([]);
-    }));
-
-  it("POST /proposed-pace with structure returns paces (mocked)", () =>
-    withIdentity(identity(), async () => {
-      const res = await app.fetch(
-        new Request("http://test/api/agents/proposed-pace", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            structure: [
-              {
-                set_reps: 1,
-                steps: [
-                  {
-                    reps: 4,
-                    work_type: "DISTANCE",
-                    work_value: 400,
-                    recovery_type: "TIME",
-                    recovery_value: 90,
-                  },
-                ],
-              },
-            ],
-          }),
-        }),
-      );
-      expect(res.status).toBe(200);
-      expect(Array.isArray(await res.json())).toBe(true);
-    }));
-
   it("POST /parse-intervals returns [] for stub agent", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/agents/parse-intervals", {
+        new Request("http://test/api/v1/agents/parse-intervals", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: "6x400m @ 90s rest" }),
@@ -130,7 +89,7 @@ describe("/api/agents", () => {
   it("POST /parse-intervals rejects too-short text", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/agents/parse-intervals", {
+        new Request("http://test/api/v1/agents/parse-intervals", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: "x" }),

@@ -90,6 +90,11 @@ export const o4ReasoningModel = new ChatOpenAI({
 
 const MAX_STRUCTURED_ATTEMPTS = 2;
 
+export function isRateLimitError(error: unknown): boolean {
+  const err = error as { status?: number; code?: string } | undefined;
+  return err?.status === 429 || err?.code === "rate_limit_exceeded";
+}
+
 export async function invokeStructured<T extends Record<string, unknown>>(
   schema: z.ZodType<T>,
   prompt: string,
@@ -99,12 +104,16 @@ export async function invokeStructured<T extends Record<string, unknown>>(
   // Retry transient structured-output failures (timeouts, malformed/parse errors)
   // before giving up. Returns null after exhausting (callers treat null as a hard
   // failure → activity goes to `error`, which /pending then auto-retries).
+  // Rate-limit errors are RETHROWN instead of swallowed, so the callers wrapped
+  // in invokeWithRateLimitRetry get the Retry-After-honouring backoff rather
+  // than converting a 429 burst straight into `error` activities.
   // `model` defaults to gpt-4o-mini; pass a stronger tier for reasoning-heavy agents.
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_STRUCTURED_ATTEMPTS; attempt++) {
     try {
       return await model.withStructuredOutput<T>(schema).invoke(prompt);
     } catch (err) {
+      if (isRateLimitError(err)) throw err;
       lastErr = err;
       logger.warn(
         { err, label, attempt, maxAttempts: MAX_STRUCTURED_ATTEMPTS },
@@ -112,11 +121,27 @@ export async function invokeStructured<T extends Record<string, unknown>>(
       );
     }
   }
-  logger.error({ err: lastErr, label }, `Failed to ${label} after ${MAX_STRUCTURED_ATTEMPTS} attempts`);
+  logger.error(
+    { err: lastErr, label },
+    `Failed to ${label} after ${MAX_STRUCTURED_ATTEMPTS} attempts`,
+  );
   return null;
 }
 
 const MAX_ATTEMPTS = 3;
+const MAX_RATE_LIMIT_WAIT_MS = 60_000;
+
+function retryAfterMs(error: unknown): number | null {
+  const headers = (error as { headers?: unknown })?.headers;
+  let raw: string | null | undefined;
+  if (headers instanceof Headers) {
+    raw = headers.get("retry-after");
+  } else if (headers && typeof headers === "object") {
+    raw = (headers as Record<string, string>)["retry-after"];
+  }
+  const sec = raw ? Number.parseFloat(raw) : Number.NaN;
+  return Number.isFinite(sec) ? sec * 1000 : null;
+}
 
 export async function invokeWithRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
   let attempt = 0;
@@ -125,18 +150,11 @@ export async function invokeWithRateLimitRetry<T>(fn: () => Promise<T>): Promise
     try {
       return await fn();
     } catch (error) {
-      const err = error as { message?: string; status?: number; headers?: Record<string, string> };
-      const msg = err?.message ?? "";
-      const isRateLimit = err?.status === 429 || msg.includes("429");
-      if (!isRateLimit || attempt >= MAX_ATTEMPTS) throw error;
+      if (!isRateLimitError(error) || attempt >= MAX_ATTEMPTS) throw error;
 
-      const retryAfterHeader = err?.headers?.["retry-after"];
-      const retryAfterSec = retryAfterHeader ? Number.parseFloat(retryAfterHeader) : Number.NaN;
-      const base = Number.isFinite(retryAfterSec)
-        ? retryAfterSec * 1000
-        : 2000 * 2 ** (attempt - 1);
+      const base = retryAfterMs(error) ?? 2000 * 2 ** (attempt - 1);
       const jitter = Math.floor(Math.random() * 750);
-      const waitMs = Math.max(1000, base + jitter);
+      const waitMs = Math.min(MAX_RATE_LIMIT_WAIT_MS, Math.max(1000, base + jitter));
       logger.warn(
         { attempt, maxAttempts: MAX_ATTEMPTS, waitMs },
         "OpenAI 429 — waiting before retry",

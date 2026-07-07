@@ -89,14 +89,16 @@ export const getProposedPaceForStructure = async (
 // so it is EXCLUDED from averages rather than dragging them toward 0.
 const getEffectivePace = (row: HistoryRow): number | null => {
   if (row.targetPace != null && row.targetPace > 0) return row.targetPace;
-  if (row.actualDuration > 0 && row.actualDistance > 0) return row.actualDistance / row.actualDuration;
+  if (row.actualDuration > 0 && row.actualDistance > 0)
+    return row.actualDistance / row.actualDuration;
   return null;
 };
 
 // Unit-aware match tolerance: distance within max(50 m, 5%), time within
 // max(5 s, 5%). A flat `< 1` was far too tight for time targets (90 s vs 91 s).
 function targetsMatch(targetType: string, historyVal: number, stepVal: number): boolean {
-  const tol = targetType === "distance" ? Math.max(50, stepVal * 0.05) : Math.max(5, stepVal * 0.05);
+  const tol =
+    targetType === "distance" ? Math.max(50, stepVal * 0.05) : Math.max(5, stepVal * 0.05);
   return Math.abs(historyVal - stepVal) <= tol;
 }
 
@@ -116,7 +118,8 @@ function interpolatePaces(rows: HistoryRow[], sets: ExpandedIntervalSet[]): Expa
       // interleaves rows from different activities. No same-shape history → no
       // proposal (null), rather than bleeding a different rep's or cross-type pace.
       const matching = rows.filter(
-        (r) => r.targetType === targetType && targetsMatch(targetType, r.targetValue, step.work_value),
+        (r) =>
+          r.targetType === targetType && targetsMatch(targetType, r.targetValue, step.work_value),
       );
       if (matching.length === 0) return { ...step, target_pace: null };
       // Recent fitness wins: use last-month matches if any, else all matches.

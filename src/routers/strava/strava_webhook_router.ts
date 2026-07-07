@@ -2,14 +2,18 @@ import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
-import { config } from "../../config";
+import { requireRole } from "../../middlewares/role_middleware";
+import {
+  createPushSubscription,
+  deletePushSubscription,
+  listPushSubscriptions,
+} from "../../services/strava_webhook_service";
 import type { TStravaEnv } from "../../types/IRouters";
 
-const STRAVA_CLIENT_ID = config.STRAVA_CLIENT_ID;
-const STRAVA_CLIENT_SECRET = config.STRAVA_CLIENT_SECRET;
-const STRAVA_WEBHOOK_VERIFY_TOKEN = config.STRAVA_WEBHOOK_VERIFY_TOKEN;
-
 const stravaWebhookRouter = new Hono<TStravaEnv>();
+
+// App-wide push subscription — only admins may create/list/delete it.
+stravaWebhookRouter.use("*", requireRole("admin"));
 
 // Strava returns various error/success shapes; document what we surface.
 const StravaWebhookCreateSubscriptionResponseSchema = z
@@ -62,27 +66,8 @@ stravaWebhookRouter.get(
     },
   }),
   async (c) => {
-    const CALLBACK_URL = `${config.APP_BASE_URL}api/strava/event`;
-    c.var.logger.info({ callbackUrl: CALLBACK_URL }, "Setting up Strava subscription");
-    const formData = new FormData();
-    formData.append("client_id", STRAVA_CLIENT_ID);
-    formData.append("client_secret", STRAVA_CLIENT_SECRET);
-    formData.append("callback_url", CALLBACK_URL);
-    formData.append("verify_token", STRAVA_WEBHOOK_VERIFY_TOKEN);
-
-    const response = await fetch("https://www.strava.com/api/v3/push_subscriptions", {
-      method: "POST",
-      body: formData,
-    });
-
-    const data = await response.json();
-
-    if (response.ok) {
-      c.var.logger.info({ data }, "Subscription request sent successfully");
-    } else {
-      c.var.logger.error({ data }, "Subscription request failed");
-    }
-    return c.json(data, response.status as ContentfulStatusCode);
+    const { status, body } = await createPushSubscription(c.var.logger);
+    return c.json(body, status as ContentfulStatusCode);
   },
 );
 
@@ -101,16 +86,8 @@ stravaWebhookRouter.get(
     },
   }),
   async (c) => {
-    const url = new URL("https://www.strava.com/api/v3/push_subscriptions");
-    url.searchParams.append("client_id", STRAVA_CLIENT_ID);
-    url.searchParams.append("client_secret", STRAVA_CLIENT_SECRET);
-
-    const response = await fetch(url.toString(), {
-      method: "GET",
-    });
-
-    const data = await response.json();
-    return c.json(data, response.status as ContentfulStatusCode);
+    const { status, body } = await listPushSubscriptions();
+    return c.json(body, status as ContentfulStatusCode);
   },
 );
 
@@ -133,21 +110,11 @@ stravaWebhookRouter.delete(
   }),
   validator("param", SubscriptionDeleteParamSchema),
   async (c) => {
-    const id = c.req.param("id");
-    const url = new URL(`https://www.strava.com/api/v3/push_subscriptions/${id}`);
-    url.searchParams.append("client_id", STRAVA_CLIENT_ID);
-    url.searchParams.append("client_secret", STRAVA_CLIENT_SECRET);
-
-    const response = await fetch(url.toString(), {
-      method: "DELETE",
-    });
-
-    if (response.status === 204) {
+    const { status, body } = await deletePushSubscription(c.req.param("id"));
+    if (status === 204) {
       return c.json({ message: "Subscription deleted successfully" }, 200);
     }
-
-    const errorData = await response.json();
-    return c.json(errorData, response.status as ContentfulStatusCode);
+    return c.json(body, status as ContentfulStatusCode);
   },
 );
 

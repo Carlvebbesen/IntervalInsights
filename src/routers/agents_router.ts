@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
-import { workoutSet } from "../agent/initial_analysis_agent";
 import * as analysisController from "../controllers/analysis_controller";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
 import { trainingTypeEnum } from "../schema/enums";
@@ -40,6 +39,8 @@ agentsRouter.get(
 
 const startAnalysisSchema = z.object({
   activityId: z.number(),
+  // Deprecated: accepted for wire-compat but ignored — the Strava id is
+  // resolved from the owned activity row server-side.
   stravaActivityId: z.number().nullish(),
   // Re-run an already-analysed / sync-imported activity (bypasses the
   // already-in-progress/completed skip guard; overwrites the draft + segments).
@@ -67,12 +68,11 @@ agentsRouter.post(
   }),
   validator("json", startAnalysisSchema),
   async (c) => {
-    const { activityId, stravaActivityId, force } = c.req.valid("json");
-    const result = analysisController.startActivityAnalysis(
+    const { activityId, force } = c.req.valid("json");
+    const result = await analysisController.startActivityAnalysis(
       c.env.db,
       c.get("stravaAccessToken"),
       activityId,
-      stravaActivityId,
       c.get("userId"),
       force ?? false,
     );
@@ -82,7 +82,8 @@ agentsRouter.post(
 
 const resumeAnalysisSchema = z.object({
   activityId: z.number(),
-  notes: z.string(),
+  // Capped: notes are interpolated into the full-analysis + event prompts.
+  notes: z.string().max(2000),
   sets: z.array(ExpandedIntervalSetSchema).optional(),
   trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),
   feeling: z.number().int().min(1).max(5).nullable().optional(),
@@ -113,47 +114,11 @@ agentsRouter.post(
     const result = await analysisController.resumeActivityAnalysis(
       c.env.db,
       c.get("stravaAccessToken"),
+      c.get("userId"),
       c.req.valid("json"),
       c.var.logger,
     );
     return c.json(result, 200);
-  },
-);
-
-const paceRequestSchema = z.object({
-  structure: z.array(workoutSet),
-  activityId: z.number().optional(),
-});
-
-agentsRouter.post(
-  "/proposed-pace",
-  describeRoute({
-    description: "Get proposed paces for an interval structure",
-    responses: {
-      200: {
-        description:
-          "Proposed paces — one ExpandedIntervalSet per workout set, in order. Empty array if no structure was provided.",
-        content: { "application/json": { schema: resolver(ProposedPaceResponseSchema) } },
-      },
-      500: {
-        description: "Internal server error",
-        content: { "application/json": { schema: resolver(ErrorSchema) } },
-      },
-    },
-  }),
-  validator("json", paceRequestSchema),
-  async (c) => {
-    const { structure, activityId } = c.req.valid("json");
-    const result = await analysisController.getProposedPace(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-      c.get("stravaAccessToken"),
-      structure,
-      activityId,
-      c.var.logger,
-    );
-    return c.json(result);
   },
 );
 

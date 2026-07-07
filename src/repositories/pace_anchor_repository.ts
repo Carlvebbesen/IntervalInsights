@@ -1,4 +1,4 @@
-import { and, eq, gte, gt, inArray } from "drizzle-orm";
+import { and, eq, gt, gte, inArray } from "drizzle-orm";
 import { activities, intervalSegments, RUNNING_SPORT_TYPES } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 

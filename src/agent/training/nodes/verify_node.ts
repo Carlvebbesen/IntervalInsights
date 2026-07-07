@@ -2,7 +2,7 @@ import { type AIMessage, isAIMessage } from "@langchain/core/messages";
 import { z } from "zod";
 import { logger } from "../../../logger";
 import type { CoachArtifact } from "../../../schemas/api_schemas";
-import { invokeStructured } from "../../model";
+import { invokeStructured, isRateLimitError } from "../../model";
 import type { TrainingState, TrainingUpdate } from "../graph_state";
 import { buildVerifyPrompt, SAFE_REFUSAL } from "../prompts";
 
@@ -73,11 +73,13 @@ export async function verifyNode(state: TrainingState): Promise<TrainingUpdate> 
   const question = textOf(lastHuman?.content);
 
   const artifacts = state.pendingArtifacts ?? [];
+  // Rate-limit throws from invokeStructured degrade to the null pass-through —
+  // a 429 must not fail the whole chat turn just because the verifier is busy.
   const verdict = await invokeStructured(
     verifySchema,
     buildVerifyPrompt(question, candidate, summarizeArtifacts(artifacts)),
     "verify coach answer",
-  );
+  ).catch((err) => (isRateLimitError(err) ? null : Promise.reject(err)));
 
   if (!verdict) {
     logger.warn("coach verify node: verifier returned null, passing draft through");

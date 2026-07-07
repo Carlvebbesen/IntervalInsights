@@ -32,7 +32,7 @@ function stubFetch(handler: (input: Request | URL | string) => Response) {
 describe("/api/intervals/auth", () => {
   it("GET /url returns the intervals.icu authorize URL", () =>
     withIdentity(identity(), async () => {
-      const res = await app.fetch(new Request("http://test/api/intervals/auth/url"));
+      const res = await app.fetch(new Request("http://test/api/v1/intervals/auth/url"));
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.url).toContain("intervals.icu/oauth/authorize");
@@ -49,7 +49,7 @@ describe("/api/intervals/auth", () => {
         }),
       );
       const res = await app.fetch(
-        new Request("http://test/api/intervals/auth/exchange", {
+        new Request("http://test/api/v1/intervals/auth/exchange", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ code: "auth-code" }),
@@ -70,7 +70,7 @@ describe("/api/intervals/auth", () => {
           }),
       );
       const res = await app.fetch(
-        new Request("http://test/api/intervals/auth/exchange", {
+        new Request("http://test/api/v1/intervals/auth/exchange", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ code: "bad" }),
@@ -82,7 +82,7 @@ describe("/api/intervals/auth", () => {
   it("POST /disconnect succeeds", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/intervals/auth/disconnect", { method: "POST" }),
+        new Request("http://test/api/v1/intervals/auth/disconnect", { method: "POST" }),
       );
       expect(res.status).toBe(200);
       const body = await res.json();
@@ -92,7 +92,7 @@ describe("/api/intervals/auth", () => {
   it("GET /status reports connection state", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/intervals/auth/status"),
+        new Request("http://test/api/v1/intervals/auth/status"),
       );
       expect(res.status).toBe(200);
       const body = await res.json();
@@ -104,7 +104,7 @@ describe("/api/intervals (sync)", () => {
   it("POST /sync kicks off the link service in the background", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/intervals/sync", { method: "POST" }),
+        new Request("http://test/api/v1/intervals/sync", { method: "POST" }),
       );
       expect(res.status).toBe(202);
       const body = await res.json();

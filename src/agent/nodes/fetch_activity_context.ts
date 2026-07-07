@@ -36,7 +36,7 @@ export async function fetchActivityContext(
   const [_, row, processHeartRate] = await Promise.all([
     db
       .update(activities)
-      .set({ analysisStatus: "ongoing_init" })
+      .set({ analysisStatus: "ongoing_init", analysisStartedAt: new Date() })
       .where(eq(activities.id, state.activityId)),
     db.query.activities.findFirst({
       where: eq(activities.id, state.activityId),

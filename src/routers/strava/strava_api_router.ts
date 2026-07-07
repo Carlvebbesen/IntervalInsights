@@ -1,17 +1,16 @@
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
+import { runInBackground } from "../../background";
 import {
   ErrorSchema,
   StravaSummaryActivitySchema,
   SyncResultSchema,
   SyncStartedSchema,
 } from "../../schemas/api_schemas";
-import { runInBackground } from "../../background";
-import { existingStravaIdsForUser } from "../../repositories/activity_repository";
 import { startAnalysis } from "../../services/analysis_service";
 import { stravaApiService } from "../../services/strava_api_service";
-import { syncAllFromStrava } from "../../services/strava_link_service";
+import { listUnsyncedActivities, syncAllFromStrava } from "../../services/strava_link_service";
 import type { TStravaEnv } from "../../types/IRouters";
 
 const stravaApiRouter = new Hono<TStravaEnv>();
@@ -57,29 +56,7 @@ stravaApiRouter.get(
       return c.json({ error: "Unauthorized" }, 401);
     }
 
-    const baseQuery = c.req.query();
-    const startPage = Number(baseQuery.page ?? "1");
-    const MAX_PAGES_TO_SKIP = 10;
-
-    for (let offset = 0; offset < MAX_PAGES_TO_SKIP; offset++) {
-      const stravaActivities = await stravaApiService.listAthleteActivities(accessToken, {
-        ...baseQuery,
-        page: String(startPage + offset),
-      });
-
-      if (stravaActivities.length === 0) return c.json([]);
-
-      const syncedIds = await existingStravaIdsForUser(
-        c.env.db,
-        userId,
-        stravaActivities.map((a) => a.id),
-      );
-      const filtered = stravaActivities.filter((a) => !syncedIds.has(a.id));
-
-      if (filtered.length > 0) return c.json(filtered);
-    }
-
-    return c.json([]);
+    return c.json(await listUnsyncedActivities(c.env.db, userId, accessToken, c.req.query()));
   },
 );
 
@@ -114,7 +91,11 @@ stravaApiRouter.post(
         ids,
         c.env.db,
         (internalId, stravaActivityId) => {
-          startAnalysis(c.env.db, accessToken, internalId, stravaActivityId, userId);
+          runInBackground(
+            "analysis.start",
+            () => startAnalysis(c.env.db, accessToken, internalId, stravaActivityId, userId),
+            { attributes: { "activity.id": internalId, "user.id": userId } },
+          );
         },
       ),
     );

@@ -1,13 +1,12 @@
-import { createClerkClient } from "@clerk/backend";
 import { sleep } from "bun";
 import { and, eq, gte, isNull, lte } from "drizzle-orm";
-import { config } from "../config";
 import { IntervalsError } from "../error";
 import { logger } from "../logger";
 import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import { activities, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsActivity } from "../types/intervals/IIntervalsActivity";
+import { clerkClient } from "./clerk_client";
 import { intervalsApiService } from "./intervals_api_service";
 import { mapIntervalsActivityToInsert } from "./intervals_mappers";
 import { publishSync } from "./progress_service";
@@ -319,7 +318,12 @@ export interface MasterSyncResult extends SyncIntervalsResult {
   processed: number;
 }
 
-type FuzzyLocal = { id: number; startMs: number; distance: number; stravaActivityId: number | null };
+type FuzzyLocal = {
+  id: number;
+  startMs: number;
+  distance: number;
+  stravaActivityId: number | null;
+};
 
 function findUniqueInMemoryMatch(
   intervalsActivity: IIntervalsActivity,
@@ -420,90 +424,90 @@ export async function syncAllFromIntervals(
     const floorMs = Date.now() - MASTER_HISTORY_FLOOR_MS;
     let windowNewestMs = Date.now();
 
-  while (windowNewestMs > floorMs) {
-    const windowOldestMs = windowNewestMs - MASTER_WINDOW_MS;
-    const oldest = new Date(windowOldestMs).toISOString().slice(0, 10);
-    const newest = new Date(windowNewestMs).toISOString().slice(0, 10);
+    while (windowNewestMs > floorMs) {
+      const windowOldestMs = windowNewestMs - MASTER_WINDOW_MS;
+      const oldest = new Date(windowOldestMs).toISOString().slice(0, 10);
+      const newest = new Date(windowNewestMs).toISOString().slice(0, 10);
 
-    let windowActivities: IIntervalsActivity[];
-    try {
-      windowActivities = await intervalsApiService.listActivities(accessToken, oldest, newest);
-    } catch (err) {
-      logger.error({ err, oldest, newest }, "intervals.icu master sync window failed");
-      result.failed++;
-      if (err instanceof IntervalsError && err.status === 429) {
-        retryAt = Date.now() + INTERVALS_RATE_LIMIT_COOLDOWN_MS;
-        break;
+      let windowActivities: IIntervalsActivity[];
+      try {
+        windowActivities = await intervalsApiService.listActivities(accessToken, oldest, newest);
+      } catch (err) {
+        logger.error({ err, oldest, newest }, "intervals.icu master sync window failed");
+        result.failed++;
+        if (err instanceof IntervalsError && err.status === 429) {
+          retryAt = Date.now() + INTERVALS_RATE_LIMIT_COOLDOWN_MS;
+          break;
+        }
+        windowNewestMs = windowOldestMs;
+        await sleep(SYNC_THROTTLE_MS);
+        continue;
       }
+
+      if (windowActivities.length === 0) break;
+
+      await publishSync(user.id, {
+        kind: SYNC_KIND,
+        phase: "progress",
+        title: SYNC_TITLE,
+        messageKey: "sync_scanning_window",
+        messageArgs: {
+          period: newest.slice(0, 7),
+          imported: String(result.created),
+          linked: String(result.linked),
+        },
+      });
+
+      for (const intervalsActivity of windowActivities) {
+        if (seen.has(intervalsActivity.id)) continue;
+        seen.add(intervalsActivity.id);
+
+        if (knownIntervalsIds.has(intervalsActivity.id)) continue;
+        result.candidates++;
+
+        try {
+          const localMatch = findUniqueInMemoryMatch(intervalsActivity, unlinkedLocals);
+          if (localMatch) {
+            let full = intervalsActivity;
+            try {
+              full = await intervalsApiService.getActivity(accessToken, intervalsActivity.id);
+            } catch (err) {
+              logger.warn(
+                { err, intervalsActivityId: intervalsActivity.id },
+                "intervals.icu getActivity failed during master sync — using list payload",
+              );
+            }
+            await commitLink(context, localMatch.id, full);
+            knownIntervalsIds.add(intervalsActivity.id);
+            const idx = unlinkedLocals.indexOf(localMatch);
+            if (idx >= 0) unlinkedLocals.splice(idx, 1);
+            result.linked++;
+          } else {
+            const payload: InsertActivity = {
+              ...mapIntervalsActivityToInsert(intervalsActivity, user.id),
+              intervalsAnalyzed: true,
+              intervalsIcuEnrichedAt: new Date(),
+              analysisStatus: AUTO_ANALYZE_ON_IMPORT ? "pending" : "completed",
+              ...buildEnrichment(intervalsActivity),
+            };
+            await context.db.insert(activities).values(payload).onConflictDoNothing();
+            knownIntervalsIds.add(intervalsActivity.id);
+            result.created++;
+          }
+        } catch (err) {
+          result.failed++;
+          logger.error(
+            { err, intervalsActivityId: intervalsActivity.id },
+            "intervals.icu master sync failed for activity",
+          );
+        }
+
+        result.processed++;
+      }
+
       windowNewestMs = windowOldestMs;
       await sleep(SYNC_THROTTLE_MS);
-      continue;
     }
-
-    if (windowActivities.length === 0) break;
-
-    await publishSync(user.id, {
-      kind: SYNC_KIND,
-      phase: "progress",
-      title: SYNC_TITLE,
-      messageKey: "sync_scanning_window",
-      messageArgs: {
-        period: newest.slice(0, 7),
-        imported: String(result.created),
-        linked: String(result.linked),
-      },
-    });
-
-    for (const intervalsActivity of windowActivities) {
-      if (seen.has(intervalsActivity.id)) continue;
-      seen.add(intervalsActivity.id);
-
-      if (knownIntervalsIds.has(intervalsActivity.id)) continue;
-      result.candidates++;
-
-      try {
-        const localMatch = findUniqueInMemoryMatch(intervalsActivity, unlinkedLocals);
-        if (localMatch) {
-          let full = intervalsActivity;
-          try {
-            full = await intervalsApiService.getActivity(accessToken, intervalsActivity.id);
-          } catch (err) {
-            logger.warn(
-              { err, intervalsActivityId: intervalsActivity.id },
-              "intervals.icu getActivity failed during master sync — using list payload",
-            );
-          }
-          await commitLink(context, localMatch.id, full);
-          knownIntervalsIds.add(intervalsActivity.id);
-          const idx = unlinkedLocals.indexOf(localMatch);
-          if (idx >= 0) unlinkedLocals.splice(idx, 1);
-          result.linked++;
-        } else {
-          const payload: InsertActivity = {
-            ...mapIntervalsActivityToInsert(intervalsActivity, user.id),
-            intervalsAnalyzed: true,
-            intervalsIcuEnrichedAt: new Date(),
-            analysisStatus: AUTO_ANALYZE_ON_IMPORT ? "pending" : "completed",
-            ...buildEnrichment(intervalsActivity),
-          };
-          await context.db.insert(activities).values(payload).onConflictDoNothing();
-          knownIntervalsIds.add(intervalsActivity.id);
-          result.created++;
-        }
-      } catch (err) {
-        result.failed++;
-        logger.error(
-          { err, intervalsActivityId: intervalsActivity.id },
-          "intervals.icu master sync failed for activity",
-        );
-      }
-
-      result.processed++;
-    }
-
-    windowNewestMs = windowOldestMs;
-    await sleep(SYNC_THROTTLE_MS);
-  }
 
     result.noMatch = result.candidates - result.linked - result.created;
   } catch (err) {
@@ -526,7 +530,6 @@ export async function disconnectIntervals(
   context: IGlobalBindings,
   clerkUserId: string,
 ): Promise<void> {
-  const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
   await clerkClient.users.updateUserMetadata(clerkUserId, {
     privateMetadata: { intervals: null },
   });

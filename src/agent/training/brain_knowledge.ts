@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { config } from "../../config";
 
 export interface BrainPage {
   slug: string;
@@ -33,7 +34,7 @@ const MAX_SEARCH_RESULTS = 8;
 const SUMMARY_MAX_LENGTH = 300;
 
 function defaultBrainDir(): string {
-  return process.env.BRAIN_DIR ?? join(process.cwd(), "knowledge", "brain");
+  return config.BRAIN_DIR ?? join(process.cwd(), "knowledge", "brain");
 }
 
 function parseInlineArray(value: string): string[] {

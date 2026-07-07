@@ -1,5 +1,3 @@
-import { IntervalsError } from "../error";
-import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import type {
   HrvStatus,
   IFitnessPoint,
@@ -8,6 +6,7 @@ import type {
 } from "../types/intervals/IFitness";
 import type { IIntervalsWellness } from "../types/intervals/IIntervalsWellness";
 import { intervalsApiService } from "./intervals_api_service";
+import { withIntervalsToken } from "./intervals_token_helper";
 import { toISODate } from "./utils";
 
 const DAY_MS = 86_400_000;
@@ -138,10 +137,6 @@ function buildFitnessPoint(w: IIntervalsWellness, hrv: HrvAssessment): IFitnessP
   };
 }
 
-function isNotLinked(err: unknown): boolean {
-  return err instanceof IntervalsError && (err.status === 403 || err.status === 401);
-}
-
 /**
  * Daily CTL/ATL/TSB/load + HRV(+status) + sleep score over [oldest, newest].
  * Fetches extra leading history so each point's hrvStatus has a full baseline,
@@ -152,24 +147,24 @@ export async function fetchFitnessSeries(
   oldest: string,
   newest: string,
 ): Promise<IFitnessSeriesResult> {
-  let accessToken: string;
-  try {
-    accessToken = await getIntervalsAccessToken(clerkUserId);
-  } catch (err) {
-    if (isNotLinked(err)) return { status: "not_linked", data: null };
-    throw err;
-  }
+  const result = await withIntervalsToken(
+    clerkUserId,
+    async (accessToken): Promise<IFitnessSeriesResult> => {
+      const extendedOldest = shiftIsoDate(oldest, -(BASELINE_DAYS + ROLLING_DAYS));
+      const records = await intervalsApiService.getWellness(accessToken, extendedOldest, newest);
 
-  const extendedOldest = shiftIsoDate(oldest, -(BASELINE_DAYS + ROLLING_DAYS));
-  const records = await intervalsApiService.getWellness(accessToken, extendedOldest, newest);
+      const inRange = records.filter((r) => r.id >= oldest && r.id <= newest);
+      if (inRange.length === 0) return { status: "no_data", data: null };
 
-  const inRange = records.filter((r) => r.id >= oldest && r.id <= newest);
-  if (inRange.length === 0) return { status: "no_data", data: null };
+      const hrvByDate = buildHrvByDate(records);
+      const points = inRange.map((r) =>
+        buildFitnessPoint(r, computeHrvAssessment(hrvByDate, r.id)),
+      );
 
-  const hrvByDate = buildHrvByDate(records);
-  const points = inRange.map((r) => buildFitnessPoint(r, computeHrvAssessment(hrvByDate, r.id)));
-
-  return { status: "ok", data: { range: { oldest, newest }, points } };
+      return { status: "ok", data: { range: { oldest, newest }, points } };
+    },
+  );
+  return result.status === "not_linked" ? { status: "not_linked", data: null } : result.data;
 }
 
 /**
@@ -180,20 +175,15 @@ export async function fetchFitnessDayBlock(
   clerkUserId: string,
   date: string,
 ): Promise<IFitnessPoint | null> {
-  let accessToken: string;
-  try {
-    accessToken = await getIntervalsAccessToken(clerkUserId);
-  } catch (err) {
-    if (isNotLinked(err)) return null;
-    throw err;
-  }
+  const result = await withIntervalsToken(clerkUserId, async (accessToken) => {
+    const extendedOldest = shiftIsoDate(date, -(BASELINE_DAYS + ROLLING_DAYS));
+    const records = await intervalsApiService.getWellness(accessToken, extendedOldest, date);
 
-  const extendedOldest = shiftIsoDate(date, -(BASELINE_DAYS + ROLLING_DAYS));
-  const records = await intervalsApiService.getWellness(accessToken, extendedOldest, date);
+    const dayRecord = records.find((r) => r.id === date);
+    if (!dayRecord) return null;
 
-  const dayRecord = records.find((r) => r.id === date);
-  if (!dayRecord) return null;
-
-  const hrvByDate = buildHrvByDate(records);
-  return buildFitnessPoint(dayRecord, computeHrvAssessment(hrvByDate, date));
+    const hrvByDate = buildHrvByDate(records);
+    return buildFitnessPoint(dayRecord, computeHrvAssessment(hrvByDate, date));
+  });
+  return result.status === "not_linked" ? null : result.data;
 }

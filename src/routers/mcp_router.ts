@@ -28,13 +28,26 @@ mcpRouter.get("/.well-known/oauth-protected-resource/mcp", (c) =>
   ),
 );
 
-mcpRouter.get("/.well-known/oauth-authorization-server", async (c) =>
-  c.json(
-    await fetchClerkAuthorizationServerMetadata({
+// Proxied from Clerk per request otherwise: cache it so an unauthenticated
+// caller can't use us as an outbound-fetch amplifier, and a Clerk hiccup
+// doesn't 500 the discovery flow.
+const AS_METADATA_TTL_MS = 5 * 60_000;
+let asMetadataCache: { at: number; value: Record<string, unknown> } | null = null;
+
+mcpRouter.get("/.well-known/oauth-authorization-server", async (c) => {
+  if (asMetadataCache && Date.now() - asMetadataCache.at < AS_METADATA_TTL_MS) {
+    return c.json(asMetadataCache.value);
+  }
+  try {
+    const value = (await fetchClerkAuthorizationServerMetadata({
       publishableKey: config.CLERK_PUBLISHABLE_KEY,
-    }),
-  ),
-);
+    })) as Record<string, unknown>;
+    asMetadataCache = { at: Date.now(), value };
+    return c.json(value);
+  } catch {
+    return c.json({ error: "Authorization server metadata unavailable" }, 503);
+  }
+});
 
 // The MCP endpoint itself: outside the `/api/*` session-auth chain, so it injects
 // its own db handle and verifies OAuth tokens instead of Clerk session tokens.
@@ -44,7 +57,7 @@ mcpRouter.use("/mcp", async (c, next) => {
 });
 mcpRouter.use("/mcp", mcpAuth);
 
-mcpRouter.all("/mcp", async (c) => {
+mcpRouter.post("/mcp", async (c) => {
   const { ctx, tools } = buildMcpContext(c);
   const server = buildMcpServer(ctx, tools);
   const transport = new StreamableHTTPTransport();
@@ -52,5 +65,10 @@ mcpRouter.all("/mcp", async (c) => {
   const response = await transport.handleRequest(c);
   return response ?? c.body(null, 202);
 });
+
+// Stateless server: a GET would open a standalone SSE stream (plus keepalive
+// timer) that a per-request server can never push to — one dead connection per
+// call. DELETE (session termination) is meaningless without sessions.
+mcpRouter.all("/mcp", (c) => c.json({ error: "Method not allowed" }, 405));
 
 export default mcpRouter;

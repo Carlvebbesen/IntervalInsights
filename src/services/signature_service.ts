@@ -9,13 +9,13 @@ import {
 } from "../schema";
 import type { DraftAnalysisResult } from "../schema/activities";
 import type { TrainingType } from "../schema/enums";
-import { foldRestSegments } from "./segment_fold_service";
 import {
   determineIntervalType,
   generateIntervalSignature,
   generateStructureName,
   mapSegmentsToComponents,
 } from "./interval_structure_service";
+import { foldRestSegments } from "./segment_fold_service";
 
 export type SignatureCheck = {
   useExisting: boolean;
@@ -123,6 +123,9 @@ export async function persistSegmentsAndStructure(
     log.info({ structureId, signature: check.signature }, "reusing existing structureId");
   } else {
     const components = mapSegmentsToComponents(segments);
+    // Structures are global (no userId), so two concurrent first-time analyses of
+    // the same NEW signature race here. onConflictDoNothing + re-select turns the
+    // loser's would-be unique-violation into a reuse instead of erroring the graph.
     const [newStructure] = await db
       .insert(intervalStructures)
       .values({
@@ -131,12 +134,26 @@ export async function persistSegmentsAndStructure(
         trainingType,
         intervalType: determineIntervalType(segments),
       })
+      .onConflictDoNothing({ target: intervalStructures.signature })
       .returning();
-    structureId = newStructure.id;
-    log.info(
-      { structureId, structureName: newStructure.name, signature: check.signature },
-      "created new structure",
-    );
+    if (newStructure) {
+      structureId = newStructure.id;
+      log.info(
+        { structureId, structureName: newStructure.name, signature: check.signature },
+        "created new structure",
+      );
+    } else {
+      const [existing] = await db
+        .select({ id: intervalStructures.id })
+        .from(intervalStructures)
+        .where(eq(intervalStructures.signature, check.signature))
+        .limit(1);
+      structureId = existing.id;
+      log.info(
+        { structureId, signature: check.signature },
+        "reused concurrently-created structure",
+      );
+    }
   }
 
   await db.transaction(async (tx) => {
@@ -146,6 +163,7 @@ export async function persistSegmentsAndStructure(
         intervalStructureId: structureId,
         trainingType,
         analysisStatus: "completed",
+        analysisAttemptCount: 0,
         analyzedAt: new Date(),
         notes: userNotes,
         feeling: feeling ?? undefined,
@@ -195,6 +213,7 @@ export async function completeWithoutSegments(
     .set({
       trainingType,
       analysisStatus: "completed",
+      analysisAttemptCount: 0,
       analyzedAt: new Date(),
       notes: userNotes,
       feeling: feeling ?? undefined,

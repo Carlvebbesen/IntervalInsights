@@ -25,7 +25,7 @@ describe("/api/interval-structures", () => {
   it("GET /filter returns an array (empty for a fresh user)", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/interval-structures/filter"),
+        new Request("http://test/api/v1/interval-structures/filter"),
       );
       expect(res.status).toBe(200);
       const body = await res.json();
