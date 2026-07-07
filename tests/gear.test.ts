@@ -4,7 +4,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { closePool, createTestUser, deleteTestUser, getPool } from "./helpers/db";
-import { insertActivity } from "./helpers/fixtures";
+import { insertActivity, insertIntervalStructure } from "./helpers/fixtures";
 import { buildTestApp, withIdentity } from "./helpers/test_app";
 
 const app = buildTestApp(getPool());
@@ -192,6 +192,94 @@ describe("/api/v1/gear", () => {
       expect(g2.activityCount).toBe(0);
       expect(g2.distanceMeters).toBe(0);
     }));
+
+  it("sets, upserts, lists, and clears a per-signature default", async () => {
+    const structure = await insertIntervalStructure({ name: "10x1000m sig-default" });
+    await withIdentity(identity(), async () => {
+      const shoeA = await createGear({ model: "Sig Shoe A", surface: "ROAD" });
+      const shoeB = await createGear({ model: "Sig Shoe B", surface: "ROAD" });
+
+      const putRes = await app.fetch(
+        jsonReq(`http://test/api/v1/gear/signature-defaults/${structure.id}`, "PUT", {
+          gearId: shoeA.id,
+        }),
+      );
+      expect(putRes.status).toBe(200);
+      expect(await putRes.json()).toEqual({
+        intervalStructureId: structure.id,
+        gearId: shoeA.id,
+      });
+
+      // Upsert replaces the existing default.
+      const replaceRes = await app.fetch(
+        jsonReq(`http://test/api/v1/gear/signature-defaults/${structure.id}`, "PUT", {
+          gearId: shoeB.id,
+        }),
+      );
+      expect(replaceRes.status).toBe(200);
+
+      const list = await (
+        await app.fetch(new Request("http://test/api/v1/gear/signature-defaults"))
+      ).json();
+      expect(list.data).toEqual([{ intervalStructureId: structure.id, gearId: shoeB.id }]);
+
+      const delRes = await app.fetch(
+        new Request(`http://test/api/v1/gear/signature-defaults/${structure.id}`, {
+          method: "DELETE",
+        }),
+      );
+      expect(delRes.status).toBe(200);
+      const afterDelete = await (
+        await app.fetch(new Request("http://test/api/v1/gear/signature-defaults"))
+      ).json();
+      expect(afterDelete.data).toEqual([]);
+    });
+  });
+
+  it("404s a signature default for a foreign gear or unknown structure", async () => {
+    const structure = await insertIntervalStructure({ name: "foreign sig" });
+    const foreignGear = await withIdentity(
+      { userId: otherUser.id, clerkUserId: otherUser.clerkId, role: "premium" },
+      () => createGear({ model: "Foreign Sig Shoe", surface: "ROAD" }),
+    );
+    await withIdentity(identity(), async () => {
+      const foreignRes = await app.fetch(
+        jsonReq(`http://test/api/v1/gear/signature-defaults/${structure.id}`, "PUT", {
+          gearId: foreignGear.id,
+        }),
+      );
+      expect(foreignRes.status).toBe(404);
+
+      const own = await createGear({ model: "Own Sig Shoe", surface: "ROAD" });
+      const badStructureRes = await app.fetch(
+        jsonReq("http://test/api/v1/gear/signature-defaults/999999", "PUT", { gearId: own.id }),
+      );
+      expect(badStructureRes.status).toBe(404);
+    });
+  });
+
+  it("clears signature defaults when the gear is retired", async () => {
+    const structure = await insertIntervalStructure({ name: "retire sig" });
+    await withIdentity(identity(), async () => {
+      const shoe = await createGear({ model: "Retiring Sig Shoe", surface: "ROAD" });
+      const putRes = await app.fetch(
+        jsonReq(`http://test/api/v1/gear/signature-defaults/${structure.id}`, "PUT", {
+          gearId: shoe.id,
+        }),
+      );
+      expect(putRes.status).toBe(200);
+
+      const retireRes = await app.fetch(
+        jsonReq(`http://test/api/v1/gear/${shoe.id}`, "PATCH", { isActive: false }),
+      );
+      expect(retireRes.status).toBe(200);
+
+      const list = await (
+        await app.fetch(new Request("http://test/api/v1/gear/signature-defaults"))
+      ).json();
+      expect(list.data).toEqual([]);
+    });
+  });
 
   it("404s when assigning gear on another user's activity", async () => {
     const gear = await withIdentity(identity(), () =>

@@ -14,6 +14,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { activities } from "./activities";
 import { gearSurfaceEnum, gearTypeEnum, trainingBucketEnum, trainingTypeEnum } from "./enums";
+import { intervalStructures } from "./interval_structure";
 import { users } from "./users";
 
 export const gears = pgTable(
@@ -71,6 +72,27 @@ export const gearDefaults = pgTable(
   ],
 );
 
+// interval_structures is GLOBAL (no userId) — per-user defaults key (userId, structureId).
+export const gearSignatureDefaults = pgTable(
+  "gear_signature_defaults",
+  {
+    userId: uuid("user_id")
+      .references(() => users.id)
+      .notNull(),
+    intervalStructureId: integer("interval_structure_id")
+      .references(() => intervalStructures.id)
+      .notNull(),
+    gearId: integer("gear_id")
+      .references(() => gears.id, { onDelete: "cascade" })
+      .notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.intervalStructureId] }),
+    index("gear_signature_defaults_gear_idx").on(table.gearId),
+  ],
+);
+
 export const gearsRelations = relations(gears, ({ one, many }) => ({
   user: one(users, { fields: [gears.userId], references: [users.id] }),
   activities: many(activities),
@@ -82,7 +104,18 @@ export const gearDefaultsRelations = relations(gearDefaults, ({ one }) => ({
   gear: one(gears, { fields: [gearDefaults.gearId], references: [gears.id] }),
 }));
 
+export const gearSignatureDefaultsRelations = relations(gearSignatureDefaults, ({ one }) => ({
+  user: one(users, { fields: [gearSignatureDefaults.userId], references: [users.id] }),
+  gear: one(gears, { fields: [gearSignatureDefaults.gearId], references: [gears.id] }),
+  intervalStructure: one(intervalStructures, {
+    fields: [gearSignatureDefaults.intervalStructureId],
+    references: [intervalStructures.id],
+  }),
+}));
+
 export type InsertGear = InferInsertModel<typeof gears>;
 export type SelectGear = InferSelectModel<typeof gears>;
 export type InsertGearDefault = InferInsertModel<typeof gearDefaults>;
 export type SelectGearDefault = InferSelectModel<typeof gearDefaults>;
+export type InsertGearSignatureDefault = InferInsertModel<typeof gearSignatureDefaults>;
+export type SelectGearSignatureDefault = InferSelectModel<typeof gearSignatureDefaults>;

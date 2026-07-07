@@ -80,6 +80,25 @@ export const BrandsResponseSchema = z
   .object({ brands: z.array(z.string()) })
   .openapi({ ref: "BrandsResponse" });
 
+export const GearSignatureDefaultSchema = z
+  .object({
+    intervalStructureId: z.number(),
+    gearId: z.number(),
+  })
+  .openapi({ ref: "GearSignatureDefault" });
+
+export const GearSignatureDefaultListResponseSchema = z
+  .object({ data: z.array(GearSignatureDefaultSchema) })
+  .openapi({ ref: "GearSignatureDefaultListResponse" });
+
+export const SetGearSignatureDefaultSchema = z
+  .object({ gearId: z.number().int().positive() })
+  .openapi({ ref: "SetGearSignatureDefault" });
+
+export const ClearGearSignatureDefaultResponseSchema = z
+  .object({ success: z.boolean() })
+  .openapi({ ref: "ClearGearSignatureDefaultResponse" });
+
 export const AssignGearSchema = z
   .object({ gearId: z.number().nullable() })
   .openapi({ ref: "AssignGear" });

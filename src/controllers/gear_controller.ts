@@ -3,6 +3,7 @@ import { type GearDto, toGearDto } from "../dtos/gear_dto";
 import { AppError } from "../error";
 import type { GearListFilters } from "../repositories/gear_repository";
 import * as gearRepo from "../repositories/gear_repository";
+import * as intervalStructureRepo from "../repositories/interval_structure_repository";
 import type { GearSurface, InsertGear, TrainingBucket } from "../schema";
 import type { CreateGearSchema, UpdateGearSchema } from "../schemas/api_schemas";
 import {
@@ -142,6 +143,7 @@ export async function updateGear(
   if (input.isActive === false) {
     // Retired gear can't be a default anywhere.
     await gearRepo.clearDefaultsForGear(db, userId, id);
+    await gearRepo.clearSignatureDefaultsForGear(db, userId, id);
   } else {
     if (input.surface && input.surface !== existing.surface) {
       // Defaults are surface-keyed; drop stale-surface entries before re-applying.
@@ -151,6 +153,39 @@ export async function updateGear(
   }
 
   return buildGearDto(db, userId, id);
+}
+
+type SignatureDefault = { intervalStructureId: number; gearId: number };
+
+export async function listSignatureDefaults(
+  db: Db,
+  userId: string,
+): Promise<{ data: SignatureDefault[] }> {
+  return { data: await gearRepo.getSignatureDefaults(db, userId) };
+}
+
+export async function setSignatureDefault(
+  db: Db,
+  userId: string,
+  intervalStructureId: number,
+  gearId: number,
+): Promise<SignatureDefault> {
+  const gear = await gearRepo.findByIdForUser(db, userId, gearId);
+  if (!gear) throw new AppError(404, "Gear not found");
+  if (!(await intervalStructureRepo.findById(db, intervalStructureId))) {
+    throw new AppError(404, "Interval structure not found");
+  }
+  await gearRepo.setSignatureDefault(db, userId, intervalStructureId, gearId);
+  return { intervalStructureId, gearId };
+}
+
+export async function clearSignatureDefault(
+  db: Db,
+  userId: string,
+  intervalStructureId: number,
+): Promise<{ success: boolean }> {
+  await gearRepo.clearSignatureDefault(db, userId, intervalStructureId);
+  return { success: true };
 }
 
 export function getBrands(): { brands: string[] } {

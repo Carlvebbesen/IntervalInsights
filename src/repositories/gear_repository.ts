@@ -5,6 +5,7 @@ import {
   type GearSurface,
   type GearType,
   gearDefaults,
+  gearSignatureDefaults,
   gears,
   type InsertGear,
   type SelectGear,
@@ -224,6 +225,75 @@ export async function clearDefaultsForGear(db: Db, userId: string, gearId: numbe
   await db
     .delete(gearDefaults)
     .where(and(eq(gearDefaults.userId, userId), eq(gearDefaults.gearId, gearId)));
+}
+
+// ─── Per-signature defaults (one gear per (user, interval structure)) ───────────
+
+export function getSignatureDefaults(db: Db, userId: string) {
+  return db
+    .select({
+      intervalStructureId: gearSignatureDefaults.intervalStructureId,
+      gearId: gearSignatureDefaults.gearId,
+    })
+    .from(gearSignatureDefaults)
+    .where(eq(gearSignatureDefaults.userId, userId));
+}
+
+export async function findSignatureDefaultGearId(
+  db: Db,
+  userId: string,
+  intervalStructureId: number,
+): Promise<number | undefined> {
+  const [row] = await db
+    .select({ gearId: gearSignatureDefaults.gearId })
+    .from(gearSignatureDefaults)
+    .where(
+      and(
+        eq(gearSignatureDefaults.userId, userId),
+        eq(gearSignatureDefaults.intervalStructureId, intervalStructureId),
+      ),
+    );
+  return row?.gearId;
+}
+
+export async function setSignatureDefault(
+  db: Db,
+  userId: string,
+  intervalStructureId: number,
+  gearId: number,
+): Promise<void> {
+  await db
+    .insert(gearSignatureDefaults)
+    .values({ userId, intervalStructureId, gearId })
+    .onConflictDoUpdate({
+      target: [gearSignatureDefaults.userId, gearSignatureDefaults.intervalStructureId],
+      set: { gearId },
+    });
+}
+
+export async function clearSignatureDefault(
+  db: Db,
+  userId: string,
+  intervalStructureId: number,
+): Promise<void> {
+  await db
+    .delete(gearSignatureDefaults)
+    .where(
+      and(
+        eq(gearSignatureDefaults.userId, userId),
+        eq(gearSignatureDefaults.intervalStructureId, intervalStructureId),
+      ),
+    );
+}
+
+export async function clearSignatureDefaultsForGear(
+  db: Db,
+  userId: string,
+  gearId: number,
+): Promise<void> {
+  await db
+    .delete(gearSignatureDefaults)
+    .where(and(eq(gearSignatureDefaults.userId, userId), eq(gearSignatureDefaults.gearId, gearId)));
 }
 
 // ─── Denormalized distance/count maintenance ────────────────────────────────────
