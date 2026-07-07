@@ -79,14 +79,26 @@ describe("generateIntervalSignature — canonicalization", () => {
   }
 
   it("GPS confirmation lets a round venue distance snap", () => {
-    const venue: VenueContext = { confirmedTokens: ["NG"] };
+    const venue: VenueContext = { confirmedTokens: ["NG"], hasGps: true };
     expect(generateIntervalSignature([1500, 1500].map(m))).toBe("1500m");
     expect(generateIntervalSignature([1500, 1500].map(m), venue)).toBe("NG");
   });
 
   it("GPS confirmation never overrides distance (out-of-tolerance stays put)", () => {
-    const venue: VenueContext = { confirmedTokens: ["NG"] };
+    const venue: VenueContext = { confirmedTokens: ["NG"], hasGps: true };
     expect(generateIntervalSignature([2000, 2000].map(m), venue)).toBe("2000m");
+  });
+
+  it("GPS present but unconfirmed vetoes a measured venue snap", () => {
+    // Without GPS these ~1500 m measured reps snap to NG (distance-only). With a
+    // GPS track that is NOT at NG, they must fall back to a plain distance.
+    const elsewhere: VenueContext = { confirmedTokens: [], hasGps: true };
+    expect(generateIntervalSignature([1509, 1513].map(m))).toBe("NG");
+    expect(generateIntervalSignature([1509, 1513].map(m), elsewhere)).toBe("1500m");
+  });
+
+  it("long distances quantize to nearest 250 m (3.0k and 3.2k stay distinct)", () => {
+    expect(generateIntervalSignature([m(3000), m(3200)])).toBe("3000m-3250m");
   });
 
   it("times quantize to nearest 15 s", () => {

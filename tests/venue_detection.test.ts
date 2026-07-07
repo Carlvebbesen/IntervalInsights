@@ -15,20 +15,30 @@ const near = (c: LatLng, n: number): LatLng[] =>
 
 describe("resolveVenueContext", () => {
   it("confirms NG when the session sits on the loop", () => {
-    expect(resolveVenueContext(streamsFrom(near(NG, 100))).confirmedTokens).toEqual(["NG"]);
+    expect(resolveVenueContext(streamsFrom(near(NG, 100)))).toEqual({
+      confirmedTokens: ["NG"],
+      hasGps: true,
+    });
   });
 
   it("confirms Bislett for a session at the stadium", () => {
-    expect(resolveVenueContext(streamsFrom(near(BISLETT, 100))).confirmedTokens).toEqual(["BSL"]);
+    expect(resolveVenueContext(streamsFrom(near(BISLETT, 100)))).toEqual({
+      confirmedTokens: ["BSL"],
+      hasGps: true,
+    });
   });
 
-  it("confirms nothing for a run elsewhere", () => {
-    expect(resolveVenueContext(streamsFrom(near(FAR, 100))).confirmedTokens).toEqual([]);
+  it("confirms nothing but reports GPS present for a run elsewhere", () => {
+    // hasGps:true is the veto signal — a venue-length rep here must NOT snap.
+    expect(resolveVenueContext(streamsFrom(near(FAR, 100)))).toEqual({
+      confirmedTokens: [],
+      hasGps: true,
+    });
   });
 
-  it("is empty when there is no latlng stream (indoor / GPS off)", () => {
-    expect(resolveVenueContext({} as StreamSet).confirmedTokens).toEqual([]);
-    expect(resolveVenueContext(null).confirmedTokens).toEqual([]);
+  it("reports no GPS when there is no latlng stream (indoor / GPS off)", () => {
+    expect(resolveVenueContext({} as StreamSet)).toEqual({ confirmedTokens: [], hasGps: false });
+    expect(resolveVenueContext(null)).toEqual({ confirmedTokens: [], hasGps: false });
   });
 
   it("ignores null-island (0,0) padding points", () => {

@@ -33,7 +33,10 @@ export const RUNNING_VENUES: RunningVenue[] = [
     token: "NG",
     lat: 59.938758,
     lng: 10.74794,
-    radiusMeters: 300,
+    // Wider than Bislett: the NG loop is ~1.5 km, so points sit further from the
+    // centre. Generous so a real NG session reliably confirms (avoids a false
+    // veto); the ±2.5% distance gate still bounds any false positive.
+    radiusMeters: 400,
   },
   {
     name: "Voldsløkka",

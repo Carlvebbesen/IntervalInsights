@@ -16,10 +16,12 @@ import type { VenueContext } from "./interval_structure_service";
  */
 
 const SAMPLE_LIMIT = 200;
-// Fraction of sampled GPS points that must fall inside a venue's geofence for
-// it to count as "performed here". Generous because the geofence only permits
-// an already-distance-plausible snap.
-const MIN_INSIDE_FRACTION = 0.34;
+// Fraction of sampled GPS points that must fall inside a venue's geofence for it
+// to count as "performed here". Lenient on purpose: a whole-activity track also
+// covers warmup/cooldown running to and from the venue, so a real session sits
+// well below 50% inside — and a false negative now under-snaps a genuine venue
+// visit (the token is vetoed), which is worse than the bounded false positive.
+const MIN_INSIDE_FRACTION = 0.3;
 
 const toRad = (deg: number) => (deg * Math.PI) / 180;
 
@@ -44,10 +46,10 @@ function samplePoints(points: LatLng[]): LatLng[] {
 
 export function resolveVenueContext(streams: StreamSet | null | undefined): VenueContext {
   const points = streams?.latlng?.data;
-  if (!points || points.length === 0) return { confirmedTokens: [] };
+  if (!points || points.length === 0) return { confirmedTokens: [], hasGps: false };
 
   const sampled = samplePoints(points);
-  if (sampled.length === 0) return { confirmedTokens: [] };
+  if (sampled.length === 0) return { confirmedTokens: [], hasGps: false };
 
   const confirmedTokens: string[] = [];
   for (const v of SIGNATURE_VENUES) {
@@ -57,5 +59,5 @@ export function resolveVenueContext(streams: StreamSet | null | undefined): Venu
     const inside = sampled.filter((p) => haversineMeters(p, center) <= radius).length;
     if (inside / sampled.length >= MIN_INSIDE_FRACTION) confirmedTokens.push(v.token);
   }
-  return { confirmedTokens };
+  return { confirmedTokens, hasGps: true };
 }
