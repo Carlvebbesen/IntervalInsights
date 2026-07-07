@@ -3,6 +3,7 @@ import { type GearDto, toGearDto } from "../dtos/gear_dto";
 import { AppError } from "../error";
 import type { GearListFilters } from "../repositories/gear_repository";
 import * as gearRepo from "../repositories/gear_repository";
+import * as intervalStructureRepo from "../repositories/interval_structure_repository";
 import type { GearSurface, InsertGear, TrainingBucket } from "../schema";
 import type { CreateGearSchema, UpdateGearSchema } from "../schemas/api_schemas";
 import {
@@ -16,7 +17,7 @@ type Db = IGlobalBindings["db"];
 type CreateGearInput = z.infer<typeof CreateGearSchema>;
 type UpdateGearInput = z.infer<typeof UpdateGearSchema>;
 
-const BUCKETS: TrainingBucket[] = ["EASY", "LONG", "INTERVALS"];
+const BUCKETS: TrainingBucket[] = ["EASY", "LONG", "INTERVALS", "RACE"];
 
 /** Set/clear the (bucket, surface) defaults for a gear from the create/edit toggles. */
 async function applyDefaultToggles(
@@ -24,12 +25,18 @@ async function applyDefaultToggles(
   userId: string,
   gearId: number,
   surface: GearSurface,
-  toggles: { defaultEasy?: boolean; defaultLong?: boolean; defaultIntervals?: boolean },
+  toggles: {
+    defaultEasy?: boolean;
+    defaultLong?: boolean;
+    defaultIntervals?: boolean;
+    defaultRace?: boolean;
+  },
 ): Promise<void> {
   const wanted: Record<TrainingBucket, boolean | undefined> = {
     EASY: toggles.defaultEasy,
     LONG: toggles.defaultLong,
     INTERVALS: toggles.defaultIntervals,
+    RACE: toggles.defaultRace,
   };
   for (const bucket of BUCKETS) {
     const want = wanted[bucket];
@@ -103,6 +110,7 @@ export async function createGear(db: Db, userId: string, input: CreateGearInput)
     model: input.model,
     nickname: input.nickname ?? null,
     surface: input.surface,
+    useTypes: input.useTypes ?? [],
   });
   await applyDefaultToggles(db, userId, gear.id, gear.surface, input);
   return buildGearDto(db, userId, gear.id);
@@ -122,6 +130,7 @@ export async function updateGear(
   if (input.model !== undefined) updates.model = input.model;
   if (input.nickname !== undefined) updates.nickname = input.nickname;
   if (input.surface !== undefined) updates.surface = input.surface;
+  if (input.useTypes !== undefined) updates.useTypes = input.useTypes;
   if (input.isActive !== undefined) {
     updates.isActive = input.isActive;
     updates.retiredAt = input.isActive ? null : (existing.retiredAt ?? new Date());
@@ -134,6 +143,7 @@ export async function updateGear(
   if (input.isActive === false) {
     // Retired gear can't be a default anywhere.
     await gearRepo.clearDefaultsForGear(db, userId, id);
+    await gearRepo.clearSignatureDefaultsForGear(db, userId, id);
   } else {
     if (input.surface && input.surface !== existing.surface) {
       // Defaults are surface-keyed; drop stale-surface entries before re-applying.
@@ -143,6 +153,39 @@ export async function updateGear(
   }
 
   return buildGearDto(db, userId, id);
+}
+
+type SignatureDefault = { intervalStructureId: number; gearId: number };
+
+export async function listSignatureDefaults(
+  db: Db,
+  userId: string,
+): Promise<{ data: SignatureDefault[] }> {
+  return { data: await gearRepo.getSignatureDefaults(db, userId) };
+}
+
+export async function setSignatureDefault(
+  db: Db,
+  userId: string,
+  intervalStructureId: number,
+  gearId: number,
+): Promise<SignatureDefault> {
+  const gear = await gearRepo.findByIdForUser(db, userId, gearId);
+  if (!gear) throw new AppError(404, "Gear not found");
+  if (!(await intervalStructureRepo.findById(db, intervalStructureId))) {
+    throw new AppError(404, "Interval structure not found");
+  }
+  await gearRepo.setSignatureDefault(db, userId, intervalStructureId, gearId);
+  return { intervalStructureId, gearId };
+}
+
+export async function clearSignatureDefault(
+  db: Db,
+  userId: string,
+  intervalStructureId: number,
+): Promise<{ success: boolean }> {
+  await gearRepo.clearSignatureDefault(db, userId, intervalStructureId);
+  return { success: true };
 }
 
 export function getBrands(): { brands: string[] } {

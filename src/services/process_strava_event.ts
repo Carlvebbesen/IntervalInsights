@@ -7,7 +7,7 @@ import type { IGlobalBindings } from "../types/IRouters";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
 import { triggerAnalysisByStravaId } from "./analysis_service";
 import { clerkClient } from "./clerk_client";
-import { linkActivityGearOnIngest } from "./gear_strava_service";
+import { linkActivityGearOnIngest, relinkActivityGearFromStrava } from "./gear_strava_service";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { progressService } from "./progress_service";
 import { stravaApiService } from "./strava_api_service";
@@ -215,22 +215,45 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
 
   if (body.aspect_type === "update") {
     const [existing] = await context.db
-      .select({ id: activities.id, distance: activities.distance })
+      .select({
+        id: activities.id,
+        distance: activities.distance,
+        gearId: activities.gearId,
+      })
       .from(activities)
       .where(
         and(eq(activities.stravaActivityId, stravaActivityId), eq(activities.userId, user.id)),
       );
     if (!existing) return;
     await context.db.update(activities).set(activity).where(eq(activities.id, existing.id));
-    if (existing) {
-      // Keep the assigned gear's maintained distance in sync. localGearId is
-      // preserved (the mapper never sets it, so manual assignments survive).
-      await gearRepo.adjustForDistanceChange(
+    // Keep the assigned gear's maintained distance in sync. localGearId is
+    // preserved (the mapper never sets it, so manual assignments survive).
+    await gearRepo.adjustForDistanceChange(
+      context.db,
+      existing.id,
+      existing.distance,
+      activity.distance,
+    );
+    const newStravaGearId = data.gear_id ?? null;
+    if (newStravaGearId !== (existing.gearId ?? null) && activity.startDateLocal) {
+      // The user changed the gear on Strava — re-link and remember the choice.
+      const relinked = await relinkActivityGearFromStrava(
         context.db,
+        user.id,
+        accessToken,
         existing.id,
-        existing.distance,
-        activity.distance,
+        {
+          stravaGearId: newStravaGearId,
+          sportType: data.sport_type,
+          startDateLocal: activity.startDateLocal,
+        },
       );
+      if (relinked) {
+        await context.db
+          .update(activities)
+          .set({ gearUpdatedFromStrava: true })
+          .where(eq(activities.id, existing.id));
+      }
     }
     if (activityClass === "active" && (body.updates?.title || body.updates?.description)) {
       await triggerAnalysisByStravaId(context.db, accessToken, stravaActivityId, user.id);

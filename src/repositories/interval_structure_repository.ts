@@ -6,6 +6,14 @@ type Db = IGlobalBindings["db"];
 
 /** Repository for the `interval_structures` table. */
 
+export async function findById(db: Db, id: number): Promise<{ id: number } | undefined> {
+  const [row] = await db
+    .select({ id: intervalStructures.id })
+    .from(intervalStructures)
+    .where(eq(intervalStructures.id, id));
+  return row;
+}
+
 /**
  * Distinct interval structures the user has at least one activity linked to,
  * with how many times they've done it and when they last did. Ordered by most

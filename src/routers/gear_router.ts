@@ -6,9 +6,13 @@ import { stravaMiddleware } from "../middlewares/strava_middleware";
 import { gearSurfaceEnum, gearTypeEnum } from "../schema";
 import {
   BrandsResponseSchema,
+  ClearGearSignatureDefaultResponseSchema,
   CreateGearSchema,
   GearListResponseSchema,
   GearSchema,
+  GearSignatureDefaultListResponseSchema,
+  GearSignatureDefaultSchema,
+  SetGearSignatureDefaultSchema,
   SyncGearResponseSchema,
   UpdateGearSchema,
 } from "../schemas/api_schemas";
@@ -55,11 +59,75 @@ gearRouter.get(
   async (c) => c.json(gearController.getBrands()),
 );
 
+const structureIdParamSchema = z.object({ structureId: z.coerce.number().int().positive() });
+
+gearRouter.get(
+  "/signature-defaults",
+  describeRoute({
+    description: "The user's per-workout-signature gear defaults.",
+    responses: {
+      200: okJson(GearSignatureDefaultListResponseSchema, "Signature default list"),
+      500: errJson("Internal server error"),
+    },
+  }),
+  async (c) => {
+    const result = await gearController.listSignatureDefaults(c.env.db, c.get("userId"));
+    return c.json(result);
+  },
+);
+
+gearRouter.put(
+  "/signature-defaults/:structureId",
+  describeRoute({
+    description:
+      "Set a shoe as the default for a workout signature (interval structure). Upserts — replaces any existing default for that signature.",
+    responses: {
+      200: okJson(GearSignatureDefaultSchema, "The stored signature default"),
+      400: errJson("Bad request"),
+      404: errJson("Gear or interval structure not found"),
+    },
+  }),
+  validator("param", structureIdParamSchema),
+  validator("json", SetGearSignatureDefaultSchema),
+  async (c) => {
+    const { structureId } = c.req.valid("param");
+    const { gearId } = c.req.valid("json");
+    const result = await gearController.setSignatureDefault(
+      c.env.db,
+      c.get("userId"),
+      structureId,
+      gearId,
+    );
+    return c.json(result);
+  },
+);
+
+gearRouter.delete(
+  "/signature-defaults/:structureId",
+  describeRoute({
+    description: "Clear the gear default for a workout signature.",
+    responses: {
+      200: okJson(ClearGearSignatureDefaultResponseSchema, "Cleared"),
+      500: errJson("Internal server error"),
+    },
+  }),
+  validator("param", structureIdParamSchema),
+  async (c) => {
+    const { structureId } = c.req.valid("param");
+    const result = await gearController.clearSignatureDefault(
+      c.env.db,
+      c.get("userId"),
+      structureId,
+    );
+    return c.json(result);
+  },
+);
+
 gearRouter.post(
   "/",
   describeRoute({
     description:
-      "Create a shoe. Optional `defaultEasy/Long/Intervals` set it as the default for those buckets on its surface.",
+      "Create a shoe. Optional `defaultEasy/Long/Intervals/Race` set it as the default for those buckets on its surface.",
     responses: {
       201: okJson(GearSchema, "Created gear"),
       400: errJson("Bad request"),

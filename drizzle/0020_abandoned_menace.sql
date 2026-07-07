@@ -1,0 +1,1 @@
+ALTER TYPE "public"."training_bucket" ADD VALUE 'RACE';
