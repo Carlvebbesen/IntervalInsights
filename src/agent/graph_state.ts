@@ -4,6 +4,7 @@ import type * as schema from "../schema";
 import type { IntervalsIcuPrediction } from "../schema/activities";
 import type { TrainingType, WorkoutPartType } from "../schema/enums";
 import type { InsertIntervalSegment } from "../schema/interval_segments";
+import type { SignatureCheck } from "../services/signature_service";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { Lap } from "../types/strava/IDetailedActivity";
 import type { StreamSet } from "../types/strava/IStream";
@@ -73,11 +74,7 @@ export const AnalysisStateAnnotation = Annotation.Root({
     default: () => [],
   }),
 
-  signatureCheck: Annotation<{
-    useExisting: boolean;
-    structureId?: number;
-    signature: string;
-  } | null>({
+  signatureCheck: Annotation<SignatureCheck | null>({
     reducer: overwrite,
     default: () => null,
   }),

@@ -10,10 +10,10 @@ import {
 import type { DraftAnalysisResult } from "../schema/activities";
 import type { TrainingType } from "../schema/enums";
 import {
-  determineIntervalType,
   generateIntervalSignature,
   generateStructureName,
   mapSegmentsToComponents,
+  type VenueContext,
 } from "./interval_structure_service";
 import { foldRestSegments } from "./segment_fold_service";
 
@@ -21,6 +21,9 @@ export type SignatureCheck = {
   useExisting: boolean;
   structureId?: number;
   signature: string;
+  // Venue-aware name to stamp on a newly-created structure (so the name agrees
+  // with the venue-snapped signature). Unused when reusing an existing row.
+  structureName: string;
 };
 
 const JACCARD_THRESHOLD = 0.7;
@@ -30,11 +33,21 @@ export async function findMatchingStructure(
   segments: InsertIntervalSegment[],
   trainingType: TrainingType,
   userId: string,
+  venue?: VenueContext,
 ): Promise<SignatureCheck> {
   const log = logger.child({ fn: "findMatchingStructure" });
   const components = mapSegmentsToComponents(segments);
-  const signature = generateIntervalSignature(components);
-  log.info({ signature, trainingType, workComponents: components.length }, "looking up structure");
+  const signature = generateIntervalSignature(components, venue);
+  const structureName = generateStructureName(components, venue);
+  log.info(
+    {
+      signature,
+      trainingType,
+      workComponents: components.length,
+      confirmedVenues: venue?.confirmedTokens ?? [],
+    },
+    "looking up structure",
+  );
 
   const exact = await db
     .select()
@@ -47,20 +60,22 @@ export async function findMatchingStructure(
       {
         structureId: exact[0].id,
         structureName: exact[0].name,
-        structureTrainingType: exact[0].trainingType,
         activityTrainingType: trainingType,
       },
       "exact-match",
     );
-    return { useExisting: true, structureId: exact[0].id, signature };
+    return { useExisting: true, structureId: exact[0].id, signature, structureName };
   }
 
+  // Fuzzy match only against shapes the user has run under the SAME training
+  // type. The type lives on the activity now (structures are pure shapes), so
+  // filter on activities.trainingType via the existing join.
   const signatureParts = signature.split("-").sort();
   const candidates = await db
     .selectDistinct({ id: intervalStructures.id, signature: intervalStructures.signature })
     .from(intervalStructures)
     .innerJoin(activities, eq(activities.intervalStructureId, intervalStructures.id))
-    .where(and(eq(activities.userId, userId), eq(intervalStructures.trainingType, trainingType)));
+    .where(and(eq(activities.userId, userId), eq(activities.trainingType, trainingType)));
 
   let bestId: number | undefined;
   let bestScore = 0;
@@ -85,10 +100,10 @@ export async function findMatchingStructure(
       },
       "fuzzy-match",
     );
-    return { useExisting: true, structureId: bestId, signature };
+    return { useExisting: true, structureId: bestId, signature, structureName };
   }
   log.info("no match — will create new structure");
-  return { useExisting: false, signature };
+  return { useExisting: false, signature, structureName };
 }
 
 export async function persistSegmentsAndStructure(
@@ -122,17 +137,14 @@ export async function persistSegmentsAndStructure(
     structureId = check.structureId;
     log.info({ structureId, signature: check.signature }, "reusing existing structureId");
   } else {
-    const components = mapSegmentsToComponents(segments);
     // Structures are global (no userId), so two concurrent first-time analyses of
     // the same NEW signature race here. onConflictDoNothing + re-select turns the
     // loser's would-be unique-violation into a reuse instead of erroring the graph.
     const [newStructure] = await db
       .insert(intervalStructures)
       .values({
-        name: generateStructureName(components),
+        name: check.structureName,
         signature: check.signature || null,
-        trainingType,
-        intervalType: determineIntervalType(segments),
       })
       .onConflictDoNothing({ target: intervalStructures.signature })
       .returning();

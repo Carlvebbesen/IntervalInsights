@@ -94,9 +94,11 @@ async function fetchFromStrava(
 ): Promise<ActivityContext> {
   const activity = await stravaApiService.getActivity(stravaAccessToken, stravaActivityId);
   const isIndoor = activity.trainer ?? false;
+  // latlng is fetched for venue detection (confirms a distance→venue snap in
+  // the signature). Outdoor only in practice — indoor activities have no GPS.
   const streamKeys = processHeartRate
-    ? (["time", "velocity_smooth", "heartrate", "distance", "moving"] as const)
-    : (["time", "velocity_smooth", "distance", "moving"] as const);
+    ? (["time", "velocity_smooth", "heartrate", "distance", "moving", "latlng"] as const)
+    : (["time", "velocity_smooth", "distance", "moving", "latlng"] as const);
 
   // Indoor laps are kept: treadmill sessions often lap warmup/work/cooldown,
   // which the deterministic segmenter uses for boundaries. See

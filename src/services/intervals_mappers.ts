@@ -1,7 +1,7 @@
 import type { InsertActivity } from "../schema";
 import type { IIntervalsActivity, IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
 import type { Lap } from "../types/strava/IDetailedActivity";
-import type { StreamSet } from "../types/strava/IStream";
+import type { LatLng, StreamSet } from "../types/strava/IStream";
 
 // intervals.icu returns start_date_local as naïve local time (no `Z`). We store
 // local times as UTC instants, so parse the naïve string as UTC.
@@ -48,23 +48,54 @@ export function mapIntervalsActivityToInsert(
  * master-sync path.
  */
 
-type IntervalsStream = { type?: unknown; data?: unknown };
+type IntervalsStream = { type?: unknown; data?: unknown; data2?: unknown };
 
 function asNumberArray(data: unknown): number[] | null {
   return Array.isArray(data) ? (data as number[]) : null;
 }
 
 /**
+ * intervals.icu splits its GPS `latlng` stream into two parallel arrays —
+ * `data` (latitudes) and `data2` (longitudes) — unlike Strava, which returns
+ * `[lat, lng]` tuples. Zip them back into the StreamSet's tuple shape. Falls
+ * back to reading tuples directly in case a source ever returns them that way.
+ */
+function toLatLngStream(entry: IntervalsStream): { data: LatLng[] } | null {
+  const lat = asNumberArray(entry.data);
+  const lng = asNumberArray(entry.data2);
+  if (lat && lng && typeof lat[0] === "number" && typeof lng[0] === "number") {
+    const n = Math.min(lat.length, lng.length);
+    const points: LatLng[] = [];
+    for (let i = 0; i < n; i++) points.push([lat[i], lng[i]]);
+    return points.length ? { data: points } : null;
+  }
+  if (Array.isArray(entry.data) && Array.isArray((entry.data as unknown[])[0])) {
+    const points = (entry.data as unknown[]).filter(
+      (p): p is LatLng => Array.isArray(p) && typeof p[0] === "number" && typeof p[1] === "number",
+    );
+    return points.length ? { data: points } : null;
+  }
+  return null;
+}
+
+/**
  * Map intervals.icu's `[{ type, data }]` stream array onto the internal
  * StreamSet. intervals.icu's `type` keys mirror Strava's, so `velocity_smooth`,
  * `heartrate`, `watts`, `distance`, `altitude`, `cadence`, `time` map straight
- * across. Types absent for an activity are simply left undefined.
+ * across. `latlng` is special — intervals.icu splits it into `data` (lat) +
+ * `data2` (lng), zipped back to tuples by toLatLngStream. Types absent for an
+ * activity are simply left undefined.
  */
 export function mapIntervalsStreamsToStreamSet(raw: unknown): StreamSet {
   const out: StreamSet = {};
   if (!Array.isArray(raw)) return out;
 
   for (const entry of raw as IntervalsStream[]) {
+    if (entry.type === "latlng") {
+      const latlng = toLatLngStream(entry);
+      if (latlng) out.latlng = latlng;
+      continue;
+    }
     const data = asNumberArray(entry.data);
     if (!data) continue;
     switch (entry.type) {

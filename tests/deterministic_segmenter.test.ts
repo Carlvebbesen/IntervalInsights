@@ -153,6 +153,40 @@ describe("classifyLaps", () => {
     const time = Array.from({ length: 1001 }, (_, i) => i);
     expect(classifyLaps([lap(0, 1000, 3.0, 150)], time).mode).toBe("unusable");
   });
+
+  it("per-rep: drops a trailing cooldown lap that slipped past the speed gate (the 5×NG case)", () => {
+    // 5 NG reps (~1520 m @ ~3:50/km) + a 1900 m @ 4:50/km cooldown jog. The
+    // cooldown sits at 0.78×max-speed — above the 0.75 gate — but is both slower
+    // and longer than the reps, so it must not count as a 6th rep.
+    const laps = [
+      lap(0, 816, 2.9, 130, 2369), // warmup (slow → excluded by gate)
+      lap(816, 353, 4.36, 170, 1538),
+      lap(1169, 349, 4.39, 171, 1532),
+      lap(1518, 352, 4.3, 169, 1513),
+      lap(1870, 360, 4.23, 170, 1524),
+      lap(2230, 356, 4.26, 172, 1518),
+      lap(2586, 552, 3.44, 150, 1900), // trailing cooldown → dropped
+    ];
+    const time = Array.from({ length: 3139 }, (_, i) => i);
+    const { mode, workLaps } = classifyLaps(laps, time);
+    expect(mode).toBe("per-rep");
+    expect(workLaps.length).toBe(5);
+    expect(workLaps.every((l) => (l.distance ?? 0) < 1600)).toBe(true); // no 1900 m rep
+  });
+
+  it("per-rep: keeps a genuine final rep (faster finisher is not a cooldown)", () => {
+    const laps = [
+      lap(0, 600, 2.9, 130, 1800), // warmup
+      lap(600, 230, 4.35, 170, 1000),
+      lap(830, 232, 4.31, 171, 1000),
+      lap(1062, 231, 4.33, 170, 1000),
+      lap(1293, 233, 4.29, 170, 1000),
+      lap(1526, 230, 4.35, 172, 1000),
+      lap(1756, 228, 4.39, 174, 1000), // faster last rep → kept
+    ];
+    const time = Array.from({ length: 1985 }, (_, i) => i);
+    expect(classifyLaps(laps, time).workLaps.length).toBe(6);
+  });
 });
 
 describe("deriveSpeed", () => {

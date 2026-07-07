@@ -1,5 +1,5 @@
 {
-  "id": "9c3924f4-6558-4f6e-b13d-96bf8b185f7b",
+  "id": "9bad2cba-c8a3-4b0b-a76c-da2f826cb093",
   "prevId": "19323e68-3e87-406c-9c30-1539651b74bd",
   "version": "7",
   "dialect": "postgresql",
@@ -1644,26 +1644,12 @@
           "primaryKey": false,
           "notNull": false
         },
-        "training_type": {
-          "name": "training_type",
-          "type": "training_type",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": false,
           "default": "now()"
-        },
-        "interval_type": {
-          "name": "interval_type",
-          "type": "interval_type",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -1675,93 +1661,6 @@
           "nullsNotDistinct": false,
           "columns": [
             "signature"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.oauth_provider_tokens": {
-      "name": "oauth_provider_tokens",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "provider": {
-          "name": "provider",
-          "type": "oauth_provider",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "access_token": {
-          "name": "access_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "refresh_token": {
-          "name": "refresh_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "athlete_id": {
-          "name": "athlete_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "oauth_provider_tokens_user_id_users_id_fk": {
-          "name": "oauth_provider_tokens_user_id_users_id_fk",
-          "tableFrom": "oauth_provider_tokens",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "oauth_provider_tokens_user_provider_unique": {
-          "name": "oauth_provider_tokens_user_provider_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "user_id",
-            "provider"
           ]
         }
       },
@@ -2055,14 +1954,6 @@
         "CRITICAL_VELOCITY",
         "FARTLEK",
         "RECOVERY_INTERVALS"
-      ]
-    },
-    "public.oauth_provider": {
-      "name": "oauth_provider",
-      "schema": "public",
-      "values": [
-        "strava",
-        "intervals"
       ]
     },
     "public.script_run_status_enum": {
