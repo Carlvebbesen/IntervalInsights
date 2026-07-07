@@ -7,16 +7,10 @@ import { AppError } from "../error";
 import type { Logger } from "../logger";
 import { recordAnalysisRun, recordTrainingTypeChange } from "../otel";
 import * as activityRepo from "../repositories/activity_repository";
-import * as gearRepo from "../repositories/gear_repository";
-import {
-  type AnalysisStatus,
-  type GearSurface,
-  surfaceForSportType,
-  type TrainingType,
-  trainingBucketFor,
-} from "../schema";
+import type { AnalysisStatus, TrainingType } from "../schema";
 import type { PendingActivitySchema } from "../schemas/api_schemas";
 import { ResumeValidationError, resumeAnalysis, startAnalysis } from "../services/analysis_service";
+import { createGearSuggester } from "../services/gear_suggestion_service";
 import { getProposedPaceForStructure, getProposedPaceFromLaps } from "../services/pace_service";
 import { requeueStaleActivities } from "../services/requeue_service";
 import { stravaApiService } from "../services/strava_api_service";
@@ -39,72 +33,16 @@ export async function getPending(
   }
   const rows = await activityRepo.listPending(db, userId, PENDING_STATUSES);
 
-  // Suggest shoes per pending activity, in priority order: the user's deliberate
-  // Strava gear change → per-signature default → use-type match → (bucket, surface)
-  // default → recents-by-surface. Retired gear is skipped at every step. Defaults
-  // fetched once; recents and use-type matches cached per key so this stays a few
-  // queries regardless of row count.
-  const [defaults, signatureDefaults, activeIds] = await Promise.all([
-    gearRepo.getDefaults(db, userId),
-    gearRepo.getSignatureDefaults(db, userId),
-    gearRepo.activeGearIds(db, userId),
-  ]);
-  const defaultMap = new Map(defaults.map((d) => [`${d.bucket}:${d.surface}`, d.gearId]));
-  const signatureDefaultMap = new Map(
-    signatureDefaults.map((d) => [d.intervalStructureId, d.gearId]),
-  );
-  const activeOnly = (id: number | null | undefined): number | null =>
-    id != null && activeIds.has(id) ? id : null;
-
-  const recentsBySurface = new Map<GearSurface, number[]>();
-  const recentsFor = async (surface: GearSurface): Promise<number[]> => {
-    const cached = recentsBySurface.get(surface);
-    if (cached) return cached;
-    const recents = await gearRepo.recentGearIdsBySurface(db, userId, surface, 3);
-    recentsBySurface.set(surface, recents);
-    return recents;
-  };
-  const useTypeCache = new Map<string, number[]>();
-  const useTypeMatchesFor = async (
-    trainingType: TrainingType,
-    surface: GearSurface,
-  ): Promise<number[]> => {
-    const key = `${trainingType}:${surface}`;
-    const cached = useTypeCache.get(key);
-    if (cached) return cached;
-    const matches = await gearRepo.gearIdsByUseType(db, userId, trainingType, surface, 3);
-    useTypeCache.set(key, matches);
-    return matches;
-  };
-
+  const suggestFor = await createGearSuggester(db, userId);
   return Promise.all(
     rows.map(async (r) => {
-      const surface = surfaceForSportType(r.sportType);
-      const trainingType = r.trainingType ?? r.draftAnalysisResult?.training_type ?? null;
-      const bucket = trainingBucketFor(trainingType);
-
-      const stravaChoice = r.gearUpdatedFromStrava ? activeOnly(r.localGearId) : null;
-      const signatureDefault =
-        r.intervalStructureId != null
-          ? activeOnly(signatureDefaultMap.get(r.intervalStructureId))
-          : null;
-      const useTypeMatches = trainingType ? await useTypeMatchesFor(trainingType, surface) : [];
-      const bucketDefault = bucket ? activeOnly(defaultMap.get(`${bucket}:${surface}`)) : null;
-      const recents = await recentsFor(surface);
-
-      const gearSuggestions: number[] = [];
-      for (const id of [
-        stravaChoice,
-        signatureDefault,
-        ...useTypeMatches,
-        bucketDefault,
-        ...recents,
-      ]) {
-        if (gearSuggestions.length >= 3) break;
-        if (id != null && !gearSuggestions.includes(id)) gearSuggestions.push(id);
-      }
-      const suggestedGearId = gearSuggestions[0] ?? null;
-
+      const { suggestedGearId, gearSuggestions } = await suggestFor({
+        sportType: r.sportType,
+        trainingType: r.trainingType ?? r.draftAnalysisResult?.training_type ?? null,
+        localGearId: r.localGearId,
+        gearUpdatedFromStrava: r.gearUpdatedFromStrava,
+        intervalStructureId: r.intervalStructureId,
+      });
       return {
         ...r,
         startDateLocal: r.startDateLocal.toISOString(),

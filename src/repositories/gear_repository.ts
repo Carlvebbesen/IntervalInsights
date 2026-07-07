@@ -240,23 +240,6 @@ export function getSignatureDefaults(db: Db, userId: string) {
     .where(eq(gearSignatureDefaults.userId, userId));
 }
 
-export async function findSignatureDefaultGearId(
-  db: Db,
-  userId: string,
-  intervalStructureId: number,
-): Promise<number | undefined> {
-  const [row] = await db
-    .select({ gearId: gearSignatureDefaults.gearId })
-    .from(gearSignatureDefaults)
-    .where(
-      and(
-        eq(gearSignatureDefaults.userId, userId),
-        eq(gearSignatureDefaults.intervalStructureId, intervalStructureId),
-      ),
-    );
-  return row?.gearId;
-}
-
 export async function setSignatureDefault(
   db: Db,
   userId: string,
