@@ -1,18 +1,51 @@
 import type z from "zod";
 import type { workoutSet } from "../agent/initial_analysis_agent";
-import type { InsertIntervalSegment, IntervalType } from "../schema";
+import { SIGNATURE_VENUES } from "../agent/running_venues";
+import type { InsertIntervalSegment } from "../schema";
 
 /**
- * Interval-structure domain logic: signature generation, structure naming, and
- * interval-type classification. Moved out of the schema layer (which now holds
- * only tables/enums/relations) so the rules live with the rest of the business
- * logic and can be reused by services/controllers.
+ * Interval-structure domain logic: signature generation and structure naming.
+ * Moved out of the schema layer (which now holds only tables/enums/relations)
+ * so the rules live with the rest of the business logic and can be reused by
+ * services/controllers.
+ *
+ * Signatures are CANONICAL: raw work components are dropped (zero/custom),
+ * snapped to a named venue when a measured distance lands on one, then
+ * quantized, so measured GPS distances (1509 m) and clean prescriptions
+ * (1500 m) that mean the same session collapse to one signature. See the
+ * `signature-canonicalization` project note.
  */
 
 export type IntervalComponent = {
   value: number;
   unit: "m" | "km" | "sec" | "min";
 };
+
+// Activity-level GPS confirmation, resolved upstream where streams are available
+// (see resolveVenueContext). A two-way gate: a confirmed venue lets a distance
+// snap even when the value looks like a clean prescription, while GPS present
+// but unconfirmed vetoes a snap the athlete's location contradicts. GPS never
+// forces a snap outside the venue's ±tolerance.
+export type VenueContext = {
+  // Venue tokens whose geofence the activity's GPS track confirmed.
+  confirmedTokens: string[];
+  // Whether a usable GPS track was available at all. When true, a venue NOT in
+  // confirmedTokens is actively VETOED (the athlete was elsewhere, so a rep that
+  // merely matches a venue length must not borrow its token). When false, there
+  // is nothing to confirm or veto with, so snapping falls back to distance only.
+  hasGps: boolean;
+};
+
+const VENUE_SNAP_TOLERANCE = 0.025;
+const DISTANCE_QUANTUM_SHORT = 50; // < 3 km → nearest 50 m
+const DISTANCE_QUANTUM_LONG = 250; // ≥ 3 km → nearest 250 m
+const DISTANCE_LONG_THRESHOLD = 3000;
+const TIME_QUANTUM = 15; // seconds
+
+type CanonicalComponent =
+  | { kind: "distance"; meters: number }
+  | { kind: "time"; seconds: number }
+  | { kind: "venue"; token: string; meters: number };
 
 export const normalize = (val: number, unit: IntervalComponent["unit"]): number => {
   switch (unit) {
@@ -25,124 +58,120 @@ export const normalize = (val: number, unit: IntervalComponent["unit"]): number 
   }
 };
 
-export const generateIntervalSignature = (
-  structure: IntervalComponent | IntervalComponent[],
-): string => {
-  if (!Array.isArray(structure)) {
-    const unitType = ["m", "km"].includes(structure.unit) ? "m" : "s";
-    return `${normalize(structure.value, structure.unit)}${unitType}`;
+const isDistanceUnit = (unit: IntervalComponent["unit"]) => unit === "m" || unit === "km";
+
+const quantize = (value: number, quantum: number) => Math.round(value / quantum) * quantum;
+
+/** Snap a measured distance to a named venue, or null if none applies. */
+const snapToVenue = (meters: number, venue: VenueContext | undefined) => {
+  for (const v of SIGNATURE_VENUES) {
+    const within = Math.abs(meters - v.meters) / v.meters <= VENUE_SNAP_TOLERANCE;
+    if (!within) continue;
+    // GPS is a two-way gate. Confirmed → snap outright (even a round value).
+    if (venue?.confirmedTokens.includes(v.token)) return { token: v.token, meters: v.meters };
+    // GPS present but this venue not confirmed → veto: the athlete was elsewhere
+    // (e.g. a 1500 m track rep whose length happens to sit inside NG's window).
+    if (venue?.hasGps) continue;
+    // No GPS to judge with → distance-only heuristic: a non-round measured value
+    // (1509 m) implies a real loop, not a clean prescription.
+    if (Math.round(meters) % DISTANCE_QUANTUM_SHORT !== 0)
+      return { token: v.token, meters: v.meters };
   }
-  const parts = [...new Set(structure.map((s) => generateIntervalSignature(s)))].sort().join("-");
-  return `${parts}`;
+  return null;
 };
+
+/**
+ * Drop → snap → quantize. Produces the canonical component list a signature and
+ * structure name are rendered from. Zero/negative values (custom/placeholder
+ * segments) are dropped so they can't pollute the signature.
+ */
+export const canonicalizeComponents = (
+  components: IntervalComponent[],
+  venue?: VenueContext,
+): CanonicalComponent[] => {
+  const out: CanonicalComponent[] = [];
+  for (const c of components) {
+    const value = normalize(c.value, c.unit);
+    if (!Number.isFinite(value) || value <= 0) continue;
+    if (isDistanceUnit(c.unit)) {
+      const snapped = snapToVenue(value, venue);
+      if (snapped) {
+        out.push({ kind: "venue", token: snapped.token, meters: snapped.meters });
+      } else {
+        const quantum =
+          value >= DISTANCE_LONG_THRESHOLD ? DISTANCE_QUANTUM_LONG : DISTANCE_QUANTUM_SHORT;
+        out.push({ kind: "distance", meters: quantize(value, quantum) });
+      }
+    } else {
+      out.push({ kind: "time", seconds: quantize(value, TIME_QUANTUM) });
+    }
+  }
+  return out;
+};
+
+const renderPart = (c: CanonicalComponent): string => {
+  switch (c.kind) {
+    case "venue":
+      return c.token;
+    case "distance":
+      return `${c.meters}m`;
+    case "time":
+      return `${c.seconds}s`;
+  }
+};
+
+// Sort key: distance-like parts (distances + venue tokens) first, ordered by
+// metres; time parts after, ordered by seconds. Deterministic so equivalent
+// workouts always render an identical signature.
+const partSortKey = (c: CanonicalComponent): [number, number] => {
+  if (c.kind === "time") return [1, c.seconds];
+  return [0, c.meters];
+};
+
+const uniqueSortedParts = (canon: CanonicalComponent[]): string[] => {
+  const sorted = [...canon].sort((a, b) => {
+    const [ak, av] = partSortKey(a);
+    const [bk, bv] = partSortKey(b);
+    return ak - bk || av - bv;
+  });
+  return [...new Set(sorted.map(renderPart))];
+};
+
+export const generateIntervalSignature = (
+  components: IntervalComponent[],
+  venue?: VenueContext,
+): string => uniqueSortedParts(canonicalizeComponents(components, venue)).join("-");
 
 export const mapSetsToIntervalComponent = (
   sets: z.infer<typeof workoutSet>[],
 ): IntervalComponent[] => {
   return sets.flatMap((set) =>
-    Array(set.set_reps).fill(
-      set.steps.map((step) =>
-        Array(step.reps).fill({
+    Array.from({ length: set.set_reps }).flatMap(() =>
+      set.steps.flatMap((step) =>
+        Array.from({ length: step.reps }, () => ({
           value: step.work_value,
-          unit: step.work_type === "DISTANCE" ? "m" : "sec",
-        }),
+          unit: (step.work_type === "DISTANCE" ? "m" : "sec") as IntervalComponent["unit"],
+        })),
       ),
     ),
   );
 };
 
 export const mapSegmentsToComponents = (segments: InsertIntervalSegment[]): IntervalComponent[] => {
-  const coreSegments = segments.filter((s) => s.type === "INTERVALS");
-
-  return coreSegments.map((seg) => {
-    let unit: IntervalComponent["unit"] = "sec";
-    if (seg.targetType === "distance") {
-      unit = "m";
-    } else if (seg.targetType === "time") {
-      unit = "sec";
-    }
-    return {
+  return segments
+    .filter((s) => s.type === "INTERVALS" && s.targetType !== "custom" && s.targetValue > 0)
+    .map((seg) => ({
       value: seg.targetValue,
-      unit: unit,
-    };
-  });
+      unit: (seg.targetType === "distance" ? "m" : "sec") as IntervalComponent["unit"],
+    }));
 };
 
-export const generateStructureName = (components: IntervalComponent[]): string => {
-  if (!components || components.length === 0) return "Free Workout";
-
-  const normalizedStrings = components.map((c) => {
-    const val = normalize(c.value, c.unit);
-    const label = c.unit === "km" || c.unit === "m" ? "m" : "s";
-    return `${val}${label}`;
-  });
-
-  const uniqueTypes = Array.from(new Set(normalizedStrings));
-
-  if (uniqueTypes.length === 1) {
-    return `(n)x ${uniqueTypes[0]}`;
-  }
-
-  return `Mixed (${uniqueTypes.join("/")})`;
-};
-
-export const determineIntervalType = (segments: InsertIntervalSegment[]): IntervalType => {
-  const workSegments = segments.filter((s) => s.type === "INTERVALS");
-  if (workSegments.length === 0) return "THRESHOLD";
-  const count = workSegments.length;
-  const getMetrics = (seg: InsertIntervalSegment) => {
-    const isDist = seg.targetType === "distance";
-    const dist = isDist ? seg.targetValue : 0;
-    const time = !isDist ? seg.targetValue : 0;
-    return { dist, time };
-  };
-
-  const stats = workSegments.reduce(
-    (acc, seg) => {
-      const { dist, time } = getMetrics(seg);
-      return {
-        totalDist: acc.totalDist + dist,
-        totalTime: acc.totalTime + time,
-        maxDist: Math.max(acc.maxDist, dist),
-        maxTime: Math.max(acc.maxTime, time),
-        totalElevation: acc.totalElevation,
-        variations: acc.variations.concat(seg.targetValue),
-      };
-    },
-    {
-      totalDist: 0,
-      totalTime: 0,
-      maxDist: 0,
-      maxTime: 0,
-      totalElevation: 0,
-      variations: [] as number[],
-    },
-  );
-  const avgDist = stats.totalDist / count;
-  const avgTime = stats.totalTime / count;
-  const isDistanceBased = workSegments.every((s) => s.targetType === "distance");
-  const isTimeBased = workSegments.every((s) => s.targetType === "time");
-  const uniqueTargets = new Set(stats.variations);
-  if (uniqueTargets.size > 3 && count > 5) {
-    return "FARTLEK";
-  }
-  const avgElevation = stats.totalElevation / count;
-  const isShortDistance = isDistanceBased && avgDist < 300;
-  const isShortTime = isTimeBased && avgTime < 90;
-
-  if ((isShortDistance || isShortTime) && avgElevation > 10) {
-    return "HILL_SPRINTS";
-  }
-  if (isTimeBased && avgTime <= 30) return "SPRINTS";
-  if (isDistanceBased && avgDist <= 200) return "SPRINTS";
-  if ((isTimeBased && avgTime < 120) || (isDistanceBased && avgDist < 800)) {
-    return "ANAEROBIC_CAPACITY";
-  }
-  if ((isTimeBased && avgTime > 359) || (isDistanceBased && avgDist > 999)) {
-    return "THRESHOLD";
-  }
-  if ((isTimeBased && avgTime >= 120) || (isDistanceBased && avgDist >= 800)) {
-    return "VO2_MAX";
-  }
-  return "RECOVERY_INTERVALS";
+export const generateStructureName = (
+  components: IntervalComponent[],
+  venue?: VenueContext,
+): string => {
+  const parts = uniqueSortedParts(canonicalizeComponents(components, venue));
+  if (parts.length === 0) return "Free Workout";
+  if (parts.length === 1) return `(n)x ${parts[0]}`;
+  return `Mixed (${parts.join("/")})`;
 };

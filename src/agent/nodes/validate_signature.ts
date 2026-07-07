@@ -1,6 +1,7 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { logger } from "../../logger";
 import { findMatchingStructure } from "../../services/signature_service";
+import { resolveVenueContext } from "../../services/venue_detection_service";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";
 
 export async function validateSignature(
@@ -29,7 +30,14 @@ export async function validateSignature(
       'no INTERVALS-typed segments — signature will be empty and structure will be "Free Workout". Check the LLM output / prompt.',
     );
   }
-  const check = await findMatchingStructure(db, state.computedSegments, trainingType, state.userId);
+  const venue = resolveVenueContext(state.streams);
+  const check = await findMatchingStructure(
+    db,
+    state.computedSegments,
+    trainingType,
+    state.userId,
+    venue,
+  );
   log.info(
     {
       useExisting: check.useExisting,

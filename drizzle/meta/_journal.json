@@ -169,6 +169,13 @@
       "when": 1783430858953,
       "tag": "0023_lying_dragon_lord",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1783458110465,
+      "tag": "0024_awesome_leopardon",
+      "breakpoints": true
     }
   ]
 }

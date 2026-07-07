@@ -18,6 +18,7 @@ import {
 } from "./segment_mapping_service";
 import { findMatchingStructure, persistSegmentsAndStructure } from "./signature_service";
 import { stravaApiService } from "./strava_api_service";
+import { resolveVenueContext } from "./venue_detection_service";
 
 type Db = IGlobalBindings["db"];
 
@@ -38,9 +39,10 @@ async function applySegmentEdit(
 
   const consent = await userHasHeartRateConsent(db, userId);
   const src = await resolveActivitySource(db, userId, clerkUserId, activity.id);
+  // latlng is fetched for venue detection (confirms a distance→venue snap).
   const keys = consent
-    ? (["time", "distance", "heartrate"] as const)
-    : (["time", "distance"] as const);
+    ? (["time", "distance", "heartrate", "latlng"] as const)
+    : (["time", "distance", "latlng"] as const);
   const streams =
     src.kind === "intervals"
       ? mapIntervalsStreamsToStreamSet(
@@ -63,7 +65,8 @@ async function applySegmentEdit(
     throw err;
   }
 
-  const check = await findMatchingStructure(db, computed, activity.trainingType, userId);
+  const venue = resolveVenueContext(streams);
+  const check = await findMatchingStructure(db, computed, activity.trainingType, userId, venue);
   await persistSegmentsAndStructure(db, {
     activityId: activity.id,
     userId,

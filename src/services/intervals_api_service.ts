@@ -53,6 +53,7 @@ export const DEFAULT_INTERVALS_STREAM_TYPES = [
   "distance",
   "altitude",
   "cadence",
+  "latlng",
 ] as const;
 
 async function fetchIntervals<T>(
