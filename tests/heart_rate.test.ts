@@ -4,40 +4,9 @@ import { activities, intervalStructures } from "../src/schema";
 import { closePool, createTestUser, deleteTestUser, getDb, getPool } from "./helpers/db";
 import { insertActivity } from "./helpers/fixtures";
 import { buildTestApp, withIdentity } from "./helpers/test_app";
+import { clerkUsersMock } from "./setup";
 
 const app = buildTestApp(getPool());
-
-// Far-future expiry so the real strava/intervals middlewares accept the tokens.
-const FAR_FUTURE = Math.floor(Date.now() / 1000) + 86_400;
-
-// The default (linked) Clerk mock — mirrors tests/setup.ts. Re-registered after
-// the not_linked block so the change never leaks to other test files.
-function mockClerkLinked() {
-  mock.module("@clerk/backend", () => ({
-    createClerkClient: () => ({
-      users: {
-        getUser: async () => ({
-          privateMetadata: {
-            strava: {
-              access_token: "test-strava-token",
-              refresh_token: "test-strava-refresh",
-              expires_at: FAR_FUTURE,
-              athlete_id: 12345,
-            },
-            intervals: {
-              access_token: "test-intervals-token",
-              refresh_token: "test-intervals-refresh",
-              expires_at: FAR_FUTURE,
-              athlete_id: "i12345",
-            },
-          },
-          publicMetadata: {},
-        }),
-        updateUserMetadata: async () => ({}),
-      },
-    }),
-  }));
-}
 
 let user: { id: string; clerkId: string };
 let noConsentUser: { id: string; clerkId: string };
@@ -134,7 +103,7 @@ const identity = (u: { id: string; clerkId: string }) => ({
 
 function analyze(body: Record<string, unknown>) {
   return app.fetch(
-    new Request("http://test/api/heart-rate/analysis", {
+    new Request("http://test/api/v1/heart-rate/analysis", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -254,6 +223,7 @@ describe("POST /api/heart-rate/analysis", () => {
   describe("intervals.icu stream source + avg/max backfill", () => {
     beforeAll(() => {
       mock.module("../src/services/intervals_api_service.ts", () => ({
+        DEFAULT_INTERVALS_STREAM_TYPES: [],
         intervalsApiService: {
           getAthlete: async () => ({ id: "i12345" }),
           getWellness: async () => [],
@@ -269,6 +239,7 @@ describe("POST /api/heart-rate/analysis", () => {
 
     afterAll(() => {
       mock.module("../src/services/intervals_api_service.ts", () => ({
+        DEFAULT_INTERVALS_STREAM_TYPES: [],
         intervalsApiService: {
           getAthlete: async () => ({ id: "i12345" }),
           getWellness: async () => [],
@@ -323,18 +294,14 @@ describe("POST /api/heart-rate/analysis", () => {
 
   describe("when intervals.icu is not linked", () => {
     beforeAll(() => {
-      mock.module("@clerk/backend", () => ({
-        createClerkClient: () => ({
-          users: {
-            getUser: async () => ({ privateMetadata: { strava: {} }, publicMetadata: {} }),
-            updateUserMetadata: async () => ({}),
-          },
-        }),
-      }));
+      clerkUsersMock.getUser = async () => ({
+        privateMetadata: { strava: {} },
+        publicMetadata: {},
+      });
     });
 
     afterAll(() => {
-      mockClerkLinked();
+      clerkUsersMock.reset();
     });
 
     it("returns status:not_linked", () =>

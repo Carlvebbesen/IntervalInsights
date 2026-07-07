@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { describeRoute, resolver, validator } from "hono-openapi";
+import { describeRoute, validator } from "hono-openapi";
 import { z } from "zod";
 import * as gearController from "../controllers/gear_controller";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
@@ -7,14 +7,12 @@ import { gearSurfaceEnum, gearTypeEnum } from "../schema";
 import {
   BrandsResponseSchema,
   CreateGearSchema,
-  ErrorSchema,
-  GearDefaultsResponseSchema,
   GearListResponseSchema,
   GearSchema,
-  SetGearDefaultSchema,
   SyncGearResponseSchema,
   UpdateGearSchema,
 } from "../schemas/api_schemas";
+import { errJson, okJson } from "../schemas/route_helpers";
 import type { TGlobalEnv, TStravaEnv } from "../types/IRouters";
 
 const gearRouter = new Hono<TGlobalEnv>();
@@ -29,22 +27,14 @@ const listQuerySchema = z.object({
 
 const gearIdParamSchema = z.object({ id: z.coerce.number().int().positive() });
 
-const jsonError = (description: string) => ({
-  description,
-  content: { "application/json": { schema: resolver(ErrorSchema) } },
-});
-
 gearRouter.get(
   "/",
   describeRoute({
     description:
       "List the user's gear (shoes). Filter by `surface`, `gearType`, `includeRetired`; sort by `distance` (default), `created`, or `name`.",
     responses: {
-      200: {
-        description: "Gear list",
-        content: { "application/json": { schema: resolver(GearListResponseSchema) } },
-      },
-      500: jsonError("Internal server error"),
+      200: okJson(GearListResponseSchema, "Gear list"),
+      500: errJson("Internal server error"),
     },
   }),
   validator("query", listQuerySchema),
@@ -59,51 +49,10 @@ gearRouter.get(
   describeRoute({
     description: "The curated list of shoe brands offered in the create form.",
     responses: {
-      200: {
-        description: "Brand list",
-        content: { "application/json": { schema: resolver(BrandsResponseSchema) } },
-      },
+      200: okJson(BrandsResponseSchema, "Brand list"),
     },
   }),
   async (c) => c.json(gearController.getBrands()),
-);
-
-gearRouter.get(
-  "/defaults",
-  describeRoute({
-    description: "The user's default gear per (training bucket, surface).",
-    responses: {
-      200: {
-        description: "Gear defaults",
-        content: { "application/json": { schema: resolver(GearDefaultsResponseSchema) } },
-      },
-    },
-  }),
-  async (c) => c.json(await gearController.getGearDefaults(c.env.db, c.get("userId"))),
-);
-
-gearRouter.put(
-  "/defaults",
-  describeRoute({
-    description:
-      "Set or clear (gearId=null) the default gear for one (bucket, surface). Replaces any existing default for that slot.",
-    responses: {
-      200: {
-        description: "Updated gear defaults",
-        content: { "application/json": { schema: resolver(GearDefaultsResponseSchema) } },
-      },
-      404: jsonError("Gear not found"),
-    },
-  }),
-  validator("json", SetGearDefaultSchema),
-  async (c) => {
-    const result = await gearController.setGearDefault(
-      c.env.db,
-      c.get("userId"),
-      c.req.valid("json"),
-    );
-    return c.json(result);
-  },
 );
 
 gearRouter.post(
@@ -112,11 +61,8 @@ gearRouter.post(
     description:
       "Create a shoe. Optional `defaultEasy/Long/Intervals` set it as the default for those buckets on its surface.",
     responses: {
-      201: {
-        description: "Created gear",
-        content: { "application/json": { schema: resolver(GearSchema) } },
-      },
-      400: jsonError("Bad request"),
+      201: okJson(GearSchema, "Created gear"),
+      400: errJson("Bad request"),
     },
   }),
   validator("json", CreateGearSchema),
@@ -132,12 +78,9 @@ gearRouter.patch(
     description:
       "Edit a shoe (brand/model/nickname/surface), retire/unretire (`isActive`), or set its default buckets. Retiring clears its defaults.",
     responses: {
-      200: {
-        description: "Updated gear",
-        content: { "application/json": { schema: resolver(GearSchema) } },
-      },
-      400: jsonError("Bad request"),
-      404: jsonError("Gear not found"),
+      200: okJson(GearSchema, "Updated gear"),
+      400: errJson("Bad request"),
+      404: errJson("Gear not found"),
     },
   }),
   validator("param", gearIdParamSchema),
@@ -164,11 +107,8 @@ gearStravaRouter.post(
     description:
       "Sync shoes from Strava: import any missing shoes and refresh every shoe's distance/baseline. Requires a linked Strava account.",
     responses: {
-      200: {
-        description: "Sync summary",
-        content: { "application/json": { schema: resolver(SyncGearResponseSchema) } },
-      },
-      403: jsonError("Strava account not linked"),
+      200: okJson(SyncGearResponseSchema, "Sync summary"),
+      403: errJson("Strava account not linked"),
     },
   }),
   async (c) => {

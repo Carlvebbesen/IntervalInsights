@@ -13,6 +13,7 @@ import {
   type SQL,
   sql,
 } from "drizzle-orm";
+import { AppError } from "../error";
 import {
   type AnalysisStatus,
   activities,
@@ -228,6 +229,16 @@ export function findByIdForUser(
   });
 }
 
+export async function requireOwnedActivity(
+  db: Db,
+  userId: string,
+  activityId: number,
+): Promise<ActivityDao> {
+  const activity = await findByIdForUser(db, userId, activityId);
+  if (!activity) throw new AppError(404, "Activity not found");
+  return activity;
+}
+
 /** Returns the activity's local start date, or `undefined` if it isn't owned by the user. */
 export async function getStartDateLocalForUser(
   db: Db,
@@ -274,6 +285,19 @@ export function listPending(db: Db, userId: string, statuses: readonly AnalysisS
       feeling: activities.feeling,
       sportType: activities.sportType,
       localGearId: activities.localGearId,
+    })
+    .from(activities)
+    .where(and(eq(activities.userId, userId), inArray(activities.analysisStatus, [...statuses])));
+}
+
+/** Minimal rows for the SSE progress snapshot of in-flight analyses. */
+export function listInFlight(db: Db, userId: string, statuses: readonly AnalysisStatus[]) {
+  return db
+    .select({
+      id: activities.id,
+      title: activities.title,
+      startDateLocal: activities.startDateLocal,
+      analysisStatus: activities.analysisStatus,
     })
     .from(activities)
     .where(and(eq(activities.userId, userId), inArray(activities.analysisStatus, [...statuses])));

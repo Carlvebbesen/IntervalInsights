@@ -1,9 +1,9 @@
 import { z } from "zod";
-import type { ReadinessSignals } from "../services/pace_service";
 import { trainingTypeEnum } from "../schema/enums";
+import type { ReadinessSignals } from "../services/pace_service";
 import { COACHING_PRIMER } from "./coaching_primer";
 import { workoutSet } from "./initial_analysis_agent";
-import { gptStrongCreativeModel, invokeStructured } from "./model";
+import { gptStrongCreativeModel, invokeStructured, isRateLimitError } from "./model";
 import { venuePromptBlock } from "./running_venues";
 
 export const suggestSessionOutput = z.object({
@@ -130,5 +130,5 @@ Return the recommended session structure, a short title, the training type, and 
     prompt,
     "suggest today's session",
     ctx.mode === "recommended" ? gptStrongCreativeModel : undefined,
-  );
+  ).catch((err) => (isRateLimitError(err) ? null : Promise.reject(err)));
 }

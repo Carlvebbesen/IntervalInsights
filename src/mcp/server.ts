@@ -15,21 +15,15 @@ export interface McpAvailability {
 }
 
 /**
- * Coach tools that make their own server-side OpenAI calls. Excluded from MCP so
- * an external client (Claude/ChatGPT) can't drive our model spend through us —
- * those clients already have their own LLM.
- */
-const OPENAI_BACKED_TOOL_NAMES: ReadonlySet<string> = new Set(["parse_workout"]);
-
-/**
  * The coach registry, gated to what this athlete can actually serve. Every coach
  * tool is read-only, so the registry is safe to expose over MCP — we only drop
- * tools whose backing integration isn't connected, plus any that would spend our
- * OpenAI budget.
+ * tools whose backing integration isn't connected, plus any `llmBacked` tool
+ * (declared at the definition site): an external client (Claude/ChatGPT) must
+ * not drive our OpenAI spend through us — it has its own LLM.
  */
 export function selectMcpTools(availability: McpAvailability): CoachTool[] {
   return registry.filter((tool) => {
-    if (OPENAI_BACKED_TOOL_NAMES.has(tool.name)) return false;
+    if (tool.llmBacked) return false;
     if (tool.requires === "strava") return availability.stravaLinked;
     if (tool.requires === "intervals") return availability.intervalsConnected;
     return true;

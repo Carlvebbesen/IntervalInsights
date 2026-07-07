@@ -134,6 +134,13 @@
       "when": 1782730856130,
       "tag": "0018_curious_doomsday",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1783377824323,
+      "tag": "0019_wise_shooting_star",
+      "breakpoints": true
     }
   ]
 }

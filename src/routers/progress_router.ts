@@ -1,8 +1,8 @@
-import { and, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
-import { describeRoute, resolver } from "hono-openapi";
 import { streamSSE } from "hono/streaming";
-import { activities } from "../schema";
+import { describeRoute, resolver } from "hono-openapi";
+import { config } from "../config";
+import { listInFlight } from "../repositories/activity_repository";
 import type { AnalysisStatus } from "../schema/enums";
 import {
   ActivityProgressSchema,
@@ -30,7 +30,7 @@ const IN_FLIGHT_STATUSES: readonly AnalysisStatus[] = [
   "error",
 ];
 
-const HEARTBEAT_MS = Number(process.env.PROGRESS_HEARTBEAT_MS) || 25000;
+const HEARTBEAT_MS = config.PROGRESS_HEARTBEAT_MS;
 
 progressRouter.get(
   "/stream",
@@ -76,20 +76,7 @@ progressRouter.get(
       stream.onAbort(() => unregister());
 
       try {
-        const rows = await db
-          .select({
-            id: activities.id,
-            title: activities.title,
-            startDateLocal: activities.startDateLocal,
-            analysisStatus: activities.analysisStatus,
-          })
-          .from(activities)
-          .where(
-            and(
-              eq(activities.userId, userId),
-              inArray(activities.analysisStatus, [...IN_FLIGHT_STATUSES]),
-            ),
-          );
+        const rows = await listInFlight(db, userId, IN_FLIGHT_STATUSES);
 
         const inFlight: ActivityProgress[] = rows.map((r) => ({
           id: r.id,

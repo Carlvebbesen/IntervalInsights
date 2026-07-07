@@ -67,7 +67,7 @@ describe("contract: nullable Strava id + pending startDateLocal", () => {
           indoor: false,
         });
 
-      const res = await app.fetch(new Request("http://test/api/agents/pending"));
+      const res = await app.fetch(new Request("http://test/api/v1/agents/pending"));
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(Array.isArray(body)).toBe(true);

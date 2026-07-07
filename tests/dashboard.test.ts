@@ -44,7 +44,7 @@ const identity = () => ({
 describe("/api/dashboard", () => {
   it("GET / returns summary + graph + averages + wellness", () =>
     withIdentity(identity(), async () => {
-      const res = await app.fetch(new Request("http://test/api/dashboard"));
+      const res = await app.fetch(new Request("http://test/api/v1/dashboard"));
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(typeof body.summary.thisWeekKm).toBe("number");
@@ -54,39 +54,57 @@ describe("/api/dashboard", () => {
       expect(body.wellness).toBeNull();
     }));
 
+  it("GET / resolves week boundaries against the client's local date", async () => {
+    // Sunday 23:30 local (stored local-as-UTC). From the athlete's Sunday this
+    // is "this week"; from their Monday it belongs to the previous week. The
+    // server's UTC clock must not decide.
+    const boundaryUser = await createTestUser({ role: "premium" });
+    try {
+      await insertActivity(boundaryUser.id, {
+        title: "Sunday night run",
+        distance: 8000,
+        movingTime: 2400,
+        startDateLocal: new Date("2026-06-28T23:30:00.000Z"),
+        trainingType: "EASY",
+        sportType: "Run",
+      });
+      const boundaryIdentity = {
+        userId: boundaryUser.id,
+        clerkUserId: boundaryUser.clerkId,
+        role: "premium" as const,
+      };
+
+      await withIdentity(boundaryIdentity, async () => {
+        const sunday = await app.fetch(
+          new Request("http://test/api/v1/dashboard?date=2026-06-28"),
+        );
+        expect(sunday.status).toBe(200);
+        const sundayBody = await sunday.json();
+        expect(sundayBody.summary.thisWeekKm).toBeCloseTo(8, 3);
+        expect(sundayBody.summary.prevWeekKm).toBeCloseTo(0, 3);
+
+        const monday = await app.fetch(
+          new Request("http://test/api/v1/dashboard?date=2026-06-29"),
+        );
+        expect(monday.status).toBe(200);
+        const mondayBody = await monday.json();
+        expect(mondayBody.summary.thisWeekKm).toBeCloseTo(0, 3);
+        expect(mondayBody.summary.prevWeekKm).toBeCloseTo(8, 3);
+      });
+    } finally {
+      await deleteTestUser(boundaryUser.id);
+    }
+  });
+
   it("GET /training-summary returns discriminated result", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/dashboard/training-summary"),
+        new Request("http://test/api/v1/dashboard/training-summary"),
       );
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.status).toBe("not_linked");
       expect(body.data).toBeNull();
-    }));
-
-  it("GET /wellness validates date range", () =>
-    withIdentity(identity(), async () => {
-      const res = await app.fetch(
-        new Request("http://test/api/dashboard/wellness?oldest=bad&newest=2026-01-01"),
-      );
-      expect(res.status).toBe(400);
-    }));
-
-  it("GET /wellness returns discriminated result", () =>
-    withIdentity(identity(), async () => {
-      const today = new Date().toISOString().slice(0, 10);
-      const lastWeek = new Date(Date.now() - 7 * 86_400_000)
-        .toISOString()
-        .slice(0, 10);
-      const res = await app.fetch(
-        new Request(
-          `http://test/api/dashboard/wellness?oldest=${lastWeek}&newest=${today}`,
-        ),
-      );
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(["ok", "not_linked", "no_data"]).toContain(body.status);
     }));
 
   it("GET /week/:weekStart returns week stats", () =>
@@ -98,7 +116,7 @@ describe("/api/dashboard", () => {
       );
       const weekStart = monday.toISOString().slice(0, 10);
       const res = await app.fetch(
-        new Request(`http://test/api/dashboard/week/${weekStart}`),
+        new Request(`http://test/api/v1/dashboard/week/${weekStart}`),
       );
       expect(res.status).toBe(200);
       const body = await res.json();
@@ -110,7 +128,7 @@ describe("/api/dashboard", () => {
   it("GET /week/:weekStart rejects bad date", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/dashboard/week/not-a-date"),
+        new Request("http://test/api/v1/dashboard/week/not-a-date"),
       );
       expect(res.status).toBe(400);
     }));

@@ -1,0 +1,1 @@
+ALTER TABLE "activities" ADD COLUMN "analysis_started_at" timestamp;

@@ -1,5 +1,4 @@
-import { createClerkClient } from "@clerk/backend";
-import { config } from "../config";
+import { eq } from "drizzle-orm";
 import {
   CURRENT_PRIVACY_POLICY_VERSION,
   CURRENT_TERMS_OF_SERVICE_VERSION,
@@ -9,6 +8,8 @@ import { AppError } from "../error";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import * as activityRepo from "../repositories/activity_repository";
 import * as userRepo from "../repositories/user_repository";
+import { events, gears } from "../schema";
+import { clerkClient } from "../services/clerk_client";
 import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
@@ -61,9 +62,12 @@ export async function updateSettings(
 }
 
 /**
- * Permanently delete the user: their activities (interval_segments cascade), the
- * user row, then revoke Strava OAuth and clear Clerk metadata. External cleanup
- * failures are swallowed so a missing Strava link can't block account deletion.
+ * Permanently delete the user: their activities (interval_segments cascade),
+ * events (event_attributes cascade), gears (gear_defaults cascade), then the
+ * user row (chat conversations/messages cascade), then revoke Strava OAuth and
+ * clear Clerk metadata. Events and gears reference users with ON DELETE NO
+ * ACTION, so they must be removed explicitly or the user delete fails. External
+ * cleanup failures are swallowed so a missing Strava link can't block deletion.
  */
 export async function deleteAccount(
   db: Db,
@@ -71,9 +75,10 @@ export async function deleteAccount(
   clerkUserId: string,
 ): Promise<{ success: true; message: string }> {
   await activityRepo.deleteAllForUser(db, userId);
+  await db.delete(events).where(eq(events.userId, userId));
+  await db.delete(gears).where(eq(gears.userId, userId));
   await userRepo.deleteById(db, userId);
 
-  const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
   try {
     const tokens = await getStravaAccessTokens(clerkUserId);
     await fetch("https://www.strava.com/oauth/deauthorize", {

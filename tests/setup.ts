@@ -4,6 +4,7 @@
 // endpoints depend on.
 
 import { mock } from "bun:test";
+import { z } from "zod";
 
 process.env.NODE_ENV = "test";
 
@@ -49,6 +50,15 @@ mock.module("../src/services/strava_api_service.ts", () => ({
 }));
 
 mock.module("../src/services/intervals_api_service.ts", () => ({
+  DEFAULT_INTERVALS_STREAM_TYPES: [
+    "time",
+    "heartrate",
+    "watts",
+    "velocity_smooth",
+    "distance",
+    "altitude",
+    "cadence",
+  ],
   intervalsApiService: {
     getAthlete: async () => ({ id: "i12345" }),
     getWellness: async () => [],
@@ -75,7 +85,8 @@ mock.module("../src/services/analysis_service.ts", () => {
     ResumeValidationError,
     startAnalysis: async () => {},
     resumeAnalysis: async () => {},
-    restartAnalysisByStravaId: async () => {},
+    startAnalysisByStravaId: async () => {},
+    triggerAnalysisByStravaId: async () => {},
   };
 });
 
@@ -94,6 +105,12 @@ mock.module("../src/services/process_intervals_event.ts", () => ({
 mock.module("../src/services/pace_service.ts", () => ({
   getProposedPaceForStructure: async () => [],
   getProposedPaceFromLaps: () => null,
+  easePace: (mps: number | null | undefined) => mps ?? null,
+  applyReadinessAdjustment: (basePaces: unknown) => ({
+    paces: basePaces,
+    penaltySecPerKm: 0,
+    advisory: "",
+  }),
 }));
 
 mock.module("../src/services/lap_derivation_service.ts", () => ({
@@ -104,6 +121,7 @@ mock.module("../src/services/lap_derivation_service.ts", () => ({
 }));
 
 mock.module("../src/agent/parse_intervals_agent.ts", () => ({
+  parseIntervalsOutput: z.object({ sets: z.array(z.unknown()) }),
   invokeParseIntervalsAgent: async () => ({ sets: [] }),
 }));
 
@@ -112,28 +130,56 @@ mock.module("../src/agent/parse_intervals_agent.ts", () => ({
 // strava/intervals middlewares (which run inside their routers) don't bail
 // with a 403 during tests.
 const FAR_FUTURE = Math.floor(Date.now() / 1000) + 86_400;
+const defaultGetUser = async () => ({
+  privateMetadata: {
+    strava: {
+      access_token: "test-strava-token",
+      refresh_token: "test-strava-refresh",
+      expires_at: FAR_FUTURE,
+      athlete_id: 12345,
+    },
+    intervals: {
+      access_token: "test-intervals-token",
+      refresh_token: "test-intervals-refresh",
+      expires_at: FAR_FUTURE,
+      athlete_id: "i12345",
+    },
+  },
+  publicMetadata: {},
+});
+const defaultUpdateUserMetadata = async () => ({});
+// Default: no OAuth token — MCP requests are unauthenticated until a test
+// swaps this to return a real-looking auth object.
+const defaultAuthenticateRequest = async () => ({ toAuth: () => null });
+
+// Mutable delegate: a test file may swap these (e.g. to return an expired
+// token) and MUST call reset() when done — the mock is global across files.
+export const clerkUsersMock = {
+  getUser: defaultGetUser as (userId?: string) => Promise<unknown>,
+  updateUserMetadata: defaultUpdateUserMetadata as (
+    userId?: string,
+    params?: unknown,
+  ) => Promise<unknown>,
+  authenticateRequest: defaultAuthenticateRequest as (
+    request?: Request,
+    options?: unknown,
+  ) => Promise<{ toAuth: () => unknown }>,
+  reset() {
+    this.getUser = defaultGetUser;
+    this.updateUserMetadata = defaultUpdateUserMetadata;
+    this.authenticateRequest = defaultAuthenticateRequest;
+  },
+};
+
 mock.module("@clerk/backend", () => ({
   createClerkClient: () => ({
     users: {
-      getUser: async () => ({
-        privateMetadata: {
-          strava: {
-            access_token: "test-strava-token",
-            refresh_token: "test-strava-refresh",
-            expires_at: FAR_FUTURE,
-            athlete_id: 12345,
-          },
-          intervals: {
-            access_token: "test-intervals-token",
-            refresh_token: "test-intervals-refresh",
-            expires_at: FAR_FUTURE,
-            athlete_id: "i12345",
-          },
-        },
-        publicMetadata: {},
-      }),
-      updateUserMetadata: async () => ({}),
+      getUser: (userId?: string) => clerkUsersMock.getUser(userId),
+      updateUserMetadata: (userId?: string, params?: unknown) =>
+        clerkUsersMock.updateUserMetadata(userId, params),
     },
+    authenticateRequest: (request?: Request, options?: unknown) =>
+      clerkUsersMock.authenticateRequest(request, options),
   }),
 }));
 

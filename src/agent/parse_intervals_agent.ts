@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { TrainingType } from "../schema/enums";
 import { workoutSet } from "./initial_analysis_agent";
-import { invokeStructured } from "./model";
+import { invokeStructured, isRateLimitError } from "./model";
 import { venuePromptBlock } from "./running_venues";
 
 export const parseIntervalsOutput = z.object({
@@ -46,5 +46,7 @@ ${venuePromptBlock()}
 Return the structured sets.
 `;
 
-  return invokeStructured(parseIntervalsOutput, prompt, "parse intervals from text");
+  return invokeStructured(parseIntervalsOutput, prompt, "parse intervals from text").catch((err) =>
+    isRateLimitError(err) ? null : Promise.reject(err),
+  );
 }

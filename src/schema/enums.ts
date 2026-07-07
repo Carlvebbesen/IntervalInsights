@@ -55,6 +55,12 @@ export const IN_FLIGHT_STATUSES: readonly AnalysisStatus[] = [
   "initial",
 ];
 
+/**
+ * Statuses where the graph is actively EXECUTING (vs `initial`, which is parked
+ * at an interrupt). Even a forced re-analyze must not reset a running thread.
+ */
+export const ACTIVE_RUN_STATUSES: readonly AnalysisStatus[] = ["ongoing_init", "ongoing_completed"];
+
 /** Statuses where `startAnalysis` must early-return (in-flight + already-done). */
 export const SKIP_START_STATUSES: ReadonlySet<AnalysisStatus> = new Set<AnalysisStatus>([
   ...IN_FLIGHT_STATUSES,

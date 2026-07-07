@@ -66,6 +66,9 @@ export const activities = pgTable(
     trainingType: trainingTypeEnum("training_type"),
     intervalStructureId: integer("interval_structure_id").references(() => intervalStructures.id),
     analyzedAt: timestamp("analyzed_at"),
+    // Stamped on every ongoing_* transition; the requeue orphan detector keys
+    // on it (created_at/analyzed_at are ingest/initial times, not run starts).
+    analysisStartedAt: timestamp("analysis_started_at"),
     analysisStatus: analysisStatusEnum("analysis_status").default("pending"),
     analysisAttemptCount: integer("analysis_attempt_count").notNull().default(0),
     draftAnalysisResult: json("draft_analysis_result").$type<DraftAnalysisResult>(),

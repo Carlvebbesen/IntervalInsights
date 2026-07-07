@@ -27,11 +27,20 @@ export async function ensureConversation(
     return true;
   }
 
-  await db
+  const inserted = await db
     .insert(chatConversations)
     .values({ id: conversationId, userId, title })
-    .onConflictDoNothing();
-  return true;
+    .onConflictDoNothing()
+    .returning({ id: chatConversations.id });
+  if (inserted.length > 0) return true;
+
+  // Lost an insert race: the row appeared between the SELECT and the INSERT.
+  // Re-check ownership instead of blindly claiming it.
+  const raced = await db.query.chatConversations.findFirst({
+    where: eq(chatConversations.id, conversationId),
+    columns: { userId: true },
+  });
+  return raced?.userId === userId;
 }
 
 export async function insertMessage(

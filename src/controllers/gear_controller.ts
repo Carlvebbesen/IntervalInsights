@@ -1,15 +1,10 @@
 import type { z } from "zod";
 import { type GearDto, toGearDto } from "../dtos/gear_dto";
 import { AppError } from "../error";
-import * as gearRepo from "../repositories/gear_repository";
 import type { GearListFilters } from "../repositories/gear_repository";
+import * as gearRepo from "../repositories/gear_repository";
 import type { GearSurface, InsertGear, TrainingBucket } from "../schema";
-import type {
-  CreateGearSchema,
-  GearDefaultsResponseSchema,
-  SetGearDefaultSchema,
-  UpdateGearSchema,
-} from "../schemas/api_schemas";
+import type { CreateGearSchema, UpdateGearSchema } from "../schemas/api_schemas";
 import {
   type GearSyncResult,
   KNOWN_SHOE_BRANDS,
@@ -20,8 +15,6 @@ import type { IGlobalBindings } from "../types/IRouters";
 type Db = IGlobalBindings["db"];
 type CreateGearInput = z.infer<typeof CreateGearSchema>;
 type UpdateGearInput = z.infer<typeof UpdateGearSchema>;
-type SetGearDefaultInput = z.infer<typeof SetGearDefaultSchema>;
-type GearDefaultsResponse = z.infer<typeof GearDefaultsResponseSchema>;
 
 const BUCKETS: TrainingBucket[] = ["EASY", "LONG", "INTERVALS"];
 
@@ -103,11 +96,7 @@ export async function listGears(
   };
 }
 
-export async function createGear(
-  db: Db,
-  userId: string,
-  input: CreateGearInput,
-): Promise<GearDto> {
+export async function createGear(db: Db, userId: string, input: CreateGearInput): Promise<GearDto> {
   const gear = await gearRepo.create(db, userId, {
     gearType: input.gearType ?? "SHOES",
     brand: input.brand ?? null,
@@ -154,27 +143,6 @@ export async function updateGear(
   }
 
   return buildGearDto(db, userId, id);
-}
-
-export async function getGearDefaults(db: Db, userId: string): Promise<GearDefaultsResponse> {
-  const defaults = await gearRepo.getDefaults(db, userId);
-  return { defaults };
-}
-
-export async function setGearDefault(
-  db: Db,
-  userId: string,
-  input: SetGearDefaultInput,
-): Promise<GearDefaultsResponse> {
-  if (input.gearId === null) {
-    await gearRepo.clearDefault(db, userId, input.bucket, input.surface);
-  } else {
-    const gear = await gearRepo.findByIdForUser(db, userId, input.gearId);
-    if (!gear) throw new AppError(404, "Gear not found");
-    await gearRepo.setDefault(db, userId, input.bucket, input.surface, input.gearId);
-  }
-  const defaults = await gearRepo.getDefaults(db, userId);
-  return { defaults };
 }
 
 export function getBrands(): { brands: string[] } {

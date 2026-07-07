@@ -154,8 +154,7 @@ export function reconcileStructureBlowup(
     if (steps.length < 3) return set;
     const r = steps[0].reps;
     const isBlowup =
-      r === steps.length &&
-      steps.every((s) => s.reps === r && s.work_type === steps[0].work_type);
+      r === steps.length && steps.every((s) => s.reps === r && s.work_type === steps[0].work_type);
     if (!isBlowup) return set;
     const values = [...steps.map((s) => s.work_value)].sort((a, b) => a - b);
     const mid = Math.floor(values.length / 2);

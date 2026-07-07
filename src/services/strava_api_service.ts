@@ -223,9 +223,10 @@ export const stravaApiService = {
       phase: "completed",
       title: "Strava",
       messageKey: failed > 0 ? "sync_import_done_failed" : "sync_import_done",
-      messageArgs: failed > 0
-        ? { done: String(processed - failed), total: String(ids.length), failed: String(failed) }
-        : { done: String(processed) },
+      messageArgs:
+        failed > 0
+          ? { done: String(processed - failed), total: String(ids.length), failed: String(failed) }
+          : { done: String(processed) },
     });
 
     // Stagger LLM-triggering analyses to avoid bursting Gemini's RPM quota on

@@ -61,9 +61,10 @@ export async function createTestUser(opts?: {
 export async function deleteTestUser(userId: string) {
   const pool = getPool();
   // event_attributes + activity_events cascade from events; activity_events +
-  // interval_segments cascade from activities.
+  // interval_segments cascade from activities; gear_defaults cascade from gears.
   await pool.query(`DELETE FROM events WHERE user_id = $1`, [userId]);
   await pool.query(`DELETE FROM activities WHERE user_id = $1`, [userId]);
+  await pool.query(`DELETE FROM gears WHERE user_id = $1`, [userId]);
   await pool.query(
     `DELETE FROM feedback_training_data WHERE user_id = $1`,
     [userId],

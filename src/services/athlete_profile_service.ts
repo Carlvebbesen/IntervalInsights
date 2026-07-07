@@ -106,7 +106,8 @@ export async function buildAthleteProfileBlock(
     const bits: string[] = [];
     if (d.vdot != null) bits.push(`VDOT ~${Math.round(d.vdot)}`);
     const paceBits = [
-      fmtSecPerKm(d.paces.thresholdSecPerKm) && `threshold ${fmtSecPerKm(d.paces.thresholdSecPerKm)}`,
+      fmtSecPerKm(d.paces.thresholdSecPerKm) &&
+        `threshold ${fmtSecPerKm(d.paces.thresholdSecPerKm)}`,
       fmtSecPerKm(d.paces.intervalSecPerKm) && `interval ${fmtSecPerKm(d.paces.intervalSecPerKm)}`,
       fmtSecPerKm(d.paces.easySecPerKm) && `easy ${fmtSecPerKm(d.paces.easySecPerKm)}`,
     ].filter(Boolean);

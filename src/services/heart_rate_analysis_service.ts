@@ -1,9 +1,8 @@
 import { eq } from "drizzle-orm";
 import type { z } from "zod";
 import { runInBackground } from "../background";
-import { AppError, IntervalsError } from "../error";
+import { AppError } from "../error";
 import type { Logger } from "../logger";
-import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import type { HrAnalysisFilters, HrAnalysisRow } from "../repositories/activity_repository";
 import * as activityRepo from "../repositories/activity_repository";
@@ -26,6 +25,7 @@ import {
 } from "./hr_stats_service";
 import { intervalsApiService } from "./intervals_api_service";
 import { mapIntervalsStreamsToStreamSet } from "./intervals_mappers";
+import { withIntervalsToken } from "./intervals_token_helper";
 import { stravaApiService } from "./strava_api_service";
 
 type Db = IGlobalBindings["db"];
@@ -58,16 +58,20 @@ export async function getHeartRateAnalysis(
 
   // 1. intervals.icu must be linked (zones come from there). Mirror the
   // not_linked discriminator used by the wellness/fitness series.
-  let intervalsToken: string;
-  try {
-    intervalsToken = await getIntervalsAccessToken(clerkUserId);
-  } catch (err) {
-    if (err instanceof IntervalsError && (err.status === 401 || err.status === 403)) {
-      return { status: "not_linked" };
-    }
-    throw err;
-  }
+  const result = await withIntervalsToken(clerkUserId, (intervalsToken) =>
+    analyzeWithToken(db, userId, clerkUserId, intervalsToken, filters, log),
+  );
+  return result.status === "not_linked" ? { status: "not_linked" } : result.data;
+}
 
+async function analyzeWithToken(
+  db: Db,
+  userId: string,
+  clerkUserId: string,
+  intervalsToken: string,
+  filters: HeartRateAnalysisFilters,
+  log: Logger,
+): Promise<Result> {
   // 2. HR processing requires explicit consent (same gate as /activity/:id/heartrate).
   const consent = await userHasHeartRateConsent(db, userId);
   if (!consent) {
@@ -263,23 +267,6 @@ async function fetchZones(intervalsToken: string, log: Logger): Promise<Zone[]> 
     log.warn({ err }, "failed to fetch intervals.icu HR zones — returning none");
     return [];
   }
-}
-
-/**
- * The user's HR zone bands from intervals.icu, or `[]` when intervals.icu isn't
- * linked. Used by the app to compute per-lap time-in-zone client-side.
- */
-export async function getHrZones(clerkUserId: string, log: Logger): Promise<Zone[]> {
-  let intervalsToken: string;
-  try {
-    intervalsToken = await getIntervalsAccessToken(clerkUserId);
-  } catch (err) {
-    if (err instanceof IntervalsError && (err.status === 401 || err.status === 403)) {
-      return [];
-    }
-    throw err;
-  }
-  return fetchZones(intervalsToken, log);
 }
 
 /**

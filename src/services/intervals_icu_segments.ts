@@ -49,7 +49,10 @@ export function buildSegmentsFromIntervalsIcu(
   const workCount = intervals.filter(isWork).length;
   const recoveryCount = intervals.length - workCount;
   if (recoveryCount === 0) {
-    logger.info({ tag, workCount }, "intervals.icu breakdown has no RECOVERY blocks — falling through");
+    logger.info(
+      { tag, workCount },
+      "intervals.icu breakdown has no RECOVERY blocks — falling through",
+    );
     return null;
   }
   // The TITLE count is authoritative: when the structure gives an expected rep
@@ -57,7 +60,11 @@ export function buildSegmentsFromIntervalsIcu(
   // under/over-detects (treadmill HR-only reps — e.g. 6 of 10), so a mismatch falls
   // through to the deterministic segmenter, which lays the full known structure.
   // Without an expected count, keep a loose sanity floor.
-  if (expectedReps != null ? workCount !== expectedReps : workCount < SEGMENTER_CONFIG.cascade.icuMinWorkBlocks) {
+  if (
+    expectedReps != null
+      ? workCount !== expectedReps
+      : workCount < SEGMENTER_CONFIG.cascade.icuMinWorkBlocks
+  ) {
     logger.info(
       { tag, workCount, recoveryCount, expectedReps },
       "intervals.icu work-block count does not match the structure — falling through to heuristics",

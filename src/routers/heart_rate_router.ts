@@ -1,36 +1,14 @@
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
-import { z } from "zod";
 import {
   ErrorSchema,
   HeartRateAnalysisRequestSchema,
   HeartRateAnalysisResponseSchema,
-  HrZoneSchema,
 } from "../schemas/api_schemas";
-import { getHeartRateAnalysis, getHrZones } from "../services/heart_rate_analysis_service";
+import { getHeartRateAnalysis } from "../services/heart_rate_analysis_service";
 import type { TGlobalEnv } from "../types/IRouters";
 
 const heartRateRouter = new Hono<TGlobalEnv>();
-
-heartRateRouter.get(
-  "/zones",
-  describeRoute({
-    description:
-      "The athlete's HR zone bands from intervals.icu (empty when intervals.icu isn't linked). Used by the app to compute per-lap time-in-zone client-side.",
-    responses: {
-      200: {
-        description: "HR zone bands",
-        content: {
-          "application/json": { schema: resolver(z.object({ zones: z.array(HrZoneSchema) })) },
-        },
-      },
-    },
-  }),
-  async (c) => {
-    const zones = await getHrZones(c.get("clerkUserId"), c.var.logger);
-    return c.json({ zones });
-  },
-);
 
 heartRateRouter.post(
   "/analysis",

@@ -1,6 +1,4 @@
-import { createClerkClient } from "@clerk/backend";
-import { eq } from "drizzle-orm";
-import { config } from "../config";
+import { and, eq } from "drizzle-orm";
 import { logger } from "../logger";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import * as gearRepo from "../repositories/gear_repository";
@@ -8,6 +6,7 @@ import { activities, gears, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
 import { triggerAnalysisByStravaId } from "./analysis_service";
+import { clerkClient } from "./clerk_client";
 import { linkActivityGearOnIngest } from "./gear_strava_service";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { progressService } from "./progress_service";
@@ -49,7 +48,6 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
 
     await context.db.update(users).set({ stravaId: null }).where(eq(users.id, user.id));
 
-    const clerkClient = createClerkClient({ secretKey: config.CLERK_SECRET_KEY });
     await clerkClient.users.updateUserMetadata(user.clerkId, {
       privateMetadata: { strava: null },
     });
@@ -61,6 +59,18 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
   if (body.object_type !== "activity") return;
 
   const stravaActivityId = body.object_id;
+  // Strava webhooks are unsigned and the subscription-id check is weak
+  // (low-entropy int). Defense-in-depth: resolve the owner from `owner_id` and
+  // scope every mutation to that user's rows, so a forged event can at worst
+  // touch the forger's own data.
+  const user = await context.db.query.users.findFirst({
+    where: (u, { eq }) => eq(u.stravaId, body.owner_id.toString()),
+  });
+  if (!user) {
+    logger.info({ ownerId: body.owner_id }, "No user found for strava event");
+    return;
+  }
+
   if (body.aspect_type === "delete") {
     const [row] = await context.db
       .select({
@@ -69,22 +79,17 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
         localGearId: activities.localGearId,
       })
       .from(activities)
-      .where(eq(activities.stravaActivityId, stravaActivityId));
-    if (row?.localGearId != null) {
+      .where(
+        and(eq(activities.stravaActivityId, stravaActivityId), eq(activities.userId, user.id)),
+      );
+    if (!row) return;
+    if (row.localGearId != null) {
       // Detach (decrements the gear's counters) before the row disappears.
       await gearRepo.assignActivityToGear(context.db, row.userId, row.id, null);
     }
-    return await context.db
-      .delete(activities)
-      .where(eq(activities.stravaActivityId, stravaActivityId));
+    return await context.db.delete(activities).where(eq(activities.id, row.id));
   }
-  const user = await context.db.query.users.findFirst({
-    where: (u, { eq }) => eq(u.stravaId, body.owner_id.toString()),
-  });
-  if (!user) {
-    logger.info({ ownerId: body.owner_id }, "No user found for strava event");
-    return;
-  }
+
   const accessToken = (await getStravaAccessTokens(user.clerkId)).access_token;
   if (!accessToken) {
     logger.info({ clerkUserId: user.clerkId }, "no access token");
@@ -92,6 +97,15 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
   }
 
   const data = await stravaApiService.getActivity(accessToken, stravaActivityId);
+  // Never trust the payload's owner claim: re-validate against the activity
+  // Strava actually returns for the resolved user's token.
+  if (data.athlete?.id !== body.owner_id) {
+    logger.warn(
+      { stravaActivityId, claimedOwner: body.owner_id, actualOwner: data.athlete?.id },
+      "Strava event owner mismatch — ignoring",
+    );
+    return;
+  }
   if (!shouldAnalyze(data.sport_type)) {
     logger.info(
       { sportType: data.sport_type, stravaActivityId: data.id },
@@ -203,11 +217,11 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
     const [existing] = await context.db
       .select({ id: activities.id, distance: activities.distance })
       .from(activities)
-      .where(eq(activities.stravaActivityId, stravaActivityId));
-    await context.db
-      .update(activities)
-      .set(activity)
-      .where(eq(activities.stravaActivityId, stravaActivityId));
+      .where(
+        and(eq(activities.stravaActivityId, stravaActivityId), eq(activities.userId, user.id)),
+      );
+    if (!existing) return;
+    await context.db.update(activities).set(activity).where(eq(activities.id, existing.id));
     if (existing) {
       // Keep the assigned gear's maintained distance in sync. localGearId is
       // preserved (the mapper never sets it, so manual assignments survive).

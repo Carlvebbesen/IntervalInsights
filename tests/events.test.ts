@@ -31,7 +31,7 @@ const identity = () => ({
 describe("/api/events", () => {
   it("GET / returns all events for the user", () =>
     withIdentity(identity(), async () => {
-      const res = await app.fetch(new Request("http://test/api/events"));
+      const res = await app.fetch(new Request("http://test/api/v1/events"));
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(Array.isArray(body.events)).toBe(true);
@@ -41,7 +41,7 @@ describe("/api/events", () => {
   it("GET /?status=resolved filters by status", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/events?status=resolved"),
+        new Request("http://test/api/v1/events?status=resolved"),
       );
       expect(res.status).toBe(200);
       const body = await res.json();
@@ -52,7 +52,7 @@ describe("/api/events", () => {
   it("GET /?eventType=INJURY filters by type", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/events?eventType=INJURY"),
+        new Request("http://test/api/v1/events?eventType=INJURY"),
       );
       expect(res.status).toBe(200);
       const body = await res.json();

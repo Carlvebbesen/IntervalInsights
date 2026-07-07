@@ -24,7 +24,7 @@ const identity = () => ({
 describe("/api/user", () => {
   it("GET / returns the authed user", () =>
     withIdentity(identity(), async () => {
-      const res = await app.fetch(new Request("http://test/api/user"));
+      const res = await app.fetch(new Request("http://test/api/v1/user"));
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.id).toBe(user.id);
@@ -36,7 +36,7 @@ describe("/api/user", () => {
   it("PATCH / updates maxHeartRate and processHeartRate", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/user", {
+        new Request("http://test/api/v1/user", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ maxHeartRate: 195, processHeartRate: true }),
@@ -51,7 +51,7 @@ describe("/api/user", () => {
   it("PATCH / rejects empty body", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/user", {
+        new Request("http://test/api/v1/user", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({}),
@@ -63,7 +63,7 @@ describe("/api/user", () => {
   it("POST /accept-privacy-policy records acceptance", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/user/accept-privacy-policy", {
+        new Request("http://test/api/v1/user/accept-privacy-policy", {
           method: "POST",
         }),
       );
@@ -76,7 +76,7 @@ describe("/api/user", () => {
   it("POST /accept-terms-of-service records acceptance", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
-        new Request("http://test/api/user/accept-terms-of-service", {
+        new Request("http://test/api/v1/user/accept-terms-of-service", {
           method: "POST",
         }),
       );
@@ -95,7 +95,7 @@ describe("/api/user — admin gate", () => {
         { userId: adminUser.id, clerkUserId: adminUser.clerkId, role: "admin" },
         () =>
           app.fetch(
-            new Request(`http://test/api/admin/users/${adminUser.id}/role`, {
+            new Request(`http://test/api/v1/admin/users/${adminUser.id}/role`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ role: "premium" }),
@@ -117,7 +117,7 @@ describe("/api/user — admin gate", () => {
         { userId: guestUser.id, clerkUserId: guestUser.clerkId, role: "guest" },
         () =>
           app.fetch(
-            new Request(`http://test/api/admin/users/${guestUser.id}/role`, {
+            new Request(`http://test/api/v1/admin/users/${guestUser.id}/role`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ role: "admin" }),

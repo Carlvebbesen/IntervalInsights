@@ -3,12 +3,13 @@ import { runInBackground } from "../background";
 import { logger } from "../logger";
 import { activities } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
-import { triggerAnalysisByStravaId } from "./analysis_service";
+import { startAnalysis } from "./analysis_service";
 
 const REQUEUE_BATCH_LIMIT = 100;
 const ERROR_RETRY_CAP = 2;
 const ORPHAN_TIMEOUT_MINUTES = 10;
 const REQUEUE_MIN_INTERVAL_MS = 30_000;
+const THROTTLE_SWEEP_THRESHOLD = 1_000;
 
 // Throttle the requeue write per user: this runs on the (frequently polled)
 // pending GET, but stale-activity recovery is best-effort and not time-critical,
@@ -23,9 +24,18 @@ export async function requeueStaleActivities(
   const now = Date.now();
   const last = lastRequeueByUser.get(userId);
   if (last !== undefined && now - last < REQUEUE_MIN_INTERVAL_MS) return;
+  if (lastRequeueByUser.size >= THROTTLE_SWEEP_THRESHOLD) {
+    for (const [key, ts] of lastRequeueByUser) {
+      if (now - ts >= REQUEUE_MIN_INTERVAL_MS) lastRequeueByUser.delete(key);
+    }
+  }
   lastRequeueByUser.set(userId, now);
 
   const tag = `[requeueStaleActivities user=${userId}]`;
+  // Orphan detection keys on analysis_started_at (stamped on every ongoing_*
+  // transition). created_at is the INGEST time and analyzed_at the INITIAL
+  // phase time — using those here re-queued perfectly healthy in-flight runs
+  // whenever the row was older than the timeout, restarting them mid-flight.
   const requeued = await db
     .update(activities)
     .set({
@@ -41,12 +51,12 @@ export async function requeueStaleActivities(
             OR (analysis_status = 'error' AND analysis_attempt_count < ${ERROR_RETRY_CAP})
             OR (
               analysis_status = 'ongoing_init'
-              AND created_at < NOW() - INTERVAL '${sql.raw(String(ORPHAN_TIMEOUT_MINUTES))} minutes'
+              AND COALESCE(analysis_started_at, created_at) < NOW() - INTERVAL '${sql.raw(String(ORPHAN_TIMEOUT_MINUTES))} minutes'
               AND analysis_attempt_count < ${ERROR_RETRY_CAP}
             )
             OR (
               analysis_status = 'ongoing_completed'
-              AND COALESCE(analyzed_at, created_at) < NOW() - INTERVAL '${sql.raw(String(ORPHAN_TIMEOUT_MINUTES))} minutes'
+              AND COALESCE(analysis_started_at, analyzed_at, created_at) < NOW() - INTERVAL '${sql.raw(String(ORPHAN_TIMEOUT_MINUTES))} minutes'
               AND analysis_attempt_count < ${ERROR_RETRY_CAP}
             )
           )
@@ -60,15 +70,15 @@ export async function requeueStaleActivities(
   }
 
   for (const row of requeued) {
-    const stravaActivityId = row.stravaActivityId;
-    if (stravaActivityId == null) continue;
+    // Restart by internal id: intervals.icu-only rows (stravaActivityId null)
+    // are fetchable too — addressing by Strava id stranded them in `pending`.
     runInBackground(
       "analysis.restart",
-      () => triggerAnalysisByStravaId(db, stravaAccessToken, stravaActivityId, userId),
+      () => startAnalysis(db, stravaAccessToken, row.id, row.stravaActivityId, userId),
       {
         attributes: {
           "activity.id": row.id,
-          "strava.activity_id": stravaActivityId,
+          "strava.activity_id": row.stravaActivityId ?? "",
           "user.id": userId,
         },
       },

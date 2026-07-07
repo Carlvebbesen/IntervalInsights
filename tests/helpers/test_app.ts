@@ -25,12 +25,14 @@ import adminRouter from "../../src/routers/admin_router";
 import agentsRouter from "../../src/routers/agents_router";
 import dashboardRouter from "../../src/routers/dashboard_router";
 import eventsRouter from "../../src/routers/events_router";
+import gearRouter, { gearStravaRouter } from "../../src/routers/gear_router";
 import heartRateRouter from "../../src/routers/heart_rate_router";
 import intervalStructureRouter from "../../src/routers/interval_structure_router";
 import intervalsEntryRouter from "../../src/routers/intervals/intervals_entry_router";
 import progressRouter from "../../src/routers/progress_router";
 import publicRouter from "../../src/routers/public_router";
 import stravaEntryRouter from "../../src/routers/strava/strava_entry_router";
+import suggestSessionRouter from "../../src/routers/suggest_session_router";
 import userRouter from "../../src/routers/user_router";
 import * as schema from "../../src/schema";
 import type { TGlobalEnv } from "../../src/types/IRouters";
@@ -86,20 +88,30 @@ export function buildTestApp(pool: Pool) {
 
   app.use("/api/*", testAuthGuard);
 
-  app.route("/api/activity", activitiesRouter);
-  app.route("/api/activity", stravaActivitiesRouter);
-  app.route("/api/agents", agentsRouter);
-  app.route("/api/strava", stravaEntryRouter);
-  app.route("/api/interval-structures", intervalStructureRouter);
-  app.route("/api/dashboard", dashboardRouter);
-  app.route("/api/heart-rate", heartRateRouter);
-  app.route("/api/events", eventsRouter);
-  app.route("/api/admin", adminRouter);
-  app.route("/api/user", userRouter);
-  app.route("/api/intervals", intervalsEntryRouter);
-  app.route("/api/progress", progressRouter);
+  const v1 = new Hono<TGlobalEnv>();
+  // Mirrors src/index.ts mount order: plain router BEFORE its strava-middleware
+  // twin on each shared prefix (guarded by tests/mount_order.test.ts).
+  v1.route("/activity", activitiesRouter);
+  v1.route("/activity", stravaActivitiesRouter);
+  v1.route("/agents", suggestSessionRouter);
+  v1.route("/agents", agentsRouter);
+  v1.route("/strava", stravaEntryRouter);
+  v1.route("/interval-structures", intervalStructureRouter);
+  v1.route("/dashboard", dashboardRouter);
+  v1.route("/heart-rate", heartRateRouter);
+  v1.route("/events", eventsRouter);
+  v1.route("/gear", gearRouter);
+  v1.route("/gear", gearStravaRouter);
+  v1.route("/admin", adminRouter);
+  v1.route("/user", userRouter);
+  v1.route("/intervals", intervalsEntryRouter);
+  v1.route("/progress", progressRouter);
+  // Mirrors src/index.ts transitional dual-mount: authed routers served at both the
+  // legacy /api/* and the new /api/v1/* during the rollout.
+  app.route("/api", v1);
+  app.route("/api/v1", v1);
 
-  app.notFound((c) => c.json({ status: 404, message: "Not Found" }, 404));
+  app.notFound((c) => c.json({ error: "Not Found" }, 404));
   app.onError((err, c) => {
     if (err instanceof AppError) {
       return c.json(

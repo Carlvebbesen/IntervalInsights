@@ -119,7 +119,7 @@ describe("public endpoints (no auth)", () => {
 describe("auth gate", () => {
   it("authenticated routes refuse to run without a test identity", async () => {
     // No withIdentity() wrapper → testAuthGuard returns 401.
-    const res = await app.fetch(new Request("http://test/api/user"));
+    const res = await app.fetch(new Request("http://test/api/v1/user"));
     expect(res.status).toBe(401);
   });
 });

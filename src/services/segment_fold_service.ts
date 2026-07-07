@@ -71,7 +71,8 @@ export function expandRestSegments(folded: SelectIntervalSegment[]): SelectInter
         // recoveryDuration is always set when recoveryEndTime is; fall back to
         // the timestamp span so a synthesised REST can never be zero-duration.
         actualDuration:
-          seg.recoveryDuration ?? Math.max(0, Math.round(seg.recoveryEndTime - seg.timeSeriesEndTime)),
+          seg.recoveryDuration ??
+          Math.max(0, Math.round(seg.recoveryEndTime - seg.timeSeriesEndTime)),
         avgHeartRate: seg.recoveryAvgHeartRate ?? null,
       });
     } else {
