@@ -17,11 +17,11 @@ bun run db:studio    # Open Drizzle Studio UI
 
 Checks & tests:
 ```bash
-bunx tsc --noEmit    # Type-check (errors from node_modules/ are pre-existing — only care about src/)
+bun run check        # one-shot verify: test suite + tsc --noEmit (src/ only) + biome check src
 bun run test         # Endpoint + service suite (spins up a disposable Postgres via Docker)
 bun run test:pace    # Pace/readiness unit suite
 ```
-See `tests/README.md` for how the endpoint suite stubs auth and provisions its DB.
+See `tests/README.md` for how the endpoint suite stubs auth and provisions its DB. The type gate covers `src/` only — tests are intentionally type-loose (mocks cast past interfaces), and `node_modules/` errors are pre-existing third-party issues.
 
 ## Architecture
 
