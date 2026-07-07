@@ -61,6 +61,28 @@ describe("mapIntervalsStreamsToStreamSet", () => {
     expect("totally_unknown" in set).toBe(false);
   });
 
+  it("zips the split latlng stream (data=lat, data2=lng) into tuples", () => {
+    const set = mapIntervalsStreamsToStreamSet([
+      { type: "latlng", data: [59.9388, 59.9389], data2: [10.7479, 10.748] },
+    ]);
+    expect(set.latlng?.data).toEqual([
+      [59.9388, 10.7479],
+      [59.9389, 10.748],
+    ]);
+  });
+
+  it("accepts a latlng stream already in [lat,lng] tuple form", () => {
+    const set = mapIntervalsStreamsToStreamSet([
+      { type: "latlng", data: [[59.9388, 10.7479]] },
+    ]);
+    expect(set.latlng?.data).toEqual([[59.9388, 10.7479]]);
+  });
+
+  it("skips a latlng stream missing its longitude half", () => {
+    const set = mapIntervalsStreamsToStreamSet([{ type: "latlng", data: [59.9388] }]);
+    expect("latlng" in set).toBe(false);
+  });
+
   it("returns an empty set for a non-array input", () => {
     expect(mapIntervalsStreamsToStreamSet(null)).toEqual({});
   });
