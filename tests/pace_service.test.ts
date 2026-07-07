@@ -141,7 +141,7 @@ async function seedStructure(sets: WorkoutSet[]): Promise<number> {
   if (existing[0]) return existing[0].id;
   const [row] = await db
     .insert(intervalStructures)
-    .values({ name: `sig ${signature}`, signature, trainingType: "LONG_INTERVALS" })
+    .values({ name: `sig ${signature}`, signature })
     .returning();
   return row.id;
 }

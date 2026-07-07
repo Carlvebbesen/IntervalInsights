@@ -46,7 +46,6 @@ export async function findMatchingStructure(
       {
         structureId: exact[0].id,
         structureName: exact[0].name,
-        structureTrainingType: exact[0].trainingType,
         activityTrainingType: trainingType,
       },
       "exact-match",
@@ -54,12 +53,15 @@ export async function findMatchingStructure(
     return { useExisting: true, structureId: exact[0].id, signature };
   }
 
+  // Fuzzy match only against shapes the user has run under the SAME training
+  // type. The type lives on the activity now (structures are pure shapes), so
+  // filter on activities.trainingType via the existing join.
   const signatureParts = signature.split("-").sort();
   const candidates = await db
     .selectDistinct({ id: intervalStructures.id, signature: intervalStructures.signature })
     .from(intervalStructures)
     .innerJoin(activities, eq(activities.intervalStructureId, intervalStructures.id))
-    .where(and(eq(activities.userId, userId), eq(intervalStructures.trainingType, trainingType)));
+    .where(and(eq(activities.userId, userId), eq(activities.trainingType, trainingType)));
 
   let bestId: number | undefined;
   let bestScore = 0;
@@ -130,7 +132,6 @@ export async function persistSegmentsAndStructure(
       .values({
         name: generateStructureName(components),
         signature: check.signature || null,
-        trainingType,
       })
       .onConflictDoNothing({ target: intervalStructures.signature })
       .returning();

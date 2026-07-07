@@ -109,7 +109,7 @@ export async function representativeIntervalSegments(db: Db, userId: string, str
 export async function getStructureWithSets(db: Db, userId: string, structureId: number) {
   const structure = await db.query.intervalStructures.findFirst({
     where: eq(intervalStructures.id, structureId),
-    columns: { id: true, name: true, signature: true, trainingType: true },
+    columns: { id: true, name: true, signature: true },
   });
   if (!structure) return null;
 
@@ -135,7 +135,6 @@ export async function getStructureWithSets(db: Db, userId: string, structureId: 
     id: structure.id,
     name: structure.name,
     signature: structure.signature,
-    trainingType: structure.trainingType,
     sets,
   };
 }

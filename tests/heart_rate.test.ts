@@ -31,7 +31,7 @@ beforeAll(async () => {
   // An interval structure + signature to filter on.
   const [structure] = await getDb()
     .insert(intervalStructures)
-    .values({ name: "4x4 VO2max", signature: "sig-4x4", trainingType: "SHORT_INTERVALS" })
+    .values({ name: "4x4 VO2max", signature: "sig-4x4" })
     .returning();
   structureId = structure.id;
 

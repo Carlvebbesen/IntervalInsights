@@ -141,6 +141,13 @@
       "when": 1783377824323,
       "tag": "0019_wise_shooting_star",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1783449229139,
+      "tag": "0020_woozy_black_panther",
+      "breakpoints": true
     }
   ]
 }
