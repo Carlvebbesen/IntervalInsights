@@ -25,6 +25,7 @@ export const gearColumns = {
   model: gears.model,
   nickname: gears.nickname,
   surface: gears.surface,
+  useTypes: gears.useTypes,
   isActive: gears.isActive,
   retiredAt: gears.retiredAt,
   stravaGearId: gears.stravaGearId,

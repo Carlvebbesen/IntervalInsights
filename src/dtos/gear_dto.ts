@@ -46,6 +46,7 @@ export function toGearDto(dao: GearDao, extras: GearDtoExtras = {}): GearDto {
     nickname: dao.nickname,
     displayName: gearDisplayName(dao),
     surface: dao.surface,
+    useTypes: dao.useTypes,
     isActive: dao.isActive,
     retiredAt: dao.retiredAt?.toISOString() ?? null,
     stravaGearId: dao.stravaGearId,

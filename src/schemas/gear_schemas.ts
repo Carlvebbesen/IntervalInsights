@@ -1,6 +1,6 @@
 import "zod-openapi/extend";
 import { z } from "zod";
-import { gearSurfaceEnum, gearTypeEnum } from "../schema/enums";
+import { gearSurfaceEnum, gearTypeEnum, trainingTypeEnum } from "../schema/enums";
 
 export const GearSummarySchema = z
   .object({
@@ -23,6 +23,7 @@ export const GearSchema = z
     nickname: z.string().nullable(),
     displayName: z.string(),
     surface: z.enum(gearSurfaceEnum.enumValues),
+    useTypes: z.array(z.enum(trainingTypeEnum.enumValues)),
     isActive: z.boolean(),
     retiredAt: z.string().nullable(),
     stravaGearId: z.string().nullable(),
@@ -52,6 +53,7 @@ export const CreateGearSchema = z
     nickname: z.string().nullable().optional(),
     surface: z.enum(gearSurfaceEnum.enumValues),
     gearType: z.enum(gearTypeEnum.enumValues).optional(),
+    useTypes: z.array(z.enum(trainingTypeEnum.enumValues)).optional(),
     defaultEasy: z.boolean().optional(),
     defaultLong: z.boolean().optional(),
     defaultIntervals: z.boolean().optional(),
@@ -65,6 +67,7 @@ export const UpdateGearSchema = z
     model: z.string().min(1).optional(),
     nickname: z.string().nullable().optional(),
     surface: z.enum(gearSurfaceEnum.enumValues).optional(),
+    useTypes: z.array(z.enum(trainingTypeEnum.enumValues)).optional(),
     isActive: z.boolean().optional(),
     defaultEasy: z.boolean().optional(),
     defaultLong: z.boolean().optional(),

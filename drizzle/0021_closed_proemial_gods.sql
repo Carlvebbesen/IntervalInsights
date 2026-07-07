@@ -1,0 +1,1 @@
+ALTER TABLE "gears" ADD COLUMN "use_types" "training_type"[] DEFAULT '{}' NOT NULL;

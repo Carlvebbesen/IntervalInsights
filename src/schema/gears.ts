@@ -13,7 +13,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { activities } from "./activities";
-import { gearSurfaceEnum, gearTypeEnum, trainingBucketEnum } from "./enums";
+import { gearSurfaceEnum, gearTypeEnum, trainingBucketEnum, trainingTypeEnum } from "./enums";
 import { users } from "./users";
 
 export const gears = pgTable(
@@ -28,6 +28,8 @@ export const gears = pgTable(
     model: text("model").notNull(),
     nickname: text("nickname"),
     surface: gearSurfaceEnum("surface").notNull().default("ROAD"),
+    // Training types this shoe suits; empty = allround (suits everything).
+    useTypes: trainingTypeEnum("use_types").array().notNull().default([]),
     isActive: boolean("is_active").notNull().default(true),
     retiredAt: timestamp("retired_at"),
     // Strava's opaque gear id; null for shoes created manually in-app.

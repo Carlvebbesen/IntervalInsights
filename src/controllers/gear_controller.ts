@@ -109,6 +109,7 @@ export async function createGear(db: Db, userId: string, input: CreateGearInput)
     model: input.model,
     nickname: input.nickname ?? null,
     surface: input.surface,
+    useTypes: input.useTypes ?? [],
   });
   await applyDefaultToggles(db, userId, gear.id, gear.surface, input);
   return buildGearDto(db, userId, gear.id);
@@ -128,6 +129,7 @@ export async function updateGear(
   if (input.model !== undefined) updates.model = input.model;
   if (input.nickname !== undefined) updates.nickname = input.nickname;
   if (input.surface !== undefined) updates.surface = input.surface;
+  if (input.useTypes !== undefined) updates.useTypes = input.useTypes;
   if (input.isActive !== undefined) {
     updates.isActive = input.isActive;
     updates.retiredAt = input.isActive ? null : (existing.retiredAt ?? new Date());

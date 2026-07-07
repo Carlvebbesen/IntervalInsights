@@ -87,6 +87,31 @@ describe("/api/v1/gear", () => {
       expect(cleared.isDefaultRace).toBe(false);
     }));
 
+  it("round-trips useTypes through create, patch, and list", () =>
+    withIdentity(identity(), async () => {
+      const created = await createGear({
+        model: "Takumi Sen",
+        surface: "ROAD",
+        useTypes: ["SHORT_INTERVALS", "LONG_INTERVALS"],
+      });
+      expect(created.useTypes).toEqual(["SHORT_INTERVALS", "LONG_INTERVALS"]);
+
+      const list = await (await app.fetch(new Request("http://test/api/v1/gear"))).json();
+      const listed = list.data.find((g: { id: number }) => g.id === created.id);
+      expect(listed.useTypes).toEqual(["SHORT_INTERVALS", "LONG_INTERVALS"]);
+
+      const patchRes = await app.fetch(
+        jsonReq(`http://test/api/v1/gear/${created.id}`, "PATCH", { useTypes: ["TEMPO"] }),
+      );
+      expect(patchRes.status).toBe(200);
+      expect((await patchRes.json()).useTypes).toEqual(["TEMPO"]);
+
+      const badRes = await app.fetch(
+        jsonReq(`http://test/api/v1/gear/${created.id}`, "PATCH", { useTypes: ["NOT_A_TYPE"] }),
+      );
+      expect(badRes.status).toBe(400);
+    }));
+
   it("rejects a create without a model", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(
