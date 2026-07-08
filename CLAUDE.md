@@ -29,6 +29,7 @@ See `tests/README.md` for how the endpoint suite stubs auth and provisions its D
 (before Clerk); all authenticated routers mount under a versioned `/api/v1` sub-app.
 
 **Auth flow (dual-auth window — Better Auth alongside Clerk until the Phase 6 cutover):**
+0. **Registration is explicit** (`disableSignUp: true` on the emailOTP plugin): `POST /api/auth/sign-up/email-otp` creates the guest `users` row (name supplied here, `emailVerified: false`); the first OTP verify flips `emailVerified` true. OTP **sign-in** with an unknown email sends no code and creates no account (email-enumeration protection). The store-review demo account is seeded at boot by `ensureReviewAccount()` (`src/auth.ts`, called from `src/index.ts`) rather than auto-created on first verify.
 1. `authGuard` (`src/middlewares/auth_middleware.ts`) runs on all `/api/*` routes behind `clerkMiddleware`. It first tries a **Better Auth** bearer session (`auth.api.getSession`; `session.user` IS the full `users` row — see `src/auth.ts`), then falls back to the legacy **Clerk** session (`users` lookup by `clerkId`, lazy-create enriched with verified email/name from Clerk). Both paths resolve `userId` (UUID), `role`, and the full `user` row; `clerkUserId` is `null` for Better Auth-native users. The `users` table is the source of truth for identity/role. The active path is tagged as the `auth.provider` span attribute.
 2. `stravaMiddleware` (`src/middlewares/strava_middleware.ts`) is applied per-router on routes that need Strava API access. It reads/refreshes Strava OAuth tokens from the encrypted Postgres vault (`oauth_provider_tokens`, keyed by `users.id`) and sets `stravaAccessToken` + `stravaAthleteId` on the Hono context.
 
@@ -42,7 +43,7 @@ Routers that need Strava API access must use `TStravaEnv` and apply `stravaMiddl
 - `GET/POST /api/strava/event`, `POST /api/intervals/event` — inbound webhooks
 - `GET /api/health` — liveness probe
 - `GET /api/privacy-policy`, `GET /api/terms-of-service` — legal markdown
-- `POST|GET /api/auth/*` — Better Auth endpoints (email-OTP send/verify, session), handled by `auth.handler`
+- `POST|GET /api/auth/*` — Better Auth endpoints (email-OTP send/verify, session), handled by `auth.handler`. Includes the custom `POST /api/auth/sign-up/email-otp` plugin (name + email) — the only way to register, since OTP sign-in no longer auto-creates accounts. It is enumeration-safe (identical `{success:true}` for a new or already-registered email)
 - Plus the app-root routes `/`, `/app-icon.png`, `/favicon.ico`, `/.well-known/*`, and the MCP router.
 
 **Authenticated routers (mounted under `/api/v1`, behind `clerkMiddleware` + `authGuard`):**
