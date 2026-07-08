@@ -58,6 +58,13 @@ app.get("/favicon.ico", async (_c) => {
   });
 });
 
+app.get("/app-icon-email.png", async (_c) => {
+  const file = Bun.file(new URL("./app_icon_email.png", import.meta.url).pathname);
+  return new Response(file, {
+    headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+  });
+});
+
 app.get("/.well-known/apple-app-site-association", async (_c) => {
   const file = Bun.file(
     new URL("./.well-known/apple-app-site-association.json", import.meta.url).pathname,

@@ -10,7 +10,7 @@ const ACCENT = "#98d2eb";
 const BACKGROUND = "#F1F5F9";
 
 function otpEmailHtml(otp: string): string {
-  const logoUrl = new URL("/app-icon.png", config.APP_BASE_URL).toString();
+  const logoUrl = new URL("/app-icon-email.png", config.APP_BASE_URL).toString();
   return `<!DOCTYPE html>
 <html lang="en">
 <body style="margin:0;padding:0;background-color:${BACKGROUND};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
