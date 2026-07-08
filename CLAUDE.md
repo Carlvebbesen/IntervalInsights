@@ -45,6 +45,7 @@ Routers that need Strava API access must use `TStravaEnv` and apply `stravaMiddl
 - `GET /api/privacy-policy`, `GET /api/terms-of-service` — legal markdown
 - `POST|GET /api/auth/*` — Better Auth endpoints (email-OTP send/verify, session), handled by `auth.handler`. Includes the custom `POST /api/auth/sign-up/email-otp` plugin (name + email) — the only way to register, since OTP sign-in no longer auto-creates accounts. It is enumeration-safe (identical `{success:true}` for a new or already-registered email)
 - Plus the app-root routes `/`, `/app-icon.png`, `/favicon.ico`, `/.well-known/*`, and the MCP router.
+- Human-facing web pages at the app root (rendered HTML, `src/web/pages.ts`, mounted via `registerWebPages`): `GET /privacy-policy`, `GET /terms-of-service` (the same legal markdown rendered to branded HTML via `marked`), and `GET /display/delete-account` — the Google Play account-deletion guide. Linked from the landing footer.
 
 **Authenticated routers (mounted under `/api/v1`, behind `clerkMiddleware` + `authGuard`):**
 - `/api/v1/activity` — list, detail, `PATCH /:id` metadata, gear, segments, laps, splits, streams, editor-state (`TGlobalEnv` + `TStravaEnv` sub-router)

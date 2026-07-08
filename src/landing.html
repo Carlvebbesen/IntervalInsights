@@ -208,6 +208,21 @@
       font-size: 0.8rem;
       border-top: 1px solid #CBD5E1;
     }
+
+    footer .links {
+      display: flex;
+      gap: 1.25rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 0.75rem;
+    }
+
+    footer .links a {
+      color: #64748B;
+      text-decoration: none;
+    }
+
+    footer .links a:hover { color: #448AFF; }
   </style>
 </head>
 <body>
@@ -261,6 +276,11 @@
   </section>
 
   <footer>
+    <div class="links">
+      <a href="/privacy-policy">Privacy Policy</a>
+      <a href="/terms-of-service">Terms of Service</a>
+      <a href="/display/delete-account">Delete Account</a>
+    </div>
     &copy; 2026 Interval Insights
   </footer>
 </body>
