@@ -97,4 +97,51 @@ describe("/api/agents", () => {
       );
       expect(res.status).toBe(400);
     }));
+
+  // A migrated user has `users.stravaId` set but no token in the vault. /pending
+  // must still load (soft strava middleware), while analysis mutations that need
+  // a live token stay hard-gated with 403.
+  describe("without a linked Strava token", () => {
+    let tokenless: { id: string; clerkId: string };
+    let pendingId: number;
+
+    beforeAll(async () => {
+      tokenless = await createTestUser({ role: "premium", strava: false });
+      const seeded = await insertActivity(tokenless.id, {
+        title: "Tokenless Pending Run",
+        analysisStatus: "pending",
+      });
+      pendingId = seeded.id;
+    });
+
+    afterAll(async () => {
+      await deleteTestUser(tokenless.id);
+    });
+
+    const tokenlessIdentity = () => ({
+      userId: tokenless.id,
+      clerkUserId: tokenless.clerkId,
+      role: "premium" as const,
+    });
+
+    it("GET /pending still returns 200", () =>
+      withIdentity(tokenlessIdentity(), async () => {
+        const res = await app.fetch(new Request("http://test/api/v1/agents/pending"));
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body.find((a: { id: number }) => a.id === pendingId)).toBeDefined();
+      }));
+
+    it("POST /start-analysis is rejected with 403", () =>
+      withIdentity(tokenlessIdentity(), async () => {
+        const res = await app.fetch(
+          new Request("http://test/api/v1/agents/start-analysis", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ activityId: pendingId }),
+          }),
+        );
+        expect(res.status).toBe(403);
+      }));
+  });
 });

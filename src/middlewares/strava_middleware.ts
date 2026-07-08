@@ -75,3 +75,20 @@ export const stravaMiddleware = createMiddleware<TStravaEnv>(async (c, next) => 
   c.set("stravaAthleteId", tokens.athlete_id);
   await next();
 });
+
+// Token-optional variant: resolves the Strava token when the user has one but
+// passes through (leaving it unset) when they don't, instead of 403ing. Use it
+// on routes that degrade gracefully without Strava — e.g. GET /pending, which
+// only touches Strava to re-queue stale rows. This also covers migrated users
+// whose `users.stravaId` is set but whose token vault hasn't been backfilled.
+export const softStravaMiddleware = createMiddleware<TStravaEnv>(async (c, next) => {
+  const userId = c.get("userId");
+  try {
+    const tokens = await getStravaAccessTokens(userId);
+    c.set("stravaAccessToken", tokens.access_token);
+    c.set("stravaAthleteId", tokens.athlete_id);
+  } catch (err) {
+    if (!(err instanceof StravaError)) throw err;
+  }
+  await next();
+});
