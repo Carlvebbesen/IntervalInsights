@@ -116,6 +116,39 @@ describe("public endpoints (no auth)", () => {
   });
 });
 
+describe("public web pages (rendered HTML)", () => {
+  it("GET /privacy-policy renders the policy as HTML", async () => {
+    const res = await app.fetch(new Request("http://test/privacy-policy"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/html");
+    const body = await res.text();
+    expect(body).toContain("<h1");
+    expect(body).toContain("Privacy Policy");
+    // GFM table from the markdown source is rendered and wrapped for scroll.
+    expect(body).toContain('<div class="table-wrap"><table>');
+  });
+
+  it("GET /terms-of-service renders the terms as HTML", async () => {
+    const res = await app.fetch(new Request("http://test/terms-of-service"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/html");
+    expect(await res.text()).toContain("Terms of Service");
+  });
+
+  it("GET /display/delete-account explains the deletion flow, data, and retention", async () => {
+    const res = await app.fetch(new Request("http://test/display/delete-account"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/html");
+    const body = await res.text();
+    // Google Play requires: how to request deletion, what is deleted, what is retained.
+    expect(body).toContain("Delete account");
+    expect(body).toContain("Settings");
+    expect(body).toContain("ecvebbesen@gmail.com");
+    expect(body).toContain("What gets deleted");
+    expect(body).toContain("retained");
+  });
+});
+
 describe("auth gate", () => {
   it("authenticated routes refuse to run without a test identity", async () => {
     // No withIdentity() wrapper → testAuthGuard returns 401.

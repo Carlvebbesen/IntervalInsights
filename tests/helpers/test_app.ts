@@ -36,6 +36,7 @@ import suggestSessionRouter from "../../src/routers/suggest_session_router";
 import userRouter from "../../src/routers/user_router";
 import * as schema from "../../src/schema";
 import type { TGlobalEnv } from "../../src/types/IRouters";
+import { registerWebPages } from "../../src/web/pages";
 
 export type TestIdentity = {
   userId: string;
@@ -83,6 +84,8 @@ export function buildTestApp(pool: Pool) {
   const app = new Hono<TGlobalEnv>();
 
   app.use("*", testLoggerMiddleware);
+
+  registerWebPages(app);
 
   app.route("/api", publicRouter);
 

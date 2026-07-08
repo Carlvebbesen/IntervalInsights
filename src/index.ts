@@ -33,6 +33,7 @@ import suggestSessionRouter from "./routers/suggest_session_router";
 import trainingRouter from "./routers/training_router";
 import userRouter from "./routers/user_router";
 import type { TGlobalEnv } from "./types/IRouters";
+import { registerWebPages } from "./web/pages";
 
 const app = new Hono<TGlobalEnv>();
 
@@ -66,6 +67,8 @@ app.get("/.well-known/apple-app-site-association", async (_c) => {
     },
   });
 });
+
+registerWebPages(app);
 
 app.use("*", requestId());
 app.use(
