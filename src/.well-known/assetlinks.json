@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "no.cvebbesen.intervalinsights",
+      "sha256_cert_fingerprints": [
+        "5C:CC:35:A9:5F:E2:88:34:27:F9:66:10:B9:8D:A2:C1:1D:FD:D1:C8:86:2F:81:12:02:06:73:E0:F1:53:38:FF"
+      ]
+    }
+  }
+]
