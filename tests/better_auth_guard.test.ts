@@ -5,11 +5,11 @@
 // the same users row for a backfilled user.
 
 import { randomUUID } from "node:crypto";
-import { afterAll, afterEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { auth } from "../src/auth";
+import { auth, ensureReviewAccount } from "../src/auth";
 import { AppError } from "../src/error";
 import { logger } from "../src/logger";
 import { authGuard } from "../src/middlewares/auth_middleware";
@@ -45,7 +45,20 @@ app.onError((err, c) => {
 const fetchApp = (path: string, init?: RequestInit) =>
   app.fetch(new Request(`http://localhost${path}`, init), { db });
 
+// Sign-in no longer auto-registers (disableSignUp: true) — a fresh user must
+// go through the explicit sign-up endpoint first. Existing emails no-op.
+async function signUp(email: string, name = email.split("@")[0]): Promise<Response> {
+  const res = await fetchApp("/api/auth/sign-up/email-otp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, name }),
+  });
+  expect(res.status).toBe(200);
+  return res;
+}
+
 async function signInResponse(email: string): Promise<Response> {
+  await signUp(email);
   const sendRes = await fetchApp("/api/auth/email-otp/send-verification-otp", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -97,9 +110,17 @@ describe("dual-auth guard", () => {
     expect(res.status).toBe(401);
   });
 
-  it("Better Auth OTP sign-in yields a bearer token that resolves an app user", async () => {
+  it("explicit sign-up + OTP verify yields a guest bearer user with the supplied name", async () => {
     clerkAuthMock.getAuth = () => null; // no Clerk fallback — BA path only
     const email = `ba-signup-${randomUUID()}@example.test`;
+    const name = "New Signup";
+
+    // Explicit sign-up creates the row (emailVerified false); the first OTP
+    // verify below flips it true. No open auto-register anymore.
+    await signUp(email, name);
+    const preVerify = await db.query.users.findFirst({ where: eq(users.email, email) });
+    expect(preVerify?.name).toBe(name);
+    expect(preVerify?.emailVerified).toBe(false);
 
     const token = await signInWithOtp(email);
     const res = await fetchApp("/api/whoami", {
@@ -109,11 +130,11 @@ describe("dual-auth guard", () => {
     const body = (await res.json()) as { userId: string; clerkUserId: string | null; role: string };
     createdUserIds.push(body.userId);
 
-    // Auto-registered (open sign-up): new row, guest role, no clerkId, verified email.
     expect(body.role).toBe("guest");
     expect(body.clerkUserId).toBeNull();
     const row = await db.query.users.findFirst({ where: eq(users.id, body.userId) });
     expect(row?.email).toBe(email);
+    expect(row?.name).toBe(name); // sign-up name preserved (sign-in never overwrites it)
     expect(row?.emailVerified).toBe(true);
     expect(row?.clerkId).toBeNull();
   });
@@ -208,6 +229,12 @@ describe("review account (fixed OTP)", () => {
   const reviewEmail = "store-review@test.local";
   const reviewOtp = "731409";
 
+  // OTP auto-register is gone, so the review row is pre-seeded at boot instead
+  // of being created on first verify (mirrors src/index.ts's prod call site).
+  beforeAll(async () => {
+    await ensureReviewAccount();
+  });
+
   async function reviewSignIn(email: string): Promise<Response> {
     const sendRes = await fetchApp("/api/auth/email-otp/send-verification-otp", {
       method: "POST",
@@ -224,7 +251,7 @@ describe("review account (fixed OTP)", () => {
     });
   }
 
-  it("signs in with the fixed code and auto-creates a guest", async () => {
+  it("signs in with the fixed code against the pre-seeded guest row", async () => {
     clerkAuthMock.getAuth = () => null;
     const signInRes = await reviewSignIn(reviewEmail);
     expect(signInRes.status).toBe(200);
@@ -252,6 +279,7 @@ describe("review account (fixed OTP)", () => {
   it("does not leak the fixed code to a normal email", async () => {
     clerkAuthMock.getAuth = () => null;
     const email = `normal-${randomUUID()}@example.test`;
+    await signUp(email); // known email so send actually issues a code (disableSignUp)
     const sendRes = await fetchApp("/api/auth/email-otp/send-verification-otp", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -365,5 +393,100 @@ describe("role escalation — stored role is authoritative", () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(((await whoami.json()) as { role: string }).role).toBe("guest");
+  });
+});
+
+// The explicit registration endpoint that replaced OTP auto-register. It is
+// enumeration-safe: the same {success:true} whether the email is new or taken.
+describe("sign-up endpoint (/sign-up/email-otp)", () => {
+  it("creates a guest row (supplied name, null clerkId, emailVerified false)", async () => {
+    const email = `signup-new-${randomUUID()}@example.test`;
+    const res = await fetchApp("/api/auth/sign-up/email-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, name: "Fresh Name" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true });
+
+    const row = await db.query.users.findFirst({ where: eq(users.email, email) });
+    if (!row) throw new Error("expected sign-up to create a row");
+    createdUserIds.push(row.id);
+    expect(row.name).toBe("Fresh Name");
+    expect(row.role).toBe("guest");
+    expect(row.clerkId).toBeNull();
+    expect(row.emailVerified).toBe(false);
+  });
+
+  it("existing email returns a byte-identical response and never touches the name", async () => {
+    const email = `signup-dupe-${randomUUID()}@example.test`;
+    const first = await fetchApp("/api/auth/sign-up/email-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, name: "Original Name" }),
+    });
+    const firstBody = await first.text();
+    const created = await db.query.users.findFirst({ where: eq(users.email, email) });
+    if (!created) throw new Error("expected first sign-up to create a row");
+    createdUserIds.push(created.id);
+
+    const second = await fetchApp("/api/auth/sign-up/email-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, name: "Attempted Overwrite" }),
+    });
+    expect(second.status).toBe(first.status);
+    expect(await second.text()).toBe(firstBody);
+
+    const row = await db.query.users.findFirst({ where: eq(users.email, email) });
+    expect(row?.id).toBe(created.id); // no second row
+    expect(row?.name).toBe("Original Name"); // name untouched by the repeat call
+  });
+
+  it("a signed-up email can then request a real OTP (known-email send delivers)", async () => {
+    clerkAuthMock.getAuth = () => null;
+    const email = `signup-then-send-${randomUUID()}@example.test`;
+    await signUp(email, "Sender");
+
+    const sendRes = await fetchApp("/api/auth/email-otp/send-verification-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, type: "sign-in" }),
+    });
+    expect(sendRes.status).toBe(200);
+    expect(otpCapture.last?.email).toBe(email);
+    const row = await db.query.users.findFirst({ where: eq(users.email, email) });
+    if (row) createdUserIds.push(row.id);
+  });
+});
+
+// disableSignUp: an unknown email must yield no code and no account — a sign-in
+// attempt is indistinguishable from a wrong code, leaking nothing.
+describe("sign-in enumeration protection (disableSignUp)", () => {
+  it("unknown-email send returns 200 but issues no OTP", async () => {
+    clerkAuthMock.getAuth = () => null;
+    const email = `unknown-${randomUUID()}@example.test`;
+    const sendRes = await fetchApp("/api/auth/email-otp/send-verification-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, type: "sign-in" }),
+    });
+    expect(sendRes.status).toBe(200);
+    expect(otpCapture.last).toBeNull(); // no code emitted, no account created
+    const row = await db.query.users.findFirst({ where: eq(users.email, email) });
+    expect(row).toBeUndefined();
+  });
+
+  it("unknown-email verify is rejected as INVALID_OTP", async () => {
+    clerkAuthMock.getAuth = () => null;
+    const email = `unknown-verify-${randomUUID()}@example.test`;
+    const res = await fetchApp("/api/auth/sign-in/email-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, otp: "000000" }),
+    });
+    expect(res.status).toBe(400);
+    const row = await db.query.users.findFirst({ where: eq(users.email, email) });
+    expect(row).toBeUndefined();
   });
 });
