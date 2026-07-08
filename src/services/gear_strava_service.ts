@@ -7,6 +7,7 @@ import {
   type GearType,
   gearContextForActivity,
   STRAVA_GEAR_SPORT_TYPES,
+  SURFACES_BY_GEAR_TYPE,
 } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import { stravaApiService } from "./strava_api_service";
@@ -127,15 +128,24 @@ function brandParseOptions(gearType: GearType): {
   brands: readonly string[];
   fallbackModel: string;
 } {
-  return gearType === "BICYCLE"
-    ? { brands: KNOWN_BIKE_BRANDS, fallbackModel: "Bike" }
-    : { brands: KNOWN_SHOE_BRANDS, fallbackModel: "Shoe" };
+  return {
+    brands: brandsForGearType(gearType),
+    fallbackModel: gearType === "BICYCLE" ? "Bike" : gearType === "SKIS" ? "Skis" : "Shoe",
+  };
 }
 
-/** Seed a bike's surface from Strava's `frame_type` (1=MTB, 3=road); gravel is
- * not distinguishable from the profile, so everything else defaults to ROAD. */
-function surfaceFromFrameType(frameType: number | undefined): GearSurface {
-  return frameType === 1 ? "MTB" : "ROAD";
+/** Seed a bike's surface from Strava's `frame_type` (1=MTB, 2=cyclocross,
+ * 3=road, 4=TT, 5=gravel); cyclocross/gravel both map to GRAVEL, else ROAD. */
+export function surfaceFromFrameType(frameType: number | undefined): GearSurface {
+  switch (frameType) {
+    case 1:
+      return "MTB";
+    case 2:
+    case 5:
+      return "GRAVEL";
+    default:
+      return "ROAD";
+  }
 }
 
 export interface GearSyncResult {
@@ -285,7 +295,10 @@ export async function syncUserGearFromStrava(
       await gearRepo.recompute(db, gear.id);
     } else {
       linked += await gearRepo.linkActivitiesByStravaGearId(db, userId, stravaGearId, existing.id);
+      const reconcile =
+        existing.gearType !== data.gearType ? { gearType: data.gearType, surface } : {};
       await gearRepo.update(db, userId, existing.id, {
+        ...reconcile,
         isActive: !data.retired,
         retiredAt: data.retired ? (existing.retiredAt ?? new Date()) : null,
       });
@@ -313,10 +326,14 @@ async function importGearFromStrava(
   const g = await stravaApiService.getGear(accessToken, opts.stravaGearId);
   const ctx = gearContextForActivity(opts.sportType, opts.indoor ?? false);
   const gearType = ctx?.gearType ?? "SHOES";
-  const surface: GearSurface =
-    gearType === "BICYCLE" && ctx?.surface == null
-      ? surfaceFromFrameType(g.frame_type)
-      : (ctx?.surface ?? "ROAD");
+  let surface: GearSurface;
+  if (gearType === "BICYCLE") {
+    const frameSurface = surfaceFromFrameType(g.frame_type);
+    surface =
+      frameSurface !== "ROAD" ? frameSurface : (ctx?.surface ?? SURFACES_BY_GEAR_TYPE[gearType][0]);
+  } else {
+    surface = ctx?.surface ?? SURFACES_BY_GEAR_TYPE[gearType][0];
+  }
   const { brands, fallbackModel } = brandParseOptions(gearType);
   const { brand, model } = parseBrandModel(g.name, brands, fallbackModel);
   return gearRepo.create(db, userId, {

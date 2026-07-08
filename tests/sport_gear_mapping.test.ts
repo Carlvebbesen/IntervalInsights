@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { gearContextForActivity } from "../src/schema";
+import { surfaceFromFrameType } from "../src/services/gear_strava_service";
 import { shouldAnalyze } from "../src/services/utils";
 
 describe("shouldAnalyze (D6 canonical camelCase gate)", () => {
@@ -78,8 +79,27 @@ describe("gearContextForActivity (D3)", () => {
     });
   });
 
-  it("returns null for sports with no gear context", () => {
+  it("gives Hike and Elliptical a surface-agnostic SHOES context (preserves main's chain)", () => {
+    expect(gearContextForActivity("Hike", false)).toEqual({ gearType: "SHOES", surface: null });
+    expect(gearContextForActivity("Elliptical", true)).toEqual({
+      gearType: "SHOES",
+      surface: null,
+    });
+  });
+
+  it("returns null for sports with no gear context (incl. Rowing)", () => {
     expect(gearContextForActivity("Swim", false)).toBeNull();
     expect(gearContextForActivity("Walk", false)).toBeNull();
+    expect(gearContextForActivity("Rowing", false)).toBeNull();
+  });
+});
+
+describe("surfaceFromFrameType (Strava frame_type → bike surface)", () => {
+  it("maps MTB and cyclocross/gravel frames, defaulting everything else to ROAD", () => {
+    expect(surfaceFromFrameType(1)).toBe("MTB");
+    expect(surfaceFromFrameType(2)).toBe("GRAVEL");
+    expect(surfaceFromFrameType(5)).toBe("GRAVEL");
+    expect(surfaceFromFrameType(3)).toBe("ROAD");
+    expect(surfaceFromFrameType(undefined)).toBe("ROAD");
   });
 });

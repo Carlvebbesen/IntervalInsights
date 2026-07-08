@@ -1,5 +1,6 @@
 import * as gearRepo from "../repositories/gear_repository";
 import {
+  type GearSurface,
   type GearType,
   gearContextForActivity,
   type TrainingType,
@@ -30,9 +31,11 @@ const MAX_SUGGESTIONS = 3;
  * Every step is keyed on the activity's gear type (D4/D7): the user's deliberate
  * Strava gear change → per-signature default → use-type match →
  * (gearType, bucket, surface) default → recents-by-type. Candidates are filtered
- * to the activity's gear type, and retired gear is skipped at every step. Recents
- * and use-type lookups memoize the in-flight promise per key, so concurrent
- * activities share one query.
+ * to the activity's gear type, and retired gear is skipped at every step. When the
+ * activity's surface is determinable, the use-type and recents steps are further
+ * scoped to that surface (skis fall back to type-only). Recents and use-type lookups
+ * memoize the in-flight promise per `gearType:surface` key, so concurrent activities
+ * share one query.
  */
 export async function createGearSuggester(
   db: Db,
@@ -50,22 +53,34 @@ export async function createGearSuggester(
     signatureDefaults.map((d) => [d.intervalStructureId, d.gearId]),
   );
 
-  const recentsByType = new Map<GearType, Promise<number[]>>();
-  const recentsFor = (gearType: GearType): Promise<number[]> => {
-    let recents = recentsByType.get(gearType);
+  const recentsCache = new Map<string, Promise<number[]>>();
+  const recentsFor = (gearType: GearType, surface: GearSurface | null): Promise<number[]> => {
+    const key = `${gearType}:${surface}`;
+    let recents = recentsCache.get(key);
     if (!recents) {
-      recents = gearRepo.recentGearIdsByGearType(db, userId, gearType, MAX_SUGGESTIONS);
-      recentsByType.set(gearType, recents);
+      recents = gearRepo.recentGearIdsByGearType(db, userId, gearType, surface, MAX_SUGGESTIONS);
+      recentsCache.set(key, recents);
     }
     return recents;
   };
 
   const useTypeMatchCache = new Map<string, Promise<number[]>>();
-  const useTypeMatchesFor = (trainingType: TrainingType, gearType: GearType): Promise<number[]> => {
-    const key = `${trainingType}:${gearType}`;
+  const useTypeMatchesFor = (
+    trainingType: TrainingType,
+    gearType: GearType,
+    surface: GearSurface | null,
+  ): Promise<number[]> => {
+    const key = `${trainingType}:${gearType}:${surface}`;
     let matches = useTypeMatchCache.get(key);
     if (!matches) {
-      matches = gearRepo.gearIdsByUseType(db, userId, trainingType, gearType, MAX_SUGGESTIONS);
+      matches = gearRepo.gearIdsByUseType(
+        db,
+        userId,
+        trainingType,
+        gearType,
+        surface,
+        MAX_SUGGESTIONS,
+      );
       useTypeMatchCache.set(key, matches);
     }
     return matches;
@@ -81,8 +96,8 @@ export async function createGearSuggester(
       id != null && activeTypeById.get(id) === gearType ? id : null;
 
     const [useTypeMatches, recents] = await Promise.all([
-      input.trainingType ? useTypeMatchesFor(input.trainingType, gearType) : [],
-      recentsFor(gearType),
+      input.trainingType ? useTypeMatchesFor(input.trainingType, gearType, surface) : [],
+      recentsFor(gearType, surface),
     ]);
 
     const stravaChoice = input.gearUpdatedFromStrava ? ofType(input.localGearId) : null;

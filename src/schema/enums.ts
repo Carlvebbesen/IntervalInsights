@@ -251,6 +251,9 @@ export function gearContextForActivity(sportType: string, indoor: boolean): Gear
       return { gearType: "SKIS", surface: null };
     case "RollerSki":
       return { gearType: "SKIS", surface: "ROLLERSKI" };
+    case "Hike":
+    case "Elliptical":
+      return { gearType: "SHOES", surface: null };
     default:
       return null;
   }

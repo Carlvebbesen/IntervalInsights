@@ -450,11 +450,13 @@ export async function linkActivitiesByStravaGearId(
 
 // ─── Suggestions / stats helpers ────────────────────────────────────────────────
 
-/** Active gears of a type most recently used, most-recent first (for suggestions). */
+/** Active gears of a type most recently used, most-recent first (for suggestions).
+ * A non-null `surface` additionally scopes candidates to that surface. */
 export async function recentGearIdsByGearType(
   db: Db,
   userId: string,
   gearType: GearType,
+  surface: GearSurface | null,
   limit = 3,
 ): Promise<number[]> {
   const rows = await db
@@ -462,7 +464,12 @@ export async function recentGearIdsByGearType(
     .from(activities)
     .innerJoin(gears, eq(gears.id, activities.localGearId))
     .where(
-      and(eq(activities.userId, userId), eq(gears.gearType, gearType), eq(gears.isActive, true)),
+      and(
+        eq(activities.userId, userId),
+        eq(gears.gearType, gearType),
+        eq(gears.isActive, true),
+        ...(surface ? [eq(gears.surface, surface)] : []),
+      ),
     )
     .groupBy(activities.localGearId)
     .orderBy(desc(sql`max(${activities.startDateLocal})`))
@@ -481,12 +488,14 @@ export async function activeGearTypeById(db: Db, userId: string): Promise<Map<nu
 }
 
 /** Active gears of a type whose `useTypes` contains the training type,
- * most recently used first (never-used ones last, newest-created first). */
+ * most recently used first (never-used ones last, newest-created first).
+ * A non-null `surface` additionally scopes candidates to that surface. */
 export async function gearIdsByUseType(
   db: Db,
   userId: string,
   trainingType: TrainingType,
   gearType: GearType,
+  surface: GearSurface | null,
   limit = 3,
 ): Promise<number[]> {
   const rows = await db
@@ -499,6 +508,7 @@ export async function gearIdsByUseType(
         eq(gears.gearType, gearType),
         eq(gears.isActive, true),
         arrayContains(gears.useTypes, [trainingType]),
+        ...(surface ? [eq(gears.surface, surface)] : []),
       ),
     )
     .groupBy(gears.id)

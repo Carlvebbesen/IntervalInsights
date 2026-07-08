@@ -168,6 +168,40 @@ describe("multisport webhook → pending → gear suggestion", () => {
       await deleteTestUser(user.id);
     }
   });
+
+  it("imports a Hike webhook as pending and still suggests a SHOES gear", async () => {
+    const user = await createStravaUser();
+    try {
+      const hikeStravaId = nextId() * 1000;
+      getActivityResult = stravaActivity(hikeStravaId, user.athleteId, "Hike");
+      await processStravaWebhook(createEvent(hikeStravaId, user.athleteId), { db });
+
+      const [hike] = await db
+        .select()
+        .from(activities)
+        .where(eq(activities.stravaActivityId, hikeStravaId));
+      expect(hike).toBeDefined();
+      expect(hike.sportType).toBe("Hike");
+      expect(hike.analysisStatus).toBe("pending");
+
+      const [shoe] = await db
+        .insert(gears)
+        .values({ userId: user.id, model: "Trail Shoe", gearType: "SHOES", surface: "TRAIL" })
+        .returning();
+      await insertActivity(user.id, {
+        sportType: "Hike",
+        localGearId: shoe.id,
+        analysisStatus: "completed",
+        trainingType: "EASY",
+      });
+
+      const pending = await fetchPending(user);
+      const row = pending.get(hike.id);
+      expect(row?.suggestedGearId).toBe(shoe.id);
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
 });
 
 describe("sport-aware classifier prompt (D7)", () => {
