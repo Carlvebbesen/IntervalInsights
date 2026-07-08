@@ -2,8 +2,6 @@ import { Resend } from "resend";
 import { config } from "../config";
 import { logger } from "../logger";
 
-const resend = new Resend(config.RESEND_API_KEY);
-
 const OTP_TTL_MINUTES = 10;
 
 // Interval Insights brand palette (source of truth: app lib/common/utils/app_theme.dart)
@@ -61,6 +59,7 @@ export async function sendSignInOtpEmail(email: string, otp: string): Promise<vo
     logger.info({ email, otp }, "sign-in OTP (dev mode — email not sent)");
     return;
   }
+  const resend = new Resend(config.RESEND_API_KEY);
   const { error } = await resend.emails.send({
     from: "Interval Insights <login@intervalinsights.cvebbesen.no>",
     to: email,

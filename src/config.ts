@@ -25,7 +25,9 @@ const envSchema = z
     // Better Auth (dual-auth window; CLERK_* stay required until the Phase 6 cutover)
     BETTER_AUTH_SECRET: z.string().min(32),
     BETTER_AUTH_URL: z.string().url(),
-    RESEND_API_KEY: z.string().min(1),
+    // OTP emails only send in production (dev/test log the code — see
+    // auth_email.ts), so the key is required only there.
+    RESEND_API_KEY: z.string().min(1).optional(),
 
     // Store-review demo account: a fixed sign-in OTP for app-store reviewers who
     // can't read our email inbox. Both-or-neither; the feature is disabled when
@@ -78,6 +80,10 @@ const envSchema = z
   })
   .refine((env) => !!env.REVIEW_ACCOUNT_EMAIL === !!env.REVIEW_ACCOUNT_OTP, {
     message: "REVIEW_ACCOUNT_EMAIL and REVIEW_ACCOUNT_OTP must be set together",
+  })
+  .refine((env) => env.NODE_ENV !== "production" || !!env.RESEND_API_KEY, {
+    path: ["RESEND_API_KEY"],
+    message: "RESEND_API_KEY is required in production",
   });
 
 export type AppConfig = z.infer<typeof envSchema>;
