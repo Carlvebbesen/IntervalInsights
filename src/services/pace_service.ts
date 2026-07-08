@@ -30,7 +30,6 @@ type HistoryRow = {
 export const getProposedPaceForStructure = async (
   db: IGlobalBindings["db"],
   userId: string,
-  clerkUserId: string,
   sets: z.infer<typeof workoutSet>[],
 ): Promise<ExpandedIntervalSet[]> => {
   const log = logger.child({ fn: "getProposedPaceForStructure" });
@@ -54,7 +53,7 @@ export const getProposedPaceForStructure = async (
   const history: HistoryRow[] = [];
   for (const a of matchingActivities) {
     if (history.length >= HISTORY_LIMIT) break;
-    const segs = await getSegmentsForActivity(db, clerkUserId, a.activityId);
+    const segs = await getSegmentsForActivity(db, userId, a.activityId);
     const before = history.length;
     for (const seg of segs) {
       if (seg.type !== "INTERVALS") continue;

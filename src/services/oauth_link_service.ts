@@ -18,9 +18,9 @@ type Db = IGlobalBindings["db"];
 
 /**
  * The shared shape of linking an OAuth provider account: exchange the
- * authorization code for tokens, persist the provider athlete id on the user row
- * (creating the row if needed), then store the tokens encrypted in
- * `oauth_provider_tokens` keyed by the internal user id.
+ * authorization code for tokens, persist the provider athlete id on the user
+ * row, then store the tokens encrypted in `oauth_provider_tokens` keyed by the
+ * internal user id.
  */
 interface OAuthProviderLink<TAthleteId extends string | number> {
   provider: OAuthProvider;
@@ -29,18 +29,13 @@ interface OAuthProviderLink<TAthleteId extends string | number> {
   /** Provider-specific handling of a non-2xx token response. Must throw. */
   onExchangeFailure(response: Response, logger: Logger): Promise<never>;
   resolveLink(tokenData: unknown): Promise<{ token: StoredOAuthToken; athleteId: TAthleteId }>;
-  /** Persist the provider athlete id on the user row; returns the internal user id. */
-  persistUserLink(
-    db: Db,
-    clerkUserId: string,
-    athleteId: TAthleteId,
-    logger: Logger,
-  ): Promise<string>;
+  /** Persist the provider athlete id on the user row (`users.id = userId`). */
+  persistUserLink(db: Db, userId: string, athleteId: TAthleteId, logger: Logger): Promise<void>;
 }
 
 async function linkProviderAccount<TAthleteId extends string | number>(
   db: Db,
-  clerkUserId: string,
+  userId: string,
   spec: OAuthProviderLink<TAthleteId>,
   logger: Logger,
 ): Promise<void> {
@@ -51,10 +46,10 @@ async function linkProviderAccount<TAthleteId extends string | number>(
   const tokenData = await tokenResponse.json();
 
   const { token, athleteId } = await spec.resolveLink(tokenData);
-  const userId = await spec.persistUserLink(db, clerkUserId, athleteId, logger);
+  await spec.persistUserLink(db, userId, athleteId, logger);
   await writeProviderToken(db, userId, spec.provider, token);
 
-  logger.info({ clerkUserId, athleteId }, `Linked ${spec.displayName} account`);
+  logger.info({ userId, athleteId }, `Linked ${spec.displayName} account`);
 }
 
 type StravaTokenResponse = {
@@ -66,13 +61,13 @@ type StravaTokenResponse = {
 
 export function linkStravaAccount(
   db: Db,
-  clerkUserId: string,
+  userId: string,
   code: string,
   logger: Logger,
 ): Promise<void> {
   return linkProviderAccount(
     db,
-    clerkUserId,
+    userId,
     {
       provider: "strava",
       displayName: "Strava",
@@ -106,24 +101,16 @@ export function linkStravaAccount(
           athleteId: data.athlete.id,
         };
       },
-      async persistUserLink(dbc, userClerkId, athleteId, log) {
+      async persistUserLink(dbc, linkUserId, athleteId, log) {
         const stravaId = String(athleteId);
         const existingUser = await dbc.query.users.findFirst({
-          where: eq(users.clerkId, userClerkId),
+          where: eq(users.id, linkUserId),
         });
-        if (existingUser) {
-          if (!existingUser.stravaId) {
-            await dbc.update(users).set({ stravaId }).where(eq(users.clerkId, userClerkId));
-            log.info({ clerkUserId: userClerkId }, "Updated Strava ID for existing user");
-          }
-          return existingUser.id;
+        if (!existingUser) throw new AppError(404, "User not found");
+        if (!existingUser.stravaId) {
+          await dbc.update(users).set({ stravaId }).where(eq(users.id, linkUserId));
+          log.info({ userId: linkUserId }, "Updated Strava ID for existing user");
         }
-        const [created] = await dbc
-          .insert(users)
-          .values({ clerkId: userClerkId, stravaId })
-          .returning({ id: users.id });
-        log.info({ clerkUserId: userClerkId }, "Created new user record");
-        return created.id;
       },
     },
     logger,
@@ -132,13 +119,13 @@ export function linkStravaAccount(
 
 export function linkIntervalsAccount(
   db: Db,
-  clerkUserId: string,
+  userId: string,
   code: string,
   logger: Logger,
 ): Promise<void> {
   return linkProviderAccount(
     db,
-    clerkUserId,
+    userId,
     {
       provider: "intervals",
       displayName: "Intervals.icu",
@@ -178,14 +165,13 @@ export function linkIntervalsAccount(
           athleteId: athlete.id,
         };
       },
-      async persistUserLink(dbc, userClerkId, athleteId) {
+      async persistUserLink(dbc, linkUserId, athleteId) {
         const [updated] = await dbc
           .update(users)
           .set({ intervalsAthleteId: athleteId })
-          .where(eq(users.clerkId, userClerkId))
+          .where(eq(users.id, linkUserId))
           .returning({ id: users.id });
         if (!updated) throw new AppError(404, "User not found");
-        return updated.id;
       },
     },
     logger,

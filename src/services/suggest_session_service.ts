@@ -298,10 +298,10 @@ async function buildTrainingHistorySummary(db: Db, userId: string): Promise<stri
   return lines.join("\n");
 }
 
-async function resolveReadiness(clerkUserId: string, date: string): Promise<ReadinessSignals> {
+async function resolveReadiness(userId: string, date: string): Promise<ReadinessSignals> {
   const [day, summary] = await Promise.all([
-    fetchFitnessDayBlock(clerkUserId, date).catch(() => null),
-    fetchTrainingSummary(clerkUserId).catch(() => null),
+    fetchFitnessDayBlock(userId, date).catch(() => null),
+    fetchTrainingSummary(userId).catch(() => null),
   ]);
 
   const ramp = summary && summary.status === "ok" ? summary.data.fitness.rampRate : null;
@@ -319,7 +319,6 @@ async function resolveReadiness(clerkUserId: string, date: string): Promise<Read
 export async function suggestSession(
   db: Db,
   userId: string,
-  clerkUserId: string,
   input: {
     structureId?: number;
     structure?: WorkoutSet[];
@@ -389,14 +388,14 @@ export async function suggestSession(
     return hit.value;
   }
 
-  const readiness = await resolveReadiness(clerkUserId, date);
-  const basePaces = await getProposedPaceForStructure(db, userId, clerkUserId, baseStructure);
+  const readiness = await resolveReadiness(userId, date);
+  const basePaces = await getProposedPaceForStructure(db, userId, baseStructure);
   const { paces, advisory } = applyReadinessAdjustment(basePaces, readiness);
   const [historySummary, athleteProfile] = await Promise.all([
     mode === "recommended"
       ? buildTrainingHistorySummary(db, userId)
       : buildHistorySummary(db, userId, input.structureId),
-    buildAthleteProfileBlock(db, userId, clerkUserId, now).catch(() => ""),
+    buildAthleteProfileBlock(db, userId, now).catch(() => ""),
   ]);
 
   const suggestion = await invokeSuggestSessionAgent({
@@ -420,7 +419,7 @@ export async function suggestSession(
     finalSets = suggestion.structure;
     title = suggestion.title;
     trainingType = suggestion.trainingType ?? null;
-    const reshapedBase = await getProposedPaceForStructure(db, userId, clerkUserId, finalSets);
+    const reshapedBase = await getProposedPaceForStructure(db, userId, finalSets);
     finalPaces = applyReadinessAdjustment(reshapedBase, readiness).paces;
   } else {
     log.warn("suggest-session agent returned null — using the athlete's own structure unchanged");

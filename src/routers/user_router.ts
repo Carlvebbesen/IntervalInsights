@@ -109,11 +109,7 @@ userRouter.delete(
     },
   }),
   async (c) => {
-    const result = await userController.deleteAccount(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-    );
+    const result = await userController.deleteAccount(c.env.db, c.get("userId"));
     return c.json(result);
   },
 );

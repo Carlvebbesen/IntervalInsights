@@ -71,7 +71,7 @@ stravaAuthRouter.post(
     }
 
     const { code } = c.req.valid("json");
-    await linkStravaAccount(c.env.db, auth.userId, code, c.var.logger);
+    await linkStravaAccount(c.env.db, c.get("userId"), code, c.var.logger);
 
     return c.json({
       success: true,

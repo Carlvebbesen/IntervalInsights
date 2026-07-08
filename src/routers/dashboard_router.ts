@@ -41,12 +41,7 @@ dashboardRouter.get(
     // Anchor at end-of-day of the athlete's local date: startDateLocal is
     // stored local-as-UTC, so all week math must run on the athlete's calendar.
     const now = date ? new Date(`${date}T23:59:59.999Z`) : new Date();
-    const result = await dashboardController.getDashboard(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-      now,
-    );
+    const result = await dashboardController.getDashboard(c.env.db, c.get("userId"), now);
     return c.json(result);
   },
 );
@@ -66,12 +61,7 @@ dashboardRouter.get(
   validator("query", TrainingSummaryQuerySchema),
   async (c) => {
     const { date } = c.req.valid("query");
-    const summary = await dashboardController.getTrainingSummary(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-      date,
-    );
+    const summary = await dashboardController.getTrainingSummary(c.env.db, c.get("userId"), date);
     return c.json(summary);
   },
 );
@@ -101,12 +91,7 @@ dashboardRouter.get(
             apparentTemperatureC: q.apparentTemperatureC,
           }
         : undefined;
-    const result = await dashboardController.getPaceAnchor(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-      weather,
-    );
+    const result = await dashboardController.getPaceAnchor(c.env.db, c.get("userId"), weather);
     return c.json(result);
   },
 );
@@ -130,7 +115,7 @@ dashboardRouter.get(
   validator("query", WellnessQuerySchema),
   async (c) => {
     const { oldest, newest } = c.req.valid("query");
-    const result = await dashboardController.getFitnessSeries(c.get("clerkUserId"), oldest, newest);
+    const result = await dashboardController.getFitnessSeries(c.get("userId"), oldest, newest);
     return c.json(result);
   },
 );
@@ -154,12 +139,7 @@ dashboardRouter.get(
   validator("param", FitnessDayParamSchema),
   async (c) => {
     const { date } = c.req.valid("param");
-    const result = await dashboardController.getFitnessDay(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-      date,
-    );
+    const result = await dashboardController.getFitnessDay(c.env.db, c.get("userId"), date);
     return c.json(result);
   },
 );
@@ -188,12 +168,7 @@ dashboardRouter.get(
   validator("param", weekStartParamSchema),
   async (c) => {
     const { weekStart } = c.req.valid("param");
-    const result = await dashboardController.getWeekDetail(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-      weekStart,
-    );
+    const result = await dashboardController.getWeekDetail(c.env.db, c.get("userId"), weekStart);
     return c.json(result);
   },
 );

@@ -88,7 +88,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
     return await context.db.delete(activities).where(eq(activities.id, row.id));
   }
 
-  const accessToken = (await getStravaAccessTokens(user.clerkId)).access_token;
+  const accessToken = (await getStravaAccessTokens(user.id)).access_token;
   if (!accessToken) {
     logger.info({ clerkUserId: user.clerkId }, "no access token");
     return;

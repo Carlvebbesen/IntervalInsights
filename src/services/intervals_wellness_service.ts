@@ -16,13 +16,13 @@ import { withIntervalsToken } from "./intervals_token_helper";
 import { toISODate } from "./utils";
 
 export async function fetchWellnessSummary(
-  clerkUserId: string,
+  userId: string,
   oldest: string,
   newest: string,
 ): Promise<IIntervalsWellnessSummary | null> {
   let accessToken: string;
   try {
-    accessToken = await getIntervalsAccessToken(clerkUserId);
+    accessToken = await getIntervalsAccessToken(userId);
   } catch {
     return null;
   }
@@ -64,11 +64,11 @@ export async function fetchWellnessSummary(
 }
 
 export async function fetchTrainingSummary(
-  clerkUserId: string,
+  userId: string,
 ): Promise<IIntervalsTrainingSummaryResult> {
   let accessToken: string;
   try {
-    accessToken = await getIntervalsAccessToken(clerkUserId);
+    accessToken = await getIntervalsAccessToken(userId);
   } catch (err) {
     if (err instanceof IntervalsError && err.status === 403) {
       return { status: "not_linked", data: null };
@@ -190,13 +190,13 @@ function buildPoint(w: IIntervalsWellness): IIntervalsWellnessPoint {
 }
 
 export async function fetchWeekWellnessStats(
-  clerkUserId: string,
+  userId: string,
   oldest: string,
   newest: string,
 ): Promise<IIntervalsWeekWellness | null> {
   let accessToken: string;
   try {
-    accessToken = await getIntervalsAccessToken(clerkUserId);
+    accessToken = await getIntervalsAccessToken(userId);
   } catch {
     return null;
   }
@@ -246,11 +246,11 @@ export async function fetchWeekWellnessStats(
 }
 
 export async function fetchWellnessSeries(
-  clerkUserId: string,
+  userId: string,
   oldest: string,
   newest: string,
 ): Promise<IIntervalsWellnessSeriesResult> {
-  const result = await withIntervalsToken(clerkUserId, (accessToken) =>
+  const result = await withIntervalsToken(userId, (accessToken) =>
     fetchWellnessSeriesWithToken(accessToken, oldest, newest),
   );
   return result.status === "not_linked" ? { status: "not_linked", data: null } : result.data;

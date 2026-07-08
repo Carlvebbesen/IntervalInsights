@@ -67,9 +67,9 @@ intervalsAuthRouter.post(
   }),
   validator("json", ExchangeBodySchema),
   async (c) => {
-    const clerkUserId = c.get("clerkUserId");
+    const userId = c.get("userId");
     const { code } = c.req.valid("json");
-    await linkIntervalsAccount(c.env.db, clerkUserId, code, c.var.logger);
+    await linkIntervalsAccount(c.env.db, userId, code, c.var.logger);
 
     return c.json({
       success: true,
@@ -88,9 +88,9 @@ intervalsAuthRouter.post(
     },
   }),
   async (c) => {
-    const clerkUserId = c.get("clerkUserId");
-    await disconnectIntervals(c.env, clerkUserId);
-    c.var.logger.info({ clerkUserId }, "Disconnected Intervals.icu");
+    const userId = c.get("userId");
+    await disconnectIntervals(c.env, userId);
+    c.var.logger.info({ userId }, "Disconnected Intervals.icu");
 
     return c.json({
       success: true,

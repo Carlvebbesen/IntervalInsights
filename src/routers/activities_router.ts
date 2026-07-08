@@ -77,7 +77,6 @@ activitiesRouter.get(
     const activity = await activityController.getActivityDetail(
       c.env.db,
       c.get("userId"),
-      c.get("clerkUserId"),
       id,
       c.var.logger,
     );
@@ -100,12 +99,7 @@ activitiesRouter.get(
   validator("param", activityIdParamSchema),
   async (c) => {
     const { id } = c.req.valid("param");
-    const result = await activityController.getSegments(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-      id,
-    );
+    const result = await activityController.getSegments(c.env.db, c.get("userId"), id);
     return c.json(result);
   },
 );
@@ -180,12 +174,7 @@ activitiesRouter.get(
   validator("param", activityIdParamSchema),
   async (c) => {
     const { id } = c.req.valid("param");
-    const laps = await activityController.getLaps(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-      id,
-    );
+    const laps = await activityController.getLaps(c.env.db, c.get("userId"), id);
     return c.json({ laps });
   },
 );
@@ -203,12 +192,7 @@ activitiesRouter.get(
   validator("param", activityIdParamSchema),
   async (c) => {
     const { id } = c.req.valid("param");
-    const splits = await activityController.getSplits(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-      id,
-    );
+    const splits = await activityController.getSplits(c.env.db, c.get("userId"), id);
     return c.json({ splits_metric: splits });
   },
 );
@@ -226,12 +210,7 @@ activitiesRouter.get(
   validator("param", activityIdParamSchema),
   async (c) => {
     const { id } = c.req.valid("param");
-    const streams = await activityController.getStreams(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-      id,
-    );
+    const streams = await activityController.getStreams(c.env.db, c.get("userId"), id);
     return c.json(streams);
   },
 );
@@ -253,13 +232,7 @@ activitiesRouter.put(
   async (c) => {
     const { id } = c.req.valid("param");
     const { segments } = c.req.valid("json");
-    const result = await activityController.editSegments(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-      id,
-      segments,
-    );
+    const result = await activityController.editSegments(c.env.db, c.get("userId"), id, segments);
     return c.json(result);
   },
 );
@@ -286,7 +259,6 @@ stravaActivitiesRouter.post(
     const result = await activityController.getEditorState(
       c.env.db,
       c.get("userId"),
-      c.get("clerkUserId"),
       c.get("stravaAccessToken"),
       id,
       body,

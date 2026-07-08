@@ -27,7 +27,6 @@ type OwnedActivity = NonNullable<Awaited<ReturnType<typeof activityRepo.findById
 async function applySegmentEdit(
   db: Db,
   userId: string,
-  clerkUserId: string,
   activity: OwnedActivity,
   specs: FullSegmentSpec[],
   editKind: "bulk" | "single",
@@ -38,7 +37,7 @@ async function applySegmentEdit(
   const tag = `[applySegmentEdit activity=${activity.id}]`;
 
   const consent = await userHasHeartRateConsent(db, userId);
-  const src = await resolveActivitySource(db, userId, clerkUserId, activity.id);
+  const src = await resolveActivitySource(db, userId, activity.id);
   // latlng is fetched for venue detection (confirms a distance→venue snap).
   const keys = consent
     ? (["time", "distance", "heartrate", "latlng"] as const)
@@ -96,10 +95,9 @@ function loadStoredSegments(db: Db, activityId: number) {
 export async function editSegments(
   db: Db,
   userId: string,
-  clerkUserId: string,
   activityId: number,
   specs: FullSegmentSpec[],
 ) {
   const activity = await activityRepo.requireOwnedActivity(db, userId, activityId);
-  return applySegmentEdit(db, userId, clerkUserId, activity, specs, "bulk");
+  return applySegmentEdit(db, userId, activity, specs, "bulk");
 }

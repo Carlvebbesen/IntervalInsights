@@ -44,7 +44,6 @@ suggestSessionRouter.post(
     const result = await suggestSessionController.suggestSession(
       c.env.db,
       c.get("userId"),
-      c.get("clerkUserId"),
       { structureId, structure, date, weather, mode, recentlySuggested },
       c.var.logger,
     );

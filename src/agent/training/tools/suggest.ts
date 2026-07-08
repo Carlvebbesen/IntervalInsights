@@ -16,8 +16,7 @@ const proposePaces = defineTool({
       .array(workoutSet)
       .describe("Workout sets. 6x800m = 1 set, set_reps 1, one step reps 6."),
   }),
-  handler: (ctx, args) =>
-    getProposedPaceForStructure(ctx.db, ctx.userId, ctx.clerkUserId, args.sets),
+  handler: (ctx, args) => getProposedPaceForStructure(ctx.db, ctx.userId, args.sets),
 });
 
 const parseWorkout = defineTool({

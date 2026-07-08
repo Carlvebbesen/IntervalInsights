@@ -38,7 +38,7 @@ async function main() {
     .select({
       id: activities.id,
       stravaActivityId: activities.stravaActivityId,
-      clerkId: users.clerkId,
+      userId: users.id,
     })
     .from(activities)
     .innerJoin(users, eq(users.id, activities.userId))
@@ -61,15 +61,15 @@ async function main() {
 
   // Cache one Strava token per user for the run.
   const tokenCache = new Map<string, string | null>();
-  async function tokenFor(clerkId: string): Promise<string | null> {
-    if (tokenCache.has(clerkId)) return tokenCache.get(clerkId) ?? null;
+  async function tokenFor(userId: string): Promise<string | null> {
+    if (tokenCache.has(userId)) return tokenCache.get(userId) ?? null;
     try {
-      const tokens = await getStravaAccessTokens(clerkId);
-      tokenCache.set(clerkId, tokens.access_token);
+      const tokens = await getStravaAccessTokens(userId);
+      tokenCache.set(userId, tokens.access_token);
       return tokens.access_token;
     } catch (err) {
-      console.error(`[hr-backfill] no Strava token for clerk=${clerkId}:`, err);
-      tokenCache.set(clerkId, null);
+      console.error(`[hr-backfill] no Strava token for user=${userId}:`, err);
+      tokenCache.set(userId, null);
       return null;
     }
   }
@@ -82,7 +82,7 @@ async function main() {
     processed += 1;
     const t0 = Date.now();
     try {
-      const token = await tokenFor(r.clerkId);
+      const token = await tokenFor(r.userId);
       if (!token) {
         skipped += 1;
         continue;

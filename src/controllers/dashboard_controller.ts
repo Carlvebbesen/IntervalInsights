@@ -28,7 +28,6 @@ const INTERVAL_TRAINING_TYPE_SET = new Set<string>(INTERVAL_TRAINING_TYPES);
 export async function getTrainingSummary(
   db: Db,
   userId: string,
-  clerkUserId: string,
   localDate?: string,
 ): Promise<z.infer<typeof TrainingSummaryResponseSchema>> {
   // `activitiesOnDate` matches against `startDateLocal`, so "today" must be the
@@ -36,7 +35,7 @@ export async function getTrainingSummary(
   // the client doesn't supply one.
   const today = localDate ?? toISODate(new Date());
   const [summary, todayRows] = await Promise.all([
-    fetchTrainingSummary(clerkUserId),
+    fetchTrainingSummary(userId),
     dashboardRepo.activitiesOnDate(db, userId, today),
   ]);
   if (summary.status !== "ok") return summary;
@@ -56,10 +55,9 @@ export async function getTrainingSummary(
 export async function getPaceAnchor(
   db: Db,
   userId: string,
-  clerkUserId: string,
   weather?: WeatherInput,
 ): Promise<z.infer<typeof PaceAnchorResponseSchema>> {
-  const result = await fetchPaceAnchor(db, userId, clerkUserId);
+  const result = await fetchPaceAnchor(db, userId);
   if (result.status !== "ok" || !weather) return result;
   const predictedRaces = result.data.predictedRaces.map((r) => ({
     ...r,
@@ -72,21 +70,20 @@ export async function getPaceAnchor(
 }
 
 export function getFitnessSeries(
-  clerkUserId: string,
+  userId: string,
   oldest: string,
   newest: string,
 ): Promise<z.infer<typeof FitnessSeriesResponseSchema>> {
-  return fetchFitnessSeries(clerkUserId, oldest, newest);
+  return fetchFitnessSeries(userId, oldest, newest);
 }
 
 export async function getFitnessDay(
   db: Db,
   userId: string,
-  clerkUserId: string,
   date: string,
 ): Promise<z.infer<typeof FitnessDayResponseSchema>> {
   const [fitness, dayActivities] = await Promise.all([
-    fetchFitnessDayBlock(clerkUserId, date),
+    fetchFitnessDayBlock(userId, date),
     dashboardRepo.activitiesOnDate(db, userId, date),
   ]);
   return { date, fitness, activities: dayActivities };
@@ -95,7 +92,6 @@ export async function getFitnessDay(
 export async function getWeekDetail(
   db: Db,
   userId: string,
-  clerkUserId: string,
   weekStartParam: string,
 ): Promise<z.infer<typeof WeekDetailResponseSchema>> {
   const weekStart = new Date(weekStartParam);
@@ -184,7 +180,7 @@ export async function getWeekDetail(
   const lastDayOfWeek = new Date(weekEnd);
   lastDayOfWeek.setUTCDate(lastDayOfWeek.getUTCDate() - 1);
   const wellness = await fetchWeekWellnessStats(
-    clerkUserId,
+    userId,
     toISODate(weekStart),
     toISODate(lastDayOfWeek),
   );

@@ -153,7 +153,6 @@ agentsRouter.post(
     const result = await analysisController.parseIntervals(
       c.env.db,
       c.get("userId"),
-      c.get("clerkUserId"),
       text,
       trainingType ?? null,
       c.var.logger,

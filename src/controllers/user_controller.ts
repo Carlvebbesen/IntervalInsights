@@ -73,10 +73,9 @@ export async function updateSettings(
 export async function deleteAccount(
   db: Db,
   userId: string,
-  clerkUserId: string,
 ): Promise<{ success: true; message: string }> {
   try {
-    const tokens = await getStravaAccessTokens(clerkUserId);
+    const tokens = await getStravaAccessTokens(userId);
     await fetch("https://www.strava.com/oauth/deauthorize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

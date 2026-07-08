@@ -295,7 +295,7 @@ export type StoredOrDerivedSegment =
 
 export async function getSegmentsForActivity(
   db: IGlobalBindings["db"],
-  clerkUserId: string,
+  userId: string,
   activityId: number,
   includeHeartRate = true,
 ): Promise<StoredOrDerivedSegment[]> {
@@ -353,12 +353,8 @@ export async function getSegmentsForActivity(
     : STREAM_KEYS.filter((k) => k !== "heartrate");
   try {
     const { laps, streams } = activity.intervalsIcuId
-      ? await fetchIntervalsLapsAndStreams(clerkUserId, activity.intervalsIcuId, streamKeys)
-      : await fetchStravaLapsAndStreams(
-          clerkUserId,
-          activity.stravaActivityId as number,
-          streamKeys,
-        );
+      ? await fetchIntervalsLapsAndStreams(userId, activity.intervalsIcuId, streamKeys)
+      : await fetchStravaLapsAndStreams(userId, activity.stravaActivityId as number, streamKeys);
     if (!streams?.time || !streams?.distance) {
       log.info("re-derivation skipped: streams missing time/distance");
       return [];
@@ -382,11 +378,11 @@ export async function getSegmentsForActivity(
 }
 
 async function fetchStravaLapsAndStreams(
-  clerkUserId: string,
+  userId: string,
   stravaActivityId: number,
   streamKeys: StreamKey[],
 ): Promise<{ laps: Lap[]; streams: StreamSet }> {
-  const tokens = await getStravaAccessTokens(clerkUserId);
+  const tokens = await getStravaAccessTokens(userId);
   const [laps, streams] = await Promise.all([
     stravaApiService.getActivityLaps(tokens.access_token, stravaActivityId),
     stravaApiService.getActivityStreams(tokens.access_token, stravaActivityId, streamKeys),
@@ -395,11 +391,11 @@ async function fetchStravaLapsAndStreams(
 }
 
 async function fetchIntervalsLapsAndStreams(
-  clerkUserId: string,
+  userId: string,
   intervalsIcuId: string,
   streamKeys: StreamKey[],
 ): Promise<{ laps: Lap[]; streams: StreamSet }> {
-  const accessToken = await getIntervalsAccessToken(clerkUserId);
+  const accessToken = await getIntervalsAccessToken(userId);
   const [rawStreams, rawIntervals] = await Promise.all([
     intervalsApiService.getActivityStreams(accessToken, intervalsIcuId, streamKeys),
     intervalsApiService.getActivityIntervals(accessToken, intervalsIcuId),

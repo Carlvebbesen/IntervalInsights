@@ -17,10 +17,10 @@ interface IntervalsTokens {
   athlete_id?: string;
 }
 
-export const getIntervalsAccessToken = async (clerkUserId: string): Promise<string> => {
+export const getIntervalsAccessToken = async (userId: string): Promise<string> => {
   const tokens = await getFreshOAuthTokens<IntervalsTokens>({
     provider: "intervals",
-    clerkUserId,
+    userId,
     read: (stored) => {
       if (!stored?.access_token) {
         throw new IntervalsError(403, "Intervals.icu account not linked");
@@ -67,8 +67,8 @@ export const getIntervalsAccessToken = async (clerkUserId: string): Promise<stri
 };
 
 export const intervalsMiddleware = createMiddleware<TIntervalsEnv>(async (c, next) => {
-  const clerkUserId = c.get("clerkUserId");
-  const accessToken = await getIntervalsAccessToken(clerkUserId);
+  const userId = c.get("userId");
+  const accessToken = await getIntervalsAccessToken(userId);
   c.set("intervalsAccessToken", accessToken);
   await next();
 });

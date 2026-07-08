@@ -62,7 +62,7 @@ async function main() {
     const u = users[i];
     let token: string;
     try {
-      token = (await getStravaAccessTokens(u.clerkId)).access_token;
+      token = (await getStravaAccessTokens(u.id)).access_token;
     } catch {
       console.log(`[backfill-gears] ${i + 1}/${users.length} user=${u.id} — no Strava token, skipping`);
       continue;

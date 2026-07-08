@@ -25,7 +25,6 @@ export type ActivitySource =
 export async function resolveActivitySource(
   db: Db,
   userId: string,
-  clerkUserId: string,
   activityId: number,
 ): Promise<ActivitySource> {
   const row = await db.query.activities.findFirst({
@@ -36,7 +35,7 @@ export async function resolveActivitySource(
 
   if (row.intervalsIcuId) {
     try {
-      const token = await getIntervalsAccessToken(clerkUserId);
+      const token = await getIntervalsAccessToken(userId);
       return { kind: "intervals", token, externalId: row.intervalsIcuId };
     } catch (err) {
       // intervals not linked / token dead — fall back to Strava if we can.
@@ -44,14 +43,14 @@ export async function resolveActivitySource(
     }
   }
   if (row.stravaActivityId != null) {
-    const tokens = await getStravaAccessTokens(clerkUserId);
+    const tokens = await getStravaAccessTokens(userId);
     return { kind: "strava", token: tokens.access_token, externalId: row.stravaActivityId };
   }
   throw new AppError(400, "Activity has no intervals.icu or Strava source to fetch from");
 }
 
-export async function getLaps(db: Db, userId: string, clerkUserId: string, activityId: number) {
-  const src = await resolveActivitySource(db, userId, clerkUserId, activityId);
+export async function getLaps(db: Db, userId: string, activityId: number) {
+  const src = await resolveActivitySource(db, userId, activityId);
   if (src.kind === "intervals") {
     const raw = await intervalsApiService.getActivityIntervals(src.token, src.externalId);
     return mapIntervalsRawToLaps(raw);
@@ -59,8 +58,8 @@ export async function getLaps(db: Db, userId: string, clerkUserId: string, activ
   return stravaApiService.getActivityLaps(src.token, src.externalId);
 }
 
-export async function getSplits(db: Db, userId: string, clerkUserId: string, activityId: number) {
-  const src = await resolveActivitySource(db, userId, clerkUserId, activityId);
+export async function getSplits(db: Db, userId: string, activityId: number) {
+  const src = await resolveActivitySource(db, userId, activityId);
   // intervals.icu has no per-km splits_metric equivalent; the app derives splits
   // in-app from the distance stream. Strava still provides them directly.
   if (src.kind === "intervals") return [];
@@ -68,14 +67,9 @@ export async function getSplits(db: Db, userId: string, clerkUserId: string, act
   return activity.splits_metric ?? [];
 }
 
-export async function getStreamSet(
-  db: Db,
-  userId: string,
-  clerkUserId: string,
-  activityId: number,
-): Promise<StreamSet> {
+export async function getStreamSet(db: Db, userId: string, activityId: number): Promise<StreamSet> {
   const consent = await userHasHeartRateConsent(db, userId);
-  const src = await resolveActivitySource(db, userId, clerkUserId, activityId);
+  const src = await resolveActivitySource(db, userId, activityId);
 
   const base = ["time", "distance", "altitude", "cadence", "velocity_smooth"] as const;
   const keys = consent ? ([...base, "heartrate"] as const) : base;
@@ -88,8 +82,8 @@ export async function getStreamSet(
   return stravaApiService.getActivityStreams(src.token, src.externalId, [...keys]);
 }
 
-export async function getStreams(db: Db, userId: string, clerkUserId: string, activityId: number) {
-  const streams = await getStreamSet(db, userId, clerkUserId, activityId);
+export async function getStreams(db: Db, userId: string, activityId: number) {
+  const streams = await getStreamSet(db, userId, activityId);
   return {
     time: streams?.time?.data ?? [],
     distance: streams?.distance?.data ?? [],

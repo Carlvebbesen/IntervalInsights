@@ -20,10 +20,10 @@ interface StravaTokens {
   athlete_id?: number;
 }
 
-export const getStravaAccessTokens = (clerkUserId: string) =>
+export const getStravaAccessTokens = (userId: string) =>
   getFreshOAuthTokens<StravaTokens>({
     provider: "strava",
-    clerkUserId,
+    userId,
     read: (stored) => {
       if (!stored?.access_token || !stored?.refresh_token) {
         throw new StravaError(403, "Strava account not linked");
@@ -69,8 +69,8 @@ export const getStravaAccessTokens = (clerkUserId: string) =>
   });
 
 export const stravaMiddleware = createMiddleware<TStravaEnv>(async (c, next) => {
-  const clerkUserId = c.get("clerkUserId");
-  const tokens = await getStravaAccessTokens(clerkUserId);
+  const userId = c.get("userId");
+  const tokens = await getStravaAccessTokens(userId);
   c.set("stravaAccessToken", tokens.access_token);
   c.set("stravaAthleteId", tokens.athlete_id);
   await next();

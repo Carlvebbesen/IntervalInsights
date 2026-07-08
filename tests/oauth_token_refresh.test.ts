@@ -105,7 +105,7 @@ describe("OAuth token refresh single-flight", () => {
     startHarness();
     const user = await seedExpiredUser();
     const results = await Promise.all(
-      Array.from({ length: 8 }, () => getStravaAccessTokens(user.clerkId)),
+      Array.from({ length: 8 }, () => getStravaAccessTokens(user.id)),
     );
 
     expect(state.stravaRefreshCalls).toEqual(["strava-refresh-1"]);
@@ -122,7 +122,7 @@ describe("OAuth token refresh single-flight", () => {
     startHarness();
     const user = await seedExpiredUser();
     const results = await Promise.all(
-      Array.from({ length: 8 }, () => getIntervalsAccessToken(user.clerkId)),
+      Array.from({ length: 8 }, () => getIntervalsAccessToken(user.id)),
     );
 
     expect(state.intervalsRefreshCalls).toEqual(["intervals-refresh-1"]);
@@ -136,8 +136,8 @@ describe("OAuth token refresh single-flight", () => {
   it("a later call reads the persisted tokens and does not refresh again", async () => {
     startHarness();
     const user = await seedExpiredUser();
-    await getStravaAccessTokens(user.clerkId);
-    const second = await getStravaAccessTokens(user.clerkId);
+    await getStravaAccessTokens(user.id);
+    const second = await getStravaAccessTokens(user.id);
 
     expect(state.stravaRefreshCalls).toHaveLength(1);
     expect(second.access_token).toBe("new-strava");
@@ -150,7 +150,7 @@ describe("OAuth token refresh single-flight", () => {
       new Error("db write failed"),
     );
 
-    await expect(getStravaAccessTokens(user.clerkId)).rejects.toThrow("db write failed");
+    await expect(getStravaAccessTokens(user.id)).rejects.toThrow("db write failed");
     spy.mockRestore();
 
     const stored = await tokenStore.readProviderToken(getDb(), user.id, "strava");
@@ -162,8 +162,8 @@ describe("OAuth token refresh single-flight", () => {
     const u1 = await seedExpiredUser();
     const u2 = await seedExpiredUser();
     const results = await Promise.allSettled([
-      getStravaAccessTokens(u1.clerkId),
-      getStravaAccessTokens(u2.clerkId),
+      getStravaAccessTokens(u1.id),
+      getStravaAccessTokens(u2.id),
     ]);
 
     // Two users → two refresh POSTs (not shared). Both read the same stored
@@ -184,11 +184,11 @@ describe("OAuth token refresh single-flight", () => {
         (e: { status?: number; details?: unknown }) => e,
       );
 
-    const stravaErr = await toError(getStravaAccessTokens(user.clerkId));
+    const stravaErr = await toError(getStravaAccessTokens(user.id));
     expect(stravaErr?.status).toBe(403);
     expect(stravaErr?.details).toBe("Strava account not linked");
 
-    const intervalsErr = await toError(getIntervalsAccessToken(user.clerkId));
+    const intervalsErr = await toError(getIntervalsAccessToken(user.id));
     expect(intervalsErr?.status).toBe(403);
     expect(intervalsErr?.details).toBe("Intervals.icu account not linked");
   });

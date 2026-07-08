@@ -9,12 +9,12 @@ export type IntervalsTokenResult<T> = { status: "ok"; data: T } | { status: "not
  * of throwing. Errors from `fn` itself propagate untouched.
  */
 export async function withIntervalsToken<T>(
-  clerkUserId: string,
+  userId: string,
   fn: (accessToken: string) => Promise<T>,
 ): Promise<IntervalsTokenResult<T>> {
   let accessToken: string;
   try {
-    accessToken = await getIntervalsAccessToken(clerkUserId);
+    accessToken = await getIntervalsAccessToken(userId);
   } catch (err) {
     if (err instanceof IntervalsError && (err.status === 401 || err.status === 403)) {
       return { status: "not_linked" };

@@ -81,7 +81,6 @@ export const createTrainingTool = tool(
       ? await getProposedPace(
           ctx.db,
           ctx.userId,
-          ctx.clerkUserId,
           ctx.stravaAccessToken,
           input.sets,
           input.activityId,

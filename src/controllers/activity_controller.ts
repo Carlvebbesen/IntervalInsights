@@ -76,7 +76,6 @@ async function resolveGearSummary(db: Db, userId: string, localGearId: number | 
 async function resolveActivityGearId(
   db: Db,
   userId: string,
-  clerkId: string,
   activity: {
     id: number;
     localGearId: number | null;
@@ -99,7 +98,7 @@ async function resolveActivityGearId(
 
   // Not local yet → import from Strava (needs a token), then link.
   try {
-    const { access_token } = await getStravaAccessTokens(clerkId);
+    const { access_token } = await getStravaAccessTokens(userId);
     await linkActivityGearOnIngest(db, userId, access_token, activity.id, {
       stravaGearId,
       sportType: activity.sportType,
@@ -118,7 +117,6 @@ async function resolveActivityGearId(
 export async function getActivityDetail(
   db: Db,
   userId: string,
-  clerkId: string,
   activityId: number,
   logger: Logger,
 ): Promise<ActivityDto> {
@@ -131,24 +129,24 @@ export async function getActivityDetail(
   if (!activity.intervalsIcuId || !activity.intervalsIcuEnrichedAt) {
     runInBackground(
       "intervals.enrichActivity",
-      () => enrichActivityFromIntervalsIcu({ db }, { id: userId, clerkId }, activityId),
+      () => enrichActivityFromIntervalsIcu({ db }, { id: userId }, activityId),
       { attributes: { "activity.id": activityId, "user.id": userId }, logger },
     );
   }
 
-  const localGearId = await resolveActivityGearId(db, userId, clerkId, activity, logger);
+  const localGearId = await resolveActivityGearId(db, userId, activity, logger);
   activity.localGearId = localGearId;
   const gear = await resolveGearSummary(db, userId, localGearId);
   return toActivityDto(activity, relatedEvents.map(toActivityEventDto), gear);
 }
 
-export async function getSegments(db: Db, userId: string, clerkId: string, activityId: number) {
+export async function getSegments(db: Db, userId: string, activityId: number) {
   await activityRepo.requireOwnedActivity(db, userId, activityId);
 
   // GDPR: gate HR the same way GET /:id/streams does. Without consent, drop
   // "heartrate" from the re-derive fetch and null it on the returned segments.
   const consent = await userHasHeartRateConsent(db, userId);
-  const segments = await getSegmentsForActivity(db, clerkId, activityId, consent);
+  const segments = await getSegmentsForActivity(db, userId, activityId, consent);
   if (!consent) {
     for (const s of segments) s.avgHeartRate = null;
   }

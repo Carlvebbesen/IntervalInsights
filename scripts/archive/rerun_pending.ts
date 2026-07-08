@@ -57,21 +57,21 @@ async function main() {
     const act = acts[i];
     const userRow = (
       await db
-        .select({ clerkId: schema.users.clerkId })
+        .select({ id: schema.users.id })
         .from(schema.users)
         .where(eq(schema.users.id, act.userId))
     )[0] as any;
-    const clerkId = userRow?.clerkId as string | undefined;
+    const userId = userRow?.id as string | undefined;
     let token = "";
-    if (clerkId) {
-      if (!tokenCache.has(clerkId)) {
+    if (userId) {
+      if (!tokenCache.has(userId)) {
         try {
-          tokenCache.set(clerkId, (await getStravaAccessTokens(clerkId)).access_token);
+          tokenCache.set(userId, (await getStravaAccessTokens(userId)).access_token);
         } catch {
-          tokenCache.set(clerkId, "");
+          tokenCache.set(userId, "");
         }
       }
-      token = tokenCache.get(clerkId) ?? "";
+      token = tokenCache.get(userId) ?? "";
     }
 
     const t0 = Date.now();

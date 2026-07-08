@@ -5,7 +5,6 @@ import type { GraphDb } from "../graph_state";
 export interface CoachCtx {
   db: GraphDb;
   userId: string;
-  clerkUserId: string;
   stravaAccessToken: string;
   intervalsConnected: boolean;
   userTime: string;

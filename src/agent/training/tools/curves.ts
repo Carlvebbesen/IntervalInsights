@@ -33,7 +33,7 @@ const getBestEffortCurve = defineTool({
     newest: z.string().optional().describe("ISO date; required when window='custom'"),
   }),
   handler: (ctx, args) =>
-    fetchBestEffortCurve(ctx.clerkUserId, {
+    fetchBestEffortCurve(ctx.userId, {
       type: args.type,
       window: args.window,
       oldest: args.oldest,
