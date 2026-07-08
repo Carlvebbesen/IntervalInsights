@@ -1,4 +1,5 @@
 import { logger } from "../logger";
+import { isPowerSport } from "../schema";
 import type { IIntervalsPowerCurve } from "../types/intervals/IIntervalsActivity";
 import { intervalsApiService } from "./intervals_api_service";
 import { withIntervalsToken } from "./intervals_token_helper";
@@ -110,9 +111,8 @@ async function fetchBestEffortCurveWithToken(
   }
   if (points.length === 0) return { status: "no_data", data: null };
 
-  const isPowerSport = type !== "Run" && type !== "TrailRun" && type !== "VirtualRun";
   return {
     status: "ok",
-    data: { type, window, unit: isPowerSport ? "watts" : "value", points },
+    data: { type, window, unit: isPowerSport(type) ? "watts" : "value", points },
   };
 }

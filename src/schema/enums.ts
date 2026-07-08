@@ -137,6 +137,16 @@ export const RUNNING_SPORT_TYPES = ["Run", "VirtualRun", "TrailRun"] as const;
 
 export type RunningSportType = (typeof RUNNING_SPORT_TYPES)[number];
 
+/**
+ * True for sports analysed on power/HR/speed rather than running pace (rides,
+ * skis, everything non-run). The single in-analysis sport predicate — the same
+ * notion `intervals_curve_service` uses to label the best-effort curve unit
+ * (watts vs value) and what gates the pace-specific bits of the pipeline (D7).
+ */
+export function isPowerSport(sportType: string): boolean {
+  return !(RUNNING_SPORT_TYPES as readonly string[]).includes(sportType);
+}
+
 /** Sport types included in the "other activities" effort graph */
 export const OTHER_SPORT_TYPES = [
   "NordicSki",

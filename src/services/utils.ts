@@ -6,7 +6,7 @@ import type { Lap } from "../types/strava/IDetailedActivity";
 import type { ActivityDataPoint, StreamSet } from "../types/strava/IStream";
 
 /** Canonical Strava camelCase sport types we import AND analyze (D6). */
-const ANALYZED_SPORT_TYPES = new Set<string>([
+export const ANALYZED_SPORT_TYPES = new Set<string>([
   "Run",
   "TrailRun",
   "VirtualRun",

@@ -2,7 +2,7 @@ import type { RunnableConfig } from "@langchain/core/runnables";
 import { eq } from "drizzle-orm";
 import { logger } from "../../logger";
 import { activities } from "../../schema";
-import { INTERVAL_TRAINING_TYPES } from "../../schema/enums";
+import { INTERVAL_TRAINING_TYPES, isPowerSport } from "../../schema/enums";
 import { mapBoundariesToSegments, toBoundaries } from "../../services/segment_mapping_service";
 import { needCompleteAnalysis } from "../../services/utils";
 import type { StreamSet } from "../../types/strava/IStream";
@@ -26,8 +26,11 @@ export async function runCompleteAnalysis(
     return { computedSegments: [] };
   }
 
+  // Pace-only concern (D7): rides/skis carry no target_pace by design — their
+  // work is power/speed-based — so the missing-pace warning applies to runs.
   if (
     state.isIndoor &&
+    !isPowerSport(state.activityType) &&
     (INTERVAL_TRAINING_TYPES as readonly string[]).includes(trainingType) &&
     state.userSets.some((set) =>
       set.steps.some((step) => step.target_pace == null || Number(step.target_pace) === 0),
