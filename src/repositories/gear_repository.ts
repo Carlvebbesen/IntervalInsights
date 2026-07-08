@@ -162,6 +162,7 @@ export async function update(
 export function getDefaults(db: Db, userId: string) {
   return db
     .select({
+      gearType: gearDefaults.gearType,
       bucket: gearDefaults.bucket,
       surface: gearDefaults.surface,
       gearId: gearDefaults.gearId,
@@ -173,6 +174,7 @@ export function getDefaults(db: Db, userId: string) {
 export async function findDefaultGearId(
   db: Db,
   userId: string,
+  gearType: GearType,
   bucket: TrainingBucket,
   surface: GearSurface,
 ): Promise<number | undefined> {
@@ -182,6 +184,7 @@ export async function findDefaultGearId(
     .where(
       and(
         eq(gearDefaults.userId, userId),
+        eq(gearDefaults.gearType, gearType),
         eq(gearDefaults.bucket, bucket),
         eq(gearDefaults.surface, surface),
       ),
@@ -192,15 +195,21 @@ export async function findDefaultGearId(
 export async function setDefault(
   db: Db,
   userId: string,
+  gearType: GearType,
   bucket: TrainingBucket,
   surface: GearSurface,
   gearId: number,
 ): Promise<void> {
   await db
     .insert(gearDefaults)
-    .values({ userId, bucket, surface, gearId })
+    .values({ userId, gearType, bucket, surface, gearId })
     .onConflictDoUpdate({
-      target: [gearDefaults.userId, gearDefaults.bucket, gearDefaults.surface],
+      target: [
+        gearDefaults.userId,
+        gearDefaults.gearType,
+        gearDefaults.bucket,
+        gearDefaults.surface,
+      ],
       set: { gearId },
     });
 }
@@ -208,6 +217,7 @@ export async function setDefault(
 export async function clearDefault(
   db: Db,
   userId: string,
+  gearType: GearType,
   bucket: TrainingBucket,
   surface: GearSurface,
 ): Promise<void> {
@@ -216,6 +226,7 @@ export async function clearDefault(
     .where(
       and(
         eq(gearDefaults.userId, userId),
+        eq(gearDefaults.gearType, gearType),
         eq(gearDefaults.bucket, bucket),
         eq(gearDefaults.surface, surface),
       ),

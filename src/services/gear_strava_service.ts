@@ -1,7 +1,13 @@
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { logger } from "../logger";
 import * as gearRepo from "../repositories/gear_repository";
-import { activities, type GearSurface, RUNNING_SPORT_TYPES, surfaceForSportType } from "../schema";
+import {
+  activities,
+  type GearSurface,
+  type GearType,
+  RUNNING_SPORT_TYPES,
+  surfaceForSportType,
+} from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import { stravaApiService } from "./strava_api_service";
 
@@ -33,6 +39,64 @@ export const KNOWN_SHOE_BRANDS = [
   "Newton",
   "Karhu",
 ] as const;
+
+/** Curated road/gravel/MTB brands offered in the create form (free-text "Other" still allowed). */
+export const KNOWN_BIKE_BRANDS = [
+  "Trek",
+  "Specialized",
+  "Canyon",
+  "Giant",
+  "Cannondale",
+  "Scott",
+  "Cervélo",
+  "BMC",
+  "Bianchi",
+  "Pinarello",
+  "Cube",
+  "Orbea",
+  "Felt",
+  "Ridley",
+  "Colnago",
+  "Wilier",
+  "Merida",
+  "Santa Cruz",
+  "Focus",
+  "Rose",
+  "Factor",
+  "Salsa",
+  "Lauf",
+  "3T",
+  "Van Rysel",
+  "Ribble",
+  "Look",
+  "Argon 18",
+] as const;
+
+/** Curated cross-country ski brands offered in the create form (free-text "Other" still allowed). */
+export const KNOWN_XC_SKI_BRANDS = [
+  "Fischer",
+  "Atomic",
+  "Salomon",
+  "Rossignol",
+  "Madshus",
+  "Peltonen",
+  "Yoko",
+  "Kästle",
+  "Åsnes",
+  "One Way",
+] as const;
+
+/** Curated brand list per gear type, served by `GET /gear/brands?gearType=`. */
+export function brandsForGearType(gearType: GearType): readonly string[] {
+  switch (gearType) {
+    case "BICYCLE":
+      return KNOWN_BIKE_BRANDS;
+    case "SKIS":
+      return KNOWN_XC_SKI_BRANDS;
+    default:
+      return KNOWN_SHOE_BRANDS;
+  }
+}
 
 /** Split a Strava gear name into a known brand + model (longest brand prefix wins). */
 export function parseBrandModel(name: string | null | undefined): {

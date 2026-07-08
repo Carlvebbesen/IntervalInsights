@@ -154,13 +154,37 @@ export type OtherSportType = (typeof OTHER_SPORT_TYPES)[number];
 
 // ─── Gear ─────────────────────────────────────────────────────────────────────
 
-export const gearTypeEnum = pgEnum("gear_type", ["SHOES"]);
-export const gearSurfaceEnum = pgEnum("gear_surface", ["ROAD", "TRAIL"]);
+export const gearTypeEnum = pgEnum("gear_type", ["SHOES", "BICYCLE", "SKIS"]);
+export const gearSurfaceEnum = pgEnum("gear_surface", [
+  "ROAD",
+  "TRAIL",
+  "TREADMILL",
+  "GRAVEL",
+  "MTB",
+  "CLASSIC",
+  "SKATE",
+  "ROLLERSKI",
+]);
 export const trainingBucketEnum = pgEnum("training_bucket", ["EASY", "LONG", "INTERVALS", "RACE"]);
 
 export type GearType = (typeof gearTypeEnum.enumValues)[number];
 export type GearSurface = (typeof gearSurfaceEnum.enumValues)[number];
 export type TrainingBucket = (typeof trainingBucketEnum.enumValues)[number];
+
+/**
+ * Allowed surfaces per gear type (D2). Single source of truth for zod validation
+ * on gear create/patch and the app-side surface pickers.
+ */
+export const SURFACES_BY_GEAR_TYPE = {
+  SHOES: ["ROAD", "TRAIL", "TREADMILL"],
+  BICYCLE: ["ROAD", "GRAVEL", "MTB"],
+  SKIS: ["CLASSIC", "SKATE", "ROLLERSKI"],
+} as const satisfies Record<GearType, readonly GearSurface[]>;
+
+/** True when `surface` is valid for `gearType`. */
+export function isSurfaceForGearType(gearType: GearType, surface: GearSurface): boolean {
+  return (SURFACES_BY_GEAR_TYPE[gearType] as readonly GearSurface[]).includes(surface);
+}
 
 /** Coarse bucket a shoe default/suggestion is keyed on (together with surface). */
 export function trainingBucketFor(

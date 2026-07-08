@@ -1,6 +1,12 @@
 import "zod-openapi/extend";
 import { z } from "zod";
-import { gearSurfaceEnum, gearTypeEnum, trainingTypeEnum } from "../schema/enums";
+import {
+  gearSurfaceEnum,
+  gearTypeEnum,
+  isSurfaceForGearType,
+  SURFACES_BY_GEAR_TYPE,
+  trainingTypeEnum,
+} from "../schema/enums";
 
 export const GearSummarySchema = z
   .object({
@@ -58,6 +64,16 @@ export const CreateGearSchema = z
     defaultLong: z.boolean().optional(),
     defaultIntervals: z.boolean().optional(),
     defaultRace: z.boolean().optional(),
+  })
+  .superRefine((val, ctx) => {
+    const gearType = val.gearType ?? "SHOES";
+    if (!isSurfaceForGearType(gearType, val.surface)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["surface"],
+        message: `surface "${val.surface}" is not valid for gearType "${gearType}" (allowed: ${SURFACES_BY_GEAR_TYPE[gearType].join(", ")})`,
+      });
+    }
   })
   .openapi({ ref: "CreateGear" });
 

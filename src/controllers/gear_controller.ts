@@ -4,11 +4,17 @@ import { AppError } from "../error";
 import type { GearListFilters } from "../repositories/gear_repository";
 import * as gearRepo from "../repositories/gear_repository";
 import * as intervalStructureRepo from "../repositories/interval_structure_repository";
-import type { GearSurface, InsertGear, TrainingBucket } from "../schema";
+import {
+  type GearSurface,
+  type GearType,
+  type InsertGear,
+  isSurfaceForGearType,
+  type TrainingBucket,
+} from "../schema";
 import type { CreateGearSchema, UpdateGearSchema } from "../schemas/api_schemas";
 import {
+  brandsForGearType,
   type GearSyncResult,
-  KNOWN_SHOE_BRANDS,
   syncUserGearFromStrava,
 } from "../services/gear_strava_service";
 import type { IGlobalBindings } from "../types/IRouters";
@@ -24,6 +30,7 @@ async function applyDefaultToggles(
   db: Db,
   userId: string,
   gearId: number,
+  gearType: GearType,
   surface: GearSurface,
   toggles: {
     defaultEasy?: boolean;
@@ -42,9 +49,11 @@ async function applyDefaultToggles(
     const want = wanted[bucket];
     if (want === undefined) continue;
     if (want) {
-      await gearRepo.setDefault(db, userId, bucket, surface, gearId);
-    } else if ((await gearRepo.findDefaultGearId(db, userId, bucket, surface)) === gearId) {
-      await gearRepo.clearDefault(db, userId, bucket, surface);
+      await gearRepo.setDefault(db, userId, gearType, bucket, surface, gearId);
+    } else if (
+      (await gearRepo.findDefaultGearId(db, userId, gearType, bucket, surface)) === gearId
+    ) {
+      await gearRepo.clearDefault(db, userId, gearType, bucket, surface);
     }
   }
 }
@@ -112,7 +121,7 @@ export async function createGear(db: Db, userId: string, input: CreateGearInput)
     surface: input.surface,
     useTypes: input.useTypes ?? [],
   });
-  await applyDefaultToggles(db, userId, gear.id, gear.surface, input);
+  await applyDefaultToggles(db, userId, gear.id, gear.gearType, gear.surface, input);
   return buildGearDto(db, userId, gear.id);
 }
 
@@ -124,6 +133,13 @@ export async function updateGear(
 ): Promise<GearDto> {
   const existing = await gearRepo.findByIdForUser(db, userId, id);
   if (!existing) throw new AppError(404, "Gear not found");
+
+  if (input.surface !== undefined && !isSurfaceForGearType(existing.gearType, input.surface)) {
+    throw new AppError(
+      400,
+      `surface "${input.surface}" is not valid for gearType "${existing.gearType}"`,
+    );
+  }
 
   const updates: Partial<InsertGear> = {};
   if (input.brand !== undefined) updates.brand = input.brand;
@@ -149,7 +165,7 @@ export async function updateGear(
       // Defaults are surface-keyed; drop stale-surface entries before re-applying.
       await gearRepo.clearDefaultsForGear(db, userId, id);
     }
-    await applyDefaultToggles(db, userId, id, newSurface, input);
+    await applyDefaultToggles(db, userId, id, existing.gearType, newSurface, input);
   }
 
   return buildGearDto(db, userId, id);
@@ -188,8 +204,8 @@ export async function clearSignatureDefault(
   return { success: true };
 }
 
-export function getBrands(): { brands: string[] } {
-  return { brands: [...KNOWN_SHOE_BRANDS] };
+export function getBrands(gearType: GearType = "SHOES"): { brands: string[] } {
+  return { brands: [...brandsForGearType(gearType)] };
 }
 
 export function syncFromStrava(
