@@ -144,7 +144,7 @@ export const auth = betterAuth({
   },
   session: {
     modelName: "sessions",
-    expiresIn: 60 * 60 * 24 * 30, // 30 days — mobile users stay signed in
+    expiresIn: 60 * 60 * 24 * 90, // 90 days — mobile users stay signed in
     updateAge: 60 * 60 * 24, // sliding expiry, refreshed at most daily
   },
   account: { modelName: "accounts" },
