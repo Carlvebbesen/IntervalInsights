@@ -5,20 +5,26 @@ import type { LLMActivitySummary } from "../types/LLMActivitySummary";
 import type { Lap } from "../types/strava/IDetailedActivity";
 import type { ActivityDataPoint, StreamSet } from "../types/strava/IStream";
 
+/** Canonical Strava camelCase sport types we import AND analyze (D6). */
+export const ANALYZED_SPORT_TYPES = new Set<string>([
+  "Run",
+  "TrailRun",
+  "VirtualRun",
+  "Ride",
+  "VirtualRide",
+  "EBikeRide",
+  "GravelRide",
+  "MountainBikeRide",
+  "NordicSki",
+  "BackcountrySki",
+  "RollerSki",
+  "Elliptical",
+  "Hike",
+  "Rowing",
+]);
+
 export function shouldAnalyze(sportType: string): boolean {
-  const runningTypes = [
-    "Run",
-    "TrailRun",
-    "VirtualRun",
-    "Elliptical",
-    "Hike",
-    "Ride",
-    "Virtual Ride",
-    "Rowing",
-    "Nordic Ski",
-    "Backcountry Ski",
-  ];
-  return runningTypes.includes(sportType);
+  return ANALYZED_SPORT_TYPES.has(sportType);
 }
 export function needCompleteAnalysis(trainingType: TrainingType): boolean {
   const trainingTypes: TrainingType[] = [

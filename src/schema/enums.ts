@@ -137,6 +137,16 @@ export const RUNNING_SPORT_TYPES = ["Run", "VirtualRun", "TrailRun"] as const;
 
 export type RunningSportType = (typeof RUNNING_SPORT_TYPES)[number];
 
+/**
+ * True for sports analysed on power/HR/speed rather than running pace (rides,
+ * skis, everything non-run). The single in-analysis sport predicate — the same
+ * notion `intervals_curve_service` uses to label the best-effort curve unit
+ * (watts vs value) and what gates the pace-specific bits of the pipeline (D7).
+ */
+export function isPowerSport(sportType: string): boolean {
+  return !(RUNNING_SPORT_TYPES as readonly string[]).includes(sportType);
+}
+
 /** Sport types included in the "other activities" effort graph */
 export const OTHER_SPORT_TYPES = [
   "NordicSki",
@@ -154,13 +164,37 @@ export type OtherSportType = (typeof OTHER_SPORT_TYPES)[number];
 
 // ─── Gear ─────────────────────────────────────────────────────────────────────
 
-export const gearTypeEnum = pgEnum("gear_type", ["SHOES"]);
-export const gearSurfaceEnum = pgEnum("gear_surface", ["ROAD", "TRAIL"]);
+export const gearTypeEnum = pgEnum("gear_type", ["SHOES", "BICYCLE", "SKIS"]);
+export const gearSurfaceEnum = pgEnum("gear_surface", [
+  "ROAD",
+  "TRAIL",
+  "TREADMILL",
+  "GRAVEL",
+  "MTB",
+  "CLASSIC",
+  "SKATE",
+  "ROLLERSKI",
+]);
 export const trainingBucketEnum = pgEnum("training_bucket", ["EASY", "LONG", "INTERVALS", "RACE"]);
 
 export type GearType = (typeof gearTypeEnum.enumValues)[number];
 export type GearSurface = (typeof gearSurfaceEnum.enumValues)[number];
 export type TrainingBucket = (typeof trainingBucketEnum.enumValues)[number];
+
+/**
+ * Allowed surfaces per gear type (D2). Single source of truth for zod validation
+ * on gear create/patch and the app-side surface pickers.
+ */
+export const SURFACES_BY_GEAR_TYPE = {
+  SHOES: ["ROAD", "TRAIL", "TREADMILL"],
+  BICYCLE: ["ROAD", "GRAVEL", "MTB"],
+  SKIS: ["CLASSIC", "SKATE", "ROLLERSKI"],
+} as const satisfies Record<GearType, readonly GearSurface[]>;
+
+/** True when `surface` is valid for `gearType`. */
+export function isSurfaceForGearType(gearType: GearType, surface: GearSurface): boolean {
+  return (SURFACES_BY_GEAR_TYPE[gearType] as readonly GearSurface[]).includes(surface);
+}
 
 /** Coarse bucket a shoe default/suggestion is keyed on (together with surface). */
 export function trainingBucketFor(
@@ -187,7 +221,53 @@ export function trainingBucketFor(
   }
 }
 
-/** Road vs trail surface inferred from a Strava sport type. */
-export function surfaceForSportType(sportType: string): GearSurface {
-  return sportType === "TrailRun" ? "TRAIL" : "ROAD";
+/** The gear context an activity implies: which gear type it uses and, where
+ * determinable, the surface. `surface` is null when the sport type has no
+ * deterministic surface (on-snow skis — Strava can't distinguish classic/skate). */
+export type GearContext = { gearType: GearType; surface: GearSurface | null };
+
+/**
+ * Maps a Strava sport type (+ indoor flag) to its gear context (D3). Returns
+ * null for sport types that carry no gear (suggestions are skipped; manual
+ * assignment stays allowed).
+ */
+export function gearContextForActivity(sportType: string, indoor: boolean): GearContext | null {
+  switch (sportType) {
+    case "TrailRun":
+      return { gearType: "SHOES", surface: "TRAIL" };
+    case "Run":
+    case "VirtualRun":
+      return { gearType: "SHOES", surface: indoor ? "TREADMILL" : "ROAD" };
+    case "Ride":
+    case "VirtualRide":
+    case "EBikeRide":
+      return { gearType: "BICYCLE", surface: "ROAD" };
+    case "GravelRide":
+      return { gearType: "BICYCLE", surface: "GRAVEL" };
+    case "MountainBikeRide":
+      return { gearType: "BICYCLE", surface: "MTB" };
+    case "NordicSki":
+    case "BackcountrySki":
+      return { gearType: "SKIS", surface: null };
+    case "RollerSki":
+      return { gearType: "SKIS", surface: "ROLLERSKI" };
+    case "Hike":
+    case "Elliptical":
+      return { gearType: "SHOES", surface: null };
+    default:
+      return null;
+  }
 }
+
+/** Sport types whose gear lives in Strava (shoes + bikes); skis have no Strava
+ * gear. Scopes the activity supplement + mileage linking in the gear sync. */
+export const STRAVA_GEAR_SPORT_TYPES = [
+  "Run",
+  "TrailRun",
+  "VirtualRun",
+  "Ride",
+  "VirtualRide",
+  "EBikeRide",
+  "GravelRide",
+  "MountainBikeRide",
+] as const;

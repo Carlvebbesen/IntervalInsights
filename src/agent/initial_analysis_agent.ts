@@ -1,6 +1,6 @@
 import type { ChatOpenAI } from "@langchain/openai";
 import { z } from "zod";
-import { trainingTypeEnum } from "../schema";
+import { isPowerSport, trainingTypeEnum } from "../schema";
 import type { IntervalsIcuPrediction } from "../schema/activities";
 import { normalizeActivityStreams, prepareDataForLLM } from "../services/utils";
 import type { Lap } from "../types/strava/IDetailedActivity";
@@ -97,6 +97,20 @@ The leading number in a title is the rep COUNT, never the duration. "6x6min" = 6
 | 20x45/15 | 45s | SHORT_INTERVALS |
 | 15x90/30s | 90s | SHORT_INTERVALS |
 `;
+
+/**
+ * Sport-aware framing (D7). Runs get the original pace-based prompt verbatim
+ * (empty block). Rides/skis get a block telling the model their intervals are
+ * power/HR/speed-based, not pace-based — the trainingType taxonomy is unchanged
+ * and applies to all three sports.
+ */
+function sportContextBlock(type: string): string {
+  if (!isPowerSport(type)) return "";
+  return `
+  ### SPORT CONTEXT — ${type}
+  This is a **${type}** activity, NOT a run. Judge work vs. recovery by POWER, HEART RATE and SPEED — do NOT expect or reason about running pace (min/km), and ignore the "Pace" column if it looks implausible for this sport. The classification taxonomy (EASY, LONG, RECOVERY, the interval types, TEMPO, RACE, …) is IDENTICAL to running and applies unchanged; only the SIGNAL you read intervals from differs. Distance thresholds in the definitions below are calibrated for running — treat them as loose guidance for other sports and lean on effort structure instead.
+`;
+}
 
 function formatIntervalsIcuBlock(prediction: IntervalsIcuPrediction | null | undefined): string {
   if (!prediction) return "";
@@ -222,8 +236,8 @@ export async function invokeActivityAnalysisAgent(
   const intervalsIcuBlock = formatIntervalsIcuBlock(intervalsIcuPrediction);
   const lapEvidenceBlock = buildLapEvidenceBlock(laps, streams?.time?.data ?? []);
   const prompt = `
-  You are an expert running coach analyzing Strava activity data.
-
+  You are an expert ${isPowerSport(type) ? "endurance" : "running"} coach analyzing Strava activity data.
+${sportContextBlock(type)}
   ### 1. PRIORITY & CONTEXT
   - **Title/Description Priority:** You must prioritize the user's Title and Description over raw data IF the user explicitly names the workout (e.g., "10x400m", "Tempo Run", "Long Run").
   - **Ignore Generics:** If the title is generic (e.g., "Morning Run", "Lunch Run", "Run"), ignore it and rely 100% on the data stats.

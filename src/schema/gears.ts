@@ -59,6 +59,7 @@ export const gearDefaults = pgTable(
     userId: uuid("user_id")
       .references(() => users.id)
       .notNull(),
+    gearType: gearTypeEnum("gear_type").notNull().default("SHOES"),
     bucket: trainingBucketEnum("bucket").notNull(),
     surface: gearSurfaceEnum("surface").notNull(),
     gearId: integer("gear_id")
@@ -67,7 +68,7 @@ export const gearDefaults = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.userId, table.bucket, table.surface] }),
+    primaryKey({ columns: [table.userId, table.gearType, table.bucket, table.surface] }),
     index("gear_defaults_gear_idx").on(table.gearId),
   ],
 );

@@ -38,6 +38,7 @@ export async function getPending(
     rows.map(async (r) => {
       const { suggestedGearId, gearSuggestions } = await suggestFor({
         sportType: r.sportType,
+        indoor: r.indoor,
         trainingType: r.trainingType ?? r.draftAnalysisResult?.training_type ?? null,
         localGearId: r.localGearId,
         gearUpdatedFromStrava: r.gearUpdatedFromStrava,

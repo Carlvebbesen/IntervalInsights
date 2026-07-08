@@ -48,15 +48,19 @@ gearRouter.get(
   },
 );
 
+const brandsQuerySchema = z.object({ gearType: z.enum(gearTypeEnum.enumValues).optional() });
+
 gearRouter.get(
   "/brands",
   describeRoute({
-    description: "The curated list of shoe brands offered in the create form.",
+    description:
+      "The curated list of brands offered in the create form for a `gearType` (defaults to SHOES).",
     responses: {
       200: okJson(BrandsResponseSchema, "Brand list"),
     },
   }),
-  async (c) => c.json(gearController.getBrands()),
+  validator("query", brandsQuerySchema),
+  async (c) => c.json(gearController.getBrands(c.req.valid("query").gearType)),
 );
 
 const structureIdParamSchema = z.object({ structureId: z.coerce.number().int().positive() });

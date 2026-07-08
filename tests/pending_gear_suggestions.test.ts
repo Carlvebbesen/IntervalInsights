@@ -22,6 +22,10 @@ let aStrava: number;
 let aSig: number;
 let aType: number;
 let aRetired: number;
+let bike: number;
+let aRide: number;
+let trailShoe: number;
+let aTrail: number;
 
 async function insertGear(
   model: string,
@@ -73,6 +77,34 @@ beforeAll(async () => {
       gearUpdatedFromStrava: true,
       localGearId: shoeRetired,
       intervalStructureId: structureId,
+    })
+  ).id;
+
+  // A bicycle + a prior ride using it feeds recents-by-type for BICYCLE.
+  bike = await insertGear("Bike One", { gearType: "BICYCLE", surface: "ROAD" });
+  await insertActivity(user.id, {
+    sportType: "Ride",
+    localGearId: bike,
+    analysisStatus: "completed",
+    trainingType: "EASY",
+  });
+  aRide = (
+    await insertActivity(user.id, {
+      sportType: "Ride",
+      analysisStatus: "pending",
+      trainingType: "EASY",
+    })
+  ).id;
+
+  // A trail shoe with the same TEMPO use-type as the road `shoeType`. A pending
+  // TrailRun (surface TRAIL) must prefer the trail shoe — the surface-scoped
+  // use-type/recents steps exclude the road shoe.
+  trailShoe = await insertGear("Trail Tempo Shoe", { surface: "TRAIL", useTypes: ["TEMPO"] });
+  aTrail = (
+    await insertActivity(user.id, {
+      sportType: "TrailRun",
+      analysisStatus: "pending",
+      trainingType: "TEMPO",
     })
   ).id;
 });
@@ -127,5 +159,21 @@ describe("GET /api/v1/agents/pending gear preselect chain", () => {
       expect(row.gearSuggestions).not.toContain(shoeRetired);
       expect(row.suggestedGearId).not.toBe(shoeRetired);
     }
+  });
+
+  it("keys candidates on gear type: a ride suggests the bike, never shoes", async () => {
+    const pending = await fetchPending();
+    const ride = pending.get(aRide);
+    expect(ride?.suggestedGearId).toBe(bike);
+    for (const id of [shoeStrava, shoeSig, shoeType, shoeBucket, shoeRetired]) {
+      expect(ride?.gearSuggestions).not.toContain(id);
+    }
+  });
+
+  it("surface-scopes use-type/recents: a TrailRun prefers the trail shoe over a road TEMPO shoe", async () => {
+    const pending = await fetchPending();
+    const trail = pending.get(aTrail);
+    expect(trail?.suggestedGearId).toBe(trailShoe);
+    expect(trail?.gearSuggestions).not.toContain(shoeType);
   });
 });

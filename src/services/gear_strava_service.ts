@@ -1,7 +1,14 @@
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { logger } from "../logger";
 import * as gearRepo from "../repositories/gear_repository";
-import { activities, type GearSurface, RUNNING_SPORT_TYPES, surfaceForSportType } from "../schema";
+import {
+  activities,
+  type GearSurface,
+  type GearType,
+  gearContextForActivity,
+  STRAVA_GEAR_SPORT_TYPES,
+  SURFACES_BY_GEAR_TYPE,
+} from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import { stravaApiService } from "./strava_api_service";
 
@@ -34,15 +41,78 @@ export const KNOWN_SHOE_BRANDS = [
   "Karhu",
 ] as const;
 
-/** Split a Strava gear name into a known brand + model (longest brand prefix wins). */
-export function parseBrandModel(name: string | null | undefined): {
+/** Curated road/gravel/MTB brands offered in the create form (free-text "Other" still allowed). */
+export const KNOWN_BIKE_BRANDS = [
+  "Trek",
+  "Specialized",
+  "Canyon",
+  "Giant",
+  "Cannondale",
+  "Scott",
+  "Cervélo",
+  "BMC",
+  "Bianchi",
+  "Pinarello",
+  "Cube",
+  "Orbea",
+  "Felt",
+  "Ridley",
+  "Colnago",
+  "Wilier",
+  "Merida",
+  "Santa Cruz",
+  "Focus",
+  "Rose",
+  "Factor",
+  "Salsa",
+  "Lauf",
+  "3T",
+  "Van Rysel",
+  "Ribble",
+  "Look",
+  "Argon 18",
+] as const;
+
+/** Curated cross-country ski brands offered in the create form (free-text "Other" still allowed). */
+export const KNOWN_XC_SKI_BRANDS = [
+  "Fischer",
+  "Atomic",
+  "Salomon",
+  "Rossignol",
+  "Madshus",
+  "Peltonen",
+  "Yoko",
+  "Kästle",
+  "Åsnes",
+  "One Way",
+] as const;
+
+/** Curated brand list per gear type, served by `GET /gear/brands?gearType=`. */
+export function brandsForGearType(gearType: GearType): readonly string[] {
+  switch (gearType) {
+    case "BICYCLE":
+      return KNOWN_BIKE_BRANDS;
+    case "SKIS":
+      return KNOWN_XC_SKI_BRANDS;
+    default:
+      return KNOWN_SHOE_BRANDS;
+  }
+}
+
+/** Split a Strava gear name into a known brand + model (longest brand prefix
+ * wins), matching against the brand list for the gear type. */
+export function parseBrandModel(
+  name: string | null | undefined,
+  brands: readonly string[] = KNOWN_SHOE_BRANDS,
+  fallbackModel = "Shoe",
+): {
   brand: string | null;
   model: string;
 } {
   const trimmed = (name ?? "").trim();
-  if (!trimmed) return { brand: null, model: "Shoe" };
+  if (!trimmed) return { brand: null, model: fallbackModel };
   const lower = trimmed.toLowerCase();
-  const byLength = [...KNOWN_SHOE_BRANDS].sort((a, b) => b.length - a.length);
+  const byLength = [...brands].sort((a, b) => b.length - a.length);
   for (const brand of byLength) {
     const bl = brand.toLowerCase();
     if (lower === bl) return { brand, model: brand };
@@ -53,6 +123,31 @@ export function parseBrandModel(name: string | null | undefined): {
   return { brand: null, model: trimmed };
 }
 
+/** Per-gear-type brand list + model fallback for `parseBrandModel`. */
+function brandParseOptions(gearType: GearType): {
+  brands: readonly string[];
+  fallbackModel: string;
+} {
+  return {
+    brands: brandsForGearType(gearType),
+    fallbackModel: gearType === "BICYCLE" ? "Bike" : gearType === "SKIS" ? "Skis" : "Shoe",
+  };
+}
+
+/** Seed a bike's surface from Strava's `frame_type` (1=MTB, 2=cyclocross,
+ * 3=road, 4=TT, 5=gravel); cyclocross/gravel both map to GRAVEL, else ROAD. */
+export function surfaceFromFrameType(frameType: number | undefined): GearSurface {
+  switch (frameType) {
+    case 1:
+      return "MTB";
+    case 2:
+    case 5:
+      return "GRAVEL";
+    default:
+      return "ROAD";
+  }
+}
+
 export interface GearSyncResult {
   created: number;
   updated: number;
@@ -60,11 +155,12 @@ export interface GearSyncResult {
 }
 
 /**
- * Import/refresh a single user's shoes from Strava and link their activities.
- * Source of truth for both the in-app "Sync from Strava" button and the all-users
- * backfill script. New shoes are created with a Strava-distance baseline anchored
- * at now (so existing activities, already inside that number, aren't double-counted);
- * existing shoes are resynced (baseline refreshed + post-baseline total recomputed).
+ * Import/refresh a single user's shoes AND bikes from Strava and link their
+ * activities. Source of truth for both the in-app "Sync from Strava" button and
+ * the all-users backfill script. New gear is created with a Strava-distance
+ * baseline anchored at now (so existing activities, already inside that number,
+ * aren't double-counted); existing gear is resynced (baseline refreshed +
+ * post-baseline total recomputed). Skis have no Strava gear (manual only).
  */
 export async function syncUserGearFromStrava(
   db: Db,
@@ -74,15 +170,36 @@ export async function syncUserGearFromStrava(
 ): Promise<GearSyncResult> {
   const dryRun = opts.dryRun ?? false;
 
-  type ShoeData = { name: string; distance: number; retired: boolean };
-  const shoeData = new Map<string, ShoeData>();
+  type StravaGearData = {
+    name: string;
+    distance: number;
+    retired: boolean;
+    gearType: GearType;
+    frameType?: number;
+  };
+  const gearData = new Map<string, StravaGearData>();
 
-  // 1. The athlete profile carries the complete shoe list (incl. unused shoes).
+  // 1. The athlete profile carries the complete shoe + bike list (incl. unused).
   try {
     const athlete = await stravaApiService.getAthlete(accessToken);
     for (const s of athlete.shoes ?? []) {
       if (!s?.id) continue;
-      shoeData.set(s.id, { name: s.name, distance: s.distance ?? 0, retired: s.retired ?? false });
+      gearData.set(s.id, {
+        name: s.name,
+        distance: s.distance ?? 0,
+        retired: s.retired ?? false,
+        gearType: "SHOES",
+      });
+    }
+    for (const b of athlete.bikes ?? []) {
+      if (!b?.id) continue;
+      gearData.set(b.id, {
+        name: b.name,
+        distance: b.distance ?? 0,
+        retired: b.retired ?? false,
+        gearType: "BICYCLE",
+        frameType: b.frame_type,
+      });
     }
   } catch (err) {
     logger.warn(
@@ -91,8 +208,9 @@ export async function syncUserGearFromStrava(
     );
   }
 
-  // 2. Supplement with gear referenced by the user's running activities (catches
-  //    retired shoes the profile omits) and tally road/trail votes per gear.
+  // 2. Supplement with gear referenced by the user's shoe/bike activities
+  //    (catches retired gear the profile omits): infer each gear's type from the
+  //    activity sport type and tally road/trail votes for shoe surface.
   const actRows = await db
     .select({ stravaGearId: activities.gearId, sportType: activities.sportType })
     .from(activities)
@@ -100,25 +218,38 @@ export async function syncUserGearFromStrava(
       and(
         eq(activities.userId, userId),
         isNotNull(activities.gearId),
-        inArray(activities.sportType, [...RUNNING_SPORT_TYPES]),
+        inArray(activities.sportType, [...STRAVA_GEAR_SPORT_TYPES]),
       ),
     );
   const trailVotes = new Map<string, { trail: number; total: number }>();
+  const gearTypeByGid = new Map<string, GearType>();
   const activityGearIds = new Set<string>();
   for (const r of actRows) {
     const gid = r.stravaGearId;
     if (!gid) continue;
+    const ctx = gearContextForActivity(r.sportType, false);
+    if (!ctx) continue;
     activityGearIds.add(gid);
-    const v = trailVotes.get(gid) ?? { trail: 0, total: 0 };
-    v.total += 1;
-    if (r.sportType === "TrailRun") v.trail += 1;
-    trailVotes.set(gid, v);
+    if (!gearTypeByGid.has(gid)) gearTypeByGid.set(gid, ctx.gearType);
+    if (ctx.gearType === "SHOES") {
+      const v = trailVotes.get(gid) ?? { trail: 0, total: 0 };
+      v.total += 1;
+      if (r.sportType === "TrailRun") v.trail += 1;
+      trailVotes.set(gid, v);
+    }
   }
   for (const gid of activityGearIds) {
-    if (shoeData.has(gid)) continue;
+    if (gearData.has(gid)) continue;
+    const gearType = gearTypeByGid.get(gid) ?? "SHOES";
     try {
       const g = await stravaApiService.getGear(accessToken, gid);
-      shoeData.set(gid, { name: g.name, distance: g.distance ?? 0, retired: g.retired ?? false });
+      gearData.set(gid, {
+        name: g.name,
+        distance: g.distance ?? 0,
+        retired: g.retired ?? false,
+        gearType,
+        frameType: g.frame_type,
+      });
     } catch (err) {
       logger.warn({ err, userId, gid }, "getGear failed during gear sync; skipping");
     }
@@ -128,11 +259,16 @@ export async function syncUserGearFromStrava(
   let updated = 0;
   let linked = 0;
 
-  for (const [stravaGearId, data] of shoeData) {
-    const votes = trailVotes.get(stravaGearId);
-    const surface: GearSurface =
-      votes && votes.total > 0 && votes.trail * 2 >= votes.total ? "TRAIL" : "ROAD";
-    const { brand, model } = parseBrandModel(data.name);
+  for (const [stravaGearId, data] of gearData) {
+    let surface: GearSurface;
+    if (data.gearType === "BICYCLE") {
+      surface = surfaceFromFrameType(data.frameType);
+    } else {
+      const votes = trailVotes.get(stravaGearId);
+      surface = votes && votes.total > 0 && votes.trail * 2 >= votes.total ? "TRAIL" : "ROAD";
+    }
+    const { brands, fallbackModel } = brandParseOptions(data.gearType);
+    const { brand, model } = parseBrandModel(data.name, brands, fallbackModel);
     const existing = await gearRepo.findByStravaGearId(db, userId, stravaGearId);
 
     if (dryRun) {
@@ -143,7 +279,7 @@ export async function syncUserGearFromStrava(
 
     if (!existing) {
       const gear = await gearRepo.create(db, userId, {
-        gearType: "SHOES",
+        gearType: data.gearType,
         brand,
         model,
         nickname: null,
@@ -159,7 +295,10 @@ export async function syncUserGearFromStrava(
       await gearRepo.recompute(db, gear.id);
     } else {
       linked += await gearRepo.linkActivitiesByStravaGearId(db, userId, stravaGearId, existing.id);
+      const reconcile =
+        existing.gearType !== data.gearType ? { gearType: data.gearType, surface } : {};
       await gearRepo.update(db, userId, existing.id, {
+        ...reconcile,
         isActive: !data.retired,
         retiredAt: data.retired ? (existing.retiredAt ?? new Date()) : null,
       });
@@ -174,6 +313,7 @@ export async function syncUserGearFromStrava(
 interface GearLinkOpts {
   stravaGearId: string;
   sportType: string;
+  indoor?: boolean;
   startDateLocal: Date;
 }
 
@@ -184,13 +324,24 @@ async function importGearFromStrava(
   opts: GearLinkOpts,
 ): Promise<gearRepo.GearDao> {
   const g = await stravaApiService.getGear(accessToken, opts.stravaGearId);
-  const { brand, model } = parseBrandModel(g.name);
+  const ctx = gearContextForActivity(opts.sportType, opts.indoor ?? false);
+  const gearType = ctx?.gearType ?? "SHOES";
+  let surface: GearSurface;
+  if (gearType === "BICYCLE") {
+    const frameSurface = surfaceFromFrameType(g.frame_type);
+    surface =
+      frameSurface !== "ROAD" ? frameSurface : (ctx?.surface ?? SURFACES_BY_GEAR_TYPE[gearType][0]);
+  } else {
+    surface = ctx?.surface ?? SURFACES_BY_GEAR_TYPE[gearType][0];
+  }
+  const { brands, fallbackModel } = brandParseOptions(gearType);
+  const { brand, model } = parseBrandModel(g.name, brands, fallbackModel);
   return gearRepo.create(db, userId, {
-    gearType: "SHOES",
+    gearType,
     brand,
     model,
     nickname: null,
-    surface: surfaceForSportType(opts.sportType),
+    surface,
     isActive: !(g.retired ?? false),
     retiredAt: g.retired ? new Date() : null,
     stravaGearId: opts.stravaGearId,
@@ -239,7 +390,7 @@ export async function relinkActivityGearFromStrava(
   userId: string,
   accessToken: string,
   activityId: number,
-  opts: { stravaGearId: string | null; sportType: string; startDateLocal: Date },
+  opts: { stravaGearId: string | null; sportType: string; indoor?: boolean; startDateLocal: Date },
 ): Promise<boolean> {
   if (opts.stravaGearId === null) {
     await gearRepo.assignActivityToGear(db, userId, activityId, null);
@@ -261,7 +412,8 @@ export async function relinkActivityGearFromStrava(
   } else {
     try {
       const g = await stravaApiService.getGear(accessToken, opts.stravaGearId);
-      const { brand, model } = parseBrandModel(g.name);
+      const { brands, fallbackModel } = brandParseOptions(gear.gearType);
+      const { brand, model } = parseBrandModel(g.name, brands, fallbackModel);
       await gearRepo.update(db, userId, gear.id, {
         brand,
         model,

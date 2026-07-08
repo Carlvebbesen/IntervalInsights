@@ -1,7 +1,7 @@
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { logger } from "../../logger";
-import { activities, type ProposedSegmentDraft } from "../../schema";
+import { activities, isPowerSport, type ProposedSegmentDraft } from "../../schema";
 import { getProposedPaceForStructure, getProposedPaceFromLaps } from "../../services/pace_service";
 import { generateCompleteIntervalSet, needCompleteAnalysis } from "../../services/utils";
 import type { ExpandedIntervalSet } from "../../types/ExpandedIntervalSet";
@@ -38,7 +38,10 @@ export async function proposeSegments(
   let draftSets: ExpandedIntervalSet[] = structure.length
     ? generateCompleteIntervalSet(structure)
     : [];
-  if (structure.length) {
+  // Pace-fill (lap-derived or history) is a running concern (D7): rides/skis are
+  // power/speed-based, so their proposed segments carry null target paces and the
+  // deterministic/LLM segmenter splits on speed/power streams instead.
+  if (structure.length && !isPowerSport(state.activityType)) {
     try {
       const fromLaps = state.laps?.length ? getProposedPaceFromLaps(state.laps, structure) : null;
       draftSets = fromLaps ?? (await getProposedPaceForStructure(db, state.userId, structure));
