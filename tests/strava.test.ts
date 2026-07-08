@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { closePool, createTestUser, deleteTestUser, getPool } from "./helpers/db";
+import { eq } from "drizzle-orm";
+import { users } from "../src/schema";
+import { closePool, createTestUser, deleteTestUser, getDb, getPool } from "./helpers/db";
 import { buildTestApp, withIdentity } from "./helpers/test_app";
 
 const app = buildTestApp(getPool());
@@ -86,6 +88,33 @@ describe("/api/strava/auth", () => {
       );
       expect(res.status).toBe(401);
     }));
+
+  it("POST /exchange returns 409 when the Strava athlete is already linked to another user", async () => {
+    const other = await createTestUser({ role: "premium" });
+    await getDb().update(users).set({ stravaId: "88888" }).where(eq(users.id, other.id));
+    try {
+      await withIdentity(identity(), async () => {
+        stubFetch(() =>
+          Response.json({
+            access_token: "a",
+            refresh_token: "r",
+            expires_at: Math.floor(Date.now() / 1000) + 7200,
+            athlete: { id: 88888 },
+          }),
+        );
+        const res = await app.fetch(
+          new Request("http://test/api/v1/strava/auth/exchange", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: "auth-code" }),
+          }),
+        );
+        expect(res.status).toBe(409);
+      });
+    } finally {
+      await deleteTestUser(other.id);
+    }
+  });
 });
 
 describe("/api/strava (sync, mocked stravaApiService)", () => {

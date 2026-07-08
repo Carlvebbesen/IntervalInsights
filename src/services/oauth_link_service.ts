@@ -103,14 +103,20 @@ export function linkStravaAccount(
       },
       async persistUserLink(dbc, linkUserId, athleteId, log) {
         const stravaId = String(athleteId);
-        const existingUser = await dbc.query.users.findFirst({
-          where: eq(users.id, linkUserId),
+        const owner = await dbc.query.users.findFirst({
+          where: eq(users.stravaId, stravaId),
         });
-        if (!existingUser) throw new AppError(404, "User not found");
-        if (!existingUser.stravaId) {
-          await dbc.update(users).set({ stravaId }).where(eq(users.id, linkUserId));
-          log.info({ userId: linkUserId }, "Updated Strava ID for existing user");
+        if (owner) {
+          if (owner.id === linkUserId) return;
+          throw new AppError(409, "This Strava account is already linked to another account");
         }
+        const [updated] = await dbc
+          .update(users)
+          .set({ stravaId })
+          .where(eq(users.id, linkUserId))
+          .returning({ id: users.id });
+        if (!updated) throw new AppError(404, "User not found");
+        log.info({ userId: linkUserId }, "Linked Strava account to user");
       },
     },
     logger,

@@ -59,6 +59,7 @@ stravaAuthRouter.post(
       200: okJson(StravaExchangeResponseSchema, "Strava account linked"),
       400: errJson("Missing authorization code"),
       401: errJson("Strava rejected the code"),
+      409: errJson("Strava account already linked to another user"),
       500: errJson("Internal server error"),
     },
   }),
