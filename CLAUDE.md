@@ -128,6 +128,8 @@ The SDK only starts when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so local dev is s
 
 `DATABASE_URL`, `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` (used to derive the Clerk OAuth/FAPI URL for the MCP server), `BETTER_AUTH_SECRET` (min 32 chars, session signing), `BETTER_AUTH_URL` (backend base URL), `RESEND_API_KEY` (OTP email delivery; emails only send in production — dev logs the code), `TOKEN_ENC_KEY` (min 32 chars, provider-token encryption at rest — rotating it invalidates every stored Strava/intervals token), `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `OPENAI_API_KEY` (for GPT-4o-mini). See `src/config.ts` for the full validated set.
 
+Optional store-review demo account: `REVIEW_ACCOUNT_EMAIL` + `REVIEW_ACCOUNT_OTP` (a fixed 6-digit sign-in code for app-store reviewers; both-or-neither, disabled when unset). The review address' OTP email is suppressed — the code lives only in the env. See `src/auth.ts`.
+
 Optional OTel: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` (default `intervals-backend`), `OTEL_SERVICE_VERSION` / `GIT_SHA`, `OTEL_DEPLOYMENT_ENVIRONMENT`.
 
 LangChain/LangGraph GenAI tracing (sends `gen_ai.*` spans through the existing OTLP pipeline to Grafana's GenAI view): set both `LANGSMITH_OTEL_ENABLED=true` and `LANGSMITH_TRACING=true`. `src/instrumentation.ts` calls `initializeOTEL({ globalTracerProvider })` so LangSmith reuses the NodeSDK tracer provider — no separate exporter is created.

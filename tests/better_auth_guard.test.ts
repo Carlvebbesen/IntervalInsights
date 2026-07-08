@@ -190,6 +190,77 @@ describe("dual-auth guard", () => {
   });
 });
 
+// Store-review demo account (REVIEW_ACCOUNT_EMAIL/OTP in tests/setup.ts): a
+// fixed sign-in code for app-store reviewers, email suppressed. Everyone else
+// keeps random emailed OTPs.
+describe("review account (fixed OTP)", () => {
+  const reviewEmail = "store-review@test.local";
+  const reviewOtp = "731409";
+
+  async function reviewSignIn(email: string): Promise<Response> {
+    const sendRes = await fetchApp("/api/auth/email-otp/send-verification-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, type: "sign-in" }),
+    });
+    expect(sendRes.status).toBe(200);
+    // Email suppressed — no OTP is dispatched for the review address.
+    expect(otpCapture.last).toBeNull();
+    return fetchApp("/api/auth/sign-in/email-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, otp: reviewOtp }),
+    });
+  }
+
+  it("signs in with the fixed code and auto-creates a guest", async () => {
+    clerkAuthMock.getAuth = () => null;
+    const signInRes = await reviewSignIn(reviewEmail);
+    expect(signInRes.status).toBe(200);
+    const token = signInRes.headers.get("set-auth-token");
+    if (!token) throw new Error("no set-auth-token header");
+
+    const res = await fetchApp("/api/whoami", { headers: { Authorization: `Bearer ${token}` } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { userId: string; role: string };
+    createdUserIds.push(body.userId);
+    expect(body.role).toBe("guest");
+  });
+
+  it("is case-insensitive on the review email", async () => {
+    clerkAuthMock.getAuth = () => null;
+    const signInRes = await reviewSignIn("Store-Review@Test.Local");
+    expect(signInRes.status).toBe(200);
+    const token = signInRes.headers.get("set-auth-token");
+    if (!token) throw new Error("no set-auth-token header");
+    const res = await fetchApp("/api/whoami", { headers: { Authorization: `Bearer ${token}` } });
+    expect(res.status).toBe(200);
+    createdUserIds.push(((await res.json()) as { userId: string }).userId);
+  });
+
+  it("does not leak the fixed code to a normal email", async () => {
+    clerkAuthMock.getAuth = () => null;
+    const email = `normal-${randomUUID()}@example.test`;
+    const sendRes = await fetchApp("/api/auth/email-otp/send-verification-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, type: "sign-in" }),
+    });
+    expect(sendRes.status).toBe(200);
+    // A random code was emailed, and it is NOT the fixed review code.
+    expect(otpCapture.last?.email).toBe(email);
+    expect(otpCapture.last?.otp).not.toBe(reviewOtp);
+
+    // The fixed code must not authenticate a normal email.
+    const badRes = await fetchApp("/api/auth/sign-in/email-otp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, otp: reviewOtp }),
+    });
+    expect(badRes.status).toBe(400);
+  });
+});
+
 // The 2026-07-08 device smoke test failed here: after the first sign-in the
 // native cookie jar makes every later /api/auth POST carry the session cookie
 // with no Origin, so Better Auth's cookie-triggered CSRF check 403s

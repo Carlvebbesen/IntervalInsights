@@ -3,8 +3,18 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { bearer, emailOTP } from "better-auth/plugins";
 import { config } from "./config";
 import { db } from "./db";
+import { logger } from "./logger";
 import * as schema from "./schema";
 import { sendSignInOtpEmail } from "./services/auth_email";
+
+/**
+ * App-store reviewers can't read our OTP inbox, so one env-gated demo address
+ * accepts a fixed sign-in code every time (all real users keep random emailed
+ * OTPs). The code lives ONLY in `REVIEW_ACCOUNT_OTP` — its email is suppressed,
+ * so the code never leaves the env. Off by default (both vars unset in prod).
+ */
+const isReviewAccount = (email: string) =>
+  config.REVIEW_ACCOUNT_EMAIL !== undefined && email.toLowerCase() === config.REVIEW_ACCOUNT_EMAIL;
 
 /**
  * Native clients (the Flutter app via `flutter_better_auth`) always carry a
@@ -106,8 +116,18 @@ export const auth = betterAuth({
       sendVerificationOTP: async ({ email, otp, type }) => {
         // Only OTP sign-in is exposed; email-verification / password flows are unused.
         if (type !== "sign-in") return;
+        // The review account's code is fixed and known to reviewers — suppress
+        // its email so the code never leaves the env.
+        if (isReviewAccount(email)) {
+          logger.info({ email }, "review-account OTP issued — email suppressed");
+          return;
+        }
         await sendSignInOtpEmail(email, otp);
       },
+      // Return the fixed code for the review account; undefined falls through to
+      // the default random generator (verified in the plugin's resolveOTP).
+      generateOTP: ({ email, type }) =>
+        type === "sign-in" && isReviewAccount(email) ? config.REVIEW_ACCOUNT_OTP : undefined,
       otpLength: 6,
       expiresIn: 600, // 10 minutes, matching the email copy
       allowedAttempts: 5,

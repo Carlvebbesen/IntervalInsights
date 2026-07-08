@@ -26,6 +26,8 @@ const ENV_DEFAULTS: Record<string, string> = {
   BETTER_AUTH_SECRET: "test-better-auth-secret-0123456789-abcdef",
   BETTER_AUTH_URL: "http://localhost:3000",
   RESEND_API_KEY: "re_test_dummy",
+  REVIEW_ACCOUNT_EMAIL: "store-review@test.local",
+  REVIEW_ACCOUNT_OTP: "731409",
 };
 
 for (const [key, value] of Object.entries(ENV_DEFAULTS)) {
