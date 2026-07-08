@@ -89,10 +89,6 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
   }
 
   const accessToken = (await getStravaAccessTokens(user.id)).access_token;
-  if (!accessToken) {
-    logger.info({ clerkUserId: user.clerkId }, "no access token");
-    return;
-  }
 
   const data = await stravaApiService.getActivity(accessToken, stravaActivityId);
   // Never trust the payload's owner claim: re-validate against the activity

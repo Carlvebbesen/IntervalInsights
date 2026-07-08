@@ -63,13 +63,7 @@ async function main() {
       console.log(`[reval] ${id} NOT FOUND`);
       continue;
     }
-    const userRow = (
-      await db
-        .select({ id: schema.users.id })
-        .from(schema.users)
-        .where(eq(schema.users.id, act.userId))
-    )[0];
-    const userId = userRow?.id as string | undefined;
+    const userId = act.userId as string | undefined;
 
     let token = "";
     if (userId) {

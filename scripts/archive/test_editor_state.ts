@@ -39,7 +39,7 @@ async function main() {
   )[0] as any;
   const user = (
     await db
-      .select({ id: schema.users.id, clerkId: schema.users.clerkId })
+      .select({ id: schema.users.id })
       .from(schema.users)
       .where(eq(schema.users.id, act.userId))
   )[0];
@@ -48,7 +48,6 @@ async function main() {
   const m1 = await getEditorState(
     db,
     user.id,
-    user.clerkId,
     undefined, // no Strava token → history paces + db/intervals streams
     ACTID,
     { structure: STRUCTURE as any, trainingType: "LONG_INTERVALS", includeStreams: false },
@@ -65,7 +64,6 @@ async function main() {
   const m2 = await getEditorState(
     db,
     user.id,
-    user.clerkId,
     undefined,
     ACTID,
     { sets: m1.sets, trainingType: "LONG_INTERVALS", includeStreams: false },
@@ -84,7 +82,6 @@ async function main() {
   const m3 = await getEditorState(
     db,
     user.id,
-    user.clerkId,
     undefined,
     ACTID,
     { sets: injected, trainingType: "LONG_INTERVALS", includeStreams: false },

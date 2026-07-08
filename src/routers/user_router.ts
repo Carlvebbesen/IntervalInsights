@@ -101,7 +101,7 @@ userRouter.delete(
   "/data",
   describeRoute({
     description:
-      "Permanently delete the authenticated user's account: removes all activities (interval segments cascade), the user row, revokes Strava OAuth, and clears Clerk metadata.",
+      "Permanently delete the authenticated user's account: revokes Strava OAuth, removes all activities (interval segments cascade), events, gears, and the user row (sessions and stored provider tokens cascade).",
     responses: {
       200: {
         description: "All user data deleted",

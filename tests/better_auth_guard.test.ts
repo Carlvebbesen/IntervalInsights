@@ -99,10 +99,8 @@ describe("dual-auth guard", () => {
     const email = `clerk-lazy-${randomUUID()}@example.test`;
     clerkAuthMock.getAuth = () => ({ userId: clerkId });
     clerkUsersMock.getUser = async () => ({
-      privateMetadata: {},
-      publicMetadata: {},
-      primaryEmailAddress: { emailAddress: email },
-      emailAddresses: [{ emailAddress: email }],
+      primaryEmailAddress: { emailAddress: email, verification: { status: "verified" } },
+      emailAddresses: [{ emailAddress: email, verification: { status: "verified" } }],
       firstName: "Lazy",
       lastName: "Created",
     });
@@ -117,6 +115,36 @@ describe("dual-auth guard", () => {
     expect(row?.email).toBe(email);
     expect(row?.name).toBe("Lazy Created");
     expect(row?.emailVerified).toBe(true);
+  });
+
+  it("Clerk lazy-create survives an email collision (creates the row without email)", async () => {
+    // A BA-native row already owns the email (e.g. deleted account re-registered
+    // via OTP); the old device's Clerk session must not 500 — it gets a fresh
+    // email-less row instead.
+    const email = `collision-${randomUUID()}@example.test`;
+    clerkAuthMock.getAuth = () => null;
+    const token = await signInWithOtp(email);
+    const baRes = await fetchApp("/api/whoami", { headers: { Authorization: `Bearer ${token}` } });
+    const baUserId = ((await baRes.json()) as { userId: string }).userId;
+    createdUserIds.push(baUserId);
+
+    const clerkId = `test_clerk_${randomUUID()}`;
+    clerkAuthMock.getAuth = () => ({ userId: clerkId });
+    clerkUsersMock.getUser = async () => ({
+      primaryEmailAddress: { emailAddress: email, verification: { status: "verified" } },
+      emailAddresses: [{ emailAddress: email, verification: { status: "verified" } }],
+      firstName: "Collision",
+      lastName: "Case",
+    });
+
+    const res = await fetchApp("/api/whoami");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { userId: string };
+    createdUserIds.push(body.userId);
+    expect(body.userId).not.toBe(baUserId);
+    const row = await db.query.users.findFirst({ where: eq(users.id, body.userId) });
+    expect(row?.clerkId).toBe(clerkId);
+    expect(row?.email).toBeNull();
   });
 
   it("Clerk and Better Auth resolve a backfilled user to the same row", async () => {

@@ -28,12 +28,12 @@ See `tests/README.md` for how the endpoint suite stubs auth and provisions its D
 **Runtime:** Bun + Hono. The entry point is `src/index.ts`. Public routes mount at `/api`
 (before Clerk); all authenticated routers mount under a versioned `/api/v1` sub-app.
 
-**Auth flow:**
-1. `clerkMiddleware` + `authGuard` (`src/middlewares/auth_middleware.ts`) run on all `/api/*` routes. They resolve `clerkUserId` + internal `userId` (UUID) and `role` from the Postgres `users` table via a fresh `findFirst` on every request — the `users` table is the source of truth for identity/role; there is no Clerk session-claim cache.
-2. `stravaMiddleware` (`src/middlewares/strava_middleware.ts`) is applied per-router on routes that need Strava API access. It reads/refreshes Strava OAuth tokens stored in Clerk **private metadata** and sets `stravaAccessToken` + `stravaAthleteId` on the Hono context.
+**Auth flow (dual-auth window — Better Auth alongside Clerk until the Phase 6 cutover):**
+1. `authGuard` (`src/middlewares/auth_middleware.ts`) runs on all `/api/*` routes behind `clerkMiddleware`. It first tries a **Better Auth** bearer session (`auth.api.getSession`; `session.user` IS the full `users` row — see `src/auth.ts`), then falls back to the legacy **Clerk** session (`users` lookup by `clerkId`, lazy-create enriched with verified email/name from Clerk). Both paths resolve `userId` (UUID), `role`, and the full `user` row; `clerkUserId` is `null` for Better Auth-native users. The `users` table is the source of truth for identity/role. The active path is tagged as the `auth.provider` span attribute.
+2. `stravaMiddleware` (`src/middlewares/strava_middleware.ts`) is applied per-router on routes that need Strava API access. It reads/refreshes Strava OAuth tokens from the encrypted Postgres vault (`oauth_provider_tokens`, keyed by `users.id`) and sets `stravaAccessToken` + `stravaAthleteId` on the Hono context.
 
 **Two Hono environment types:**
-- `TGlobalEnv` — standard auth only (`userId`, `clerkUserId`)
+- `TGlobalEnv` — standard auth only (`userId`, nullable `clerkUserId`)
 - `TStravaEnv` — extends `TGlobalEnv` with `stravaAccessToken`, `stravaAthleteId`
 
 Routers that need Strava API access must use `TStravaEnv` and apply `stravaMiddleware`.
@@ -42,6 +42,7 @@ Routers that need Strava API access must use `TStravaEnv` and apply `stravaMiddl
 - `GET/POST /api/strava/event`, `POST /api/intervals/event` — inbound webhooks
 - `GET /api/health` — liveness probe
 - `GET /api/privacy-policy`, `GET /api/terms-of-service` — legal markdown
+- `POST|GET /api/auth/*` — Better Auth endpoints (email-OTP send/verify, session), handled by `auth.handler`
 - Plus the app-root routes `/`, `/app-icon.png`, `/favicon.ico`, `/.well-known/*`, and the MCP router.
 
 **Authenticated routers (mounted under `/api/v1`, behind `clerkMiddleware` + `authGuard`):**
@@ -64,7 +65,9 @@ A remote [Model Context Protocol](https://modelcontextprotocol.io) server that l
 - `activities` — one row per Strava activity, stores `analysisStatus`, `trainingType`, `draftAnalysisResult` (JSON), and Strava metadata
 - `interval_segments` — per-segment breakdown of a workout (pace, HR, type, target)
 - `interval_structures` — deduped workout shapes identified by a `signature` hash; activities with the same structure share a row
-- `users` — maps Clerk user IDs to internal UUIDs
+- `users` — the app user AND the Better Auth user model (single-table integration): internal UUID `id`, `email`/`email_verified`/`name`/`image`, `role`, provider athlete ids, and a nullable legacy `clerk_id` (dropped in Phase 6)
+- `sessions`, `accounts`, `verifications` — Better Auth-managed (server-side sessions, future social providers, OTP storage)
+- `oauth_provider_tokens` — encrypted Strava/intervals.icu OAuth tokens, keyed by `users.id`
 
 **Analysis pipeline** (`src/agent/analysis_graph.ts` — LangGraph with Postgres checkpointer):
 Every activity flows through a single graph, paused mid-way for user confirmation. Nodes:
@@ -79,7 +82,7 @@ Every activity flows through a single graph, paused mid-way for user confirmatio
 
 `analysisStatus` lifecycle: `pending` → `ongoing_init` → `initial` (paused, awaiting user) → `ongoing_completed` → `completed`. Plus `error` and `skipped_inactive` terminal/recoverable states.
 
-**Inactivity gate** (`process_strava_event.ts`): reads `lastSignInAt` from Clerk. If user inactive > 90d, drops the Strava activity entirely. If 14–90d inactive, inserts with `analysisStatus = 'skipped_inactive'` (no LLM calls). `GET /api/v1/agents/pending` re-queues these on next pending fetch.
+**Inactivity gate** (`process_strava_event.ts`): reads `users.lastSeenAt` (bumped by `authGuard`, at most hourly). If user inactive > 90d, drops the Strava activity entirely. If 60–90d inactive, inserts with `analysisStatus = 'skipped_inactive'` (no LLM calls). `GET /api/v1/agents/pending` re-queues these on next pending fetch.
 
 **Auto-retry for errors**: `error` activities with `analysisAttemptCount < 2` are retried automatically by `/pending`. After two failures the user must manually retry.
 
@@ -123,7 +126,7 @@ The SDK only starts when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so local dev is s
 
 ## Environment Variables Required
 
-`DATABASE_URL`, `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` (used to derive the Clerk OAuth/FAPI URL for the MCP server), `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `OPENAI_API_KEY` (for GPT-4o-mini).
+`DATABASE_URL`, `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` (used to derive the Clerk OAuth/FAPI URL for the MCP server), `BETTER_AUTH_SECRET` (min 32 chars, session signing), `BETTER_AUTH_URL` (backend base URL), `RESEND_API_KEY` (OTP email delivery; emails only send in production — dev logs the code), `TOKEN_ENC_KEY` (min 32 chars, provider-token encryption at rest — rotating it invalidates every stored Strava/intervals token), `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `OPENAI_API_KEY` (for GPT-4o-mini). See `src/config.ts` for the full validated set.
 
 Optional OTel: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` (default `intervals-backend`), `OTEL_SERVICE_VERSION` / `GIT_SHA`, `OTEL_DEPLOYMENT_ENVIRONMENT`.
 

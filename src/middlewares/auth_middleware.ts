@@ -62,12 +62,18 @@ const fetchClerkIdentity = async (
 ): Promise<{ email: string | null; name: string | null }> => {
   try {
     const clerkUser = await clerkClient.users.getUser(clerkUserId);
-    const email =
-      clerkUser.primaryEmailAddress?.emailAddress ??
-      clerkUser.emailAddresses?.[0]?.emailAddress ??
-      null;
+    // Only verified addresses may become the Better Auth identity key — an
+    // unverified address would let this Clerk account capture someone else's
+    // future OTP sign-in (email is the match key, and we stamp emailVerified).
+    const isVerified = (a?: { verification?: { status?: string } | null } | null) =>
+      a?.verification?.status === "verified";
+    const primary = clerkUser.primaryEmailAddress;
+    const address = isVerified(primary)
+      ? primary
+      : (clerkUser.emailAddresses?.find(isVerified) ?? null);
+    const email = address?.emailAddress?.toLowerCase() ?? null;
     const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || null;
-    return { email: email?.toLowerCase() ?? null, name };
+    return { email, name };
   } catch (err) {
     c.var.logger.warn(
       { err, clerkUserId },
@@ -106,6 +112,10 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
 
   if (!dbUser) {
     const { email, name } = await fetchClerkIdentity(c, clerkAuth.userId);
+    // onConflictDoNothing covers both a concurrent-create race on clerkId and
+    // the email already belonging to another row (e.g. deleted account
+    // re-registered via Better Auth OTP while an old Clerk session lives on) —
+    // an unguarded insert would 500 every request from that session forever.
     const [newUser] = await c.env.db
       .insert(users)
       .values({
@@ -115,9 +125,35 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
         emailVerified: email != null,
         lastSeenAt: new Date(),
       })
+      .onConflictDoNothing()
       .returning();
     dbUser = newUser;
-    c.var.logger.info({ clerkUserId: clerkAuth.userId }, "Created new user record");
+    if (dbUser) {
+      c.var.logger.info({ clerkUserId: clerkAuth.userId }, "Created new user record");
+    } else {
+      dbUser = await c.env.db.query.users.findFirst({
+        where: eq(users.clerkId, clerkAuth.userId),
+      });
+    }
+    if (!dbUser) {
+      // The conflict was on email, not clerkId: create the row without the
+      // email; the pre-cutover duplicate-email sanity check reconciles it.
+      c.var.logger.warn(
+        { clerkUserId: clerkAuth.userId, email },
+        "Email already owned by another user — creating row without email",
+      );
+      const [emailless] = await c.env.db
+        .insert(users)
+        .values({ clerkId: clerkAuth.userId, name, lastSeenAt: new Date() })
+        .onConflictDoNothing()
+        .returning();
+      dbUser =
+        emailless ??
+        (await c.env.db.query.users.findFirst({ where: eq(users.clerkId, clerkAuth.userId) }));
+    }
+    if (!dbUser) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
   } else {
     if (!dbUser.email) {
       const { email, name } = await fetchClerkIdentity(c, clerkAuth.userId);

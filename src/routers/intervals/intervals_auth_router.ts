@@ -58,7 +58,7 @@ intervalsAuthRouter.post(
   "/exchange",
   describeRoute({
     description:
-      "Exchange an intervals.icu OAuth `code` for tokens, store them in Clerk private metadata, and link the intervals.icu athlete to the authenticated user.",
+      "Exchange an intervals.icu OAuth `code` for tokens, store them encrypted in the token vault, and link the intervals.icu athlete to the authenticated user.",
     responses: {
       200: okJson(IntervalsSuccessResponseSchema, "Intervals.icu account linked"),
       400: errJson("Missing authorization code"),
@@ -82,7 +82,7 @@ intervalsAuthRouter.post(
   "/disconnect",
   describeRoute({
     description:
-      "Disconnect intervals.icu: remove the stored tokens from Clerk private metadata and clear the athlete link on the user row.",
+      "Disconnect intervals.icu: delete the stored tokens from the token vault and clear the athlete link on the user row.",
     responses: {
       200: okJson(IntervalsSuccessResponseSchema, "Intervals.icu disconnected"),
     },

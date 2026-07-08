@@ -22,12 +22,12 @@ async function main() {
   const act = (await db.select().from(schema.activities).where(eq(schema.activities.id, ACTID)))[0] as any;
   const user = (
     await db
-      .select({ id: schema.users.id, clerkId: schema.users.clerkId })
+      .select({ id: schema.users.id })
       .from(schema.users)
       .where(eq(schema.users.id, act.userId))
   )[0];
 
-  const sets = await parseIntervals(db, user.id, user.clerkId, TEXT, TYPE, logger);
+  const sets = await parseIntervals(db, user.id, TEXT, TYPE, logger);
   console.log(`\n[parse] "${TEXT}" -> ${sets.length} set(s)`);
   for (const s of sets) {
     const steps = s.steps
@@ -39,7 +39,7 @@ async function main() {
     console.log(`  set_recovery=${s.set_recovery ?? "∅"} steps=[${steps}]`);
   }
 
-  const segs = await previewSegments(db, user.id, user.clerkId, ACTID, sets as any, TYPE, logger);
+  const segs = await previewSegments(db, user.id, ACTID, sets as any, TYPE, logger);
   const iv = segs.filter((x) => x.type === "INTERVALS");
   console.log(`\n[preview] id=${ACTID} "${act.title}" -> ${segs.length} segments, ${iv.length} INTERVALS`);
   for (const s of segs)

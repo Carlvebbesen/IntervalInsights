@@ -129,29 +129,21 @@ mock.module("../src/agent/parse_intervals_agent.ts", () => ({
   invokeParseIntervalsAgent: async () => ({ sets: [] }),
 }));
 
-// Clerk: the real client makes HTTPS calls. Stub everything to no-op.
-// privateMetadata returns valid-looking Strava+Intervals tokens so the real
-// strava/intervals middlewares (which run inside their routers) don't bail
-// with a 403 during tests.
-const FAR_FUTURE = Math.floor(Date.now() / 1000) + 86_400;
+// Clerk: the real client makes HTTPS calls. Stub it. Provider OAuth tokens live
+// in Postgres (`oauth_provider_tokens`, seeded by tests/helpers/db.ts), so the
+// only remaining `getUser` consumer is the dual-auth guard's identity
+// enrichment, which reads verified email addresses + name.
 const defaultGetUser = async () => ({
-  privateMetadata: {
-    strava: {
-      access_token: "test-strava-token",
-      refresh_token: "test-strava-refresh",
-      expires_at: FAR_FUTURE,
-      athlete_id: 12345,
-    },
-    intervals: {
-      access_token: "test-intervals-token",
-      refresh_token: "test-intervals-refresh",
-      expires_at: FAR_FUTURE,
-      athlete_id: "i12345",
-    },
+  primaryEmailAddress: {
+    emailAddress: "clerk-test-user@example.test",
+    verification: { status: "verified" },
   },
-  publicMetadata: {},
+  emailAddresses: [
+    { emailAddress: "clerk-test-user@example.test", verification: { status: "verified" } },
+  ],
+  firstName: "Clerk",
+  lastName: "TestUser",
 });
-const defaultUpdateUserMetadata = async () => ({});
 // Default: no OAuth token — MCP requests are unauthenticated until a test
 // swaps this to return a real-looking auth object.
 const defaultAuthenticateRequest = async () => ({ toAuth: () => null });
@@ -160,17 +152,12 @@ const defaultAuthenticateRequest = async () => ({ toAuth: () => null });
 // token) and MUST call reset() when done — the mock is global across files.
 export const clerkUsersMock = {
   getUser: defaultGetUser as (userId?: string) => Promise<unknown>,
-  updateUserMetadata: defaultUpdateUserMetadata as (
-    userId?: string,
-    params?: unknown,
-  ) => Promise<unknown>,
   authenticateRequest: defaultAuthenticateRequest as (
     request?: Request,
     options?: unknown,
   ) => Promise<{ toAuth: () => unknown }>,
   reset() {
     this.getUser = defaultGetUser;
-    this.updateUserMetadata = defaultUpdateUserMetadata;
     this.authenticateRequest = defaultAuthenticateRequest;
   },
 };
@@ -179,8 +166,6 @@ mock.module("@clerk/backend", () => ({
   createClerkClient: () => ({
     users: {
       getUser: (userId?: string) => clerkUsersMock.getUser(userId),
-      updateUserMetadata: (userId?: string, params?: unknown) =>
-        clerkUsersMock.updateUserMetadata(userId, params),
     },
     authenticateRequest: (request?: Request, options?: unknown) =>
       clerkUsersMock.authenticateRequest(request, options),

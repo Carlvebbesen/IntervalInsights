@@ -33,7 +33,7 @@ import { runScript } from "./_harness";
  *                         Lap mapping drops) + its predicted activity type. The top segmentation rung
  *                         trusts these; we keep them raw to grade rung 1 against truth.
  *
- * Runs IN-PROCESS using the local .env (CLERK_SECRET_KEY resolves OAuth tokens from Clerk metadata),
+ * Runs IN-PROCESS using the local .env (provider tokens come from the encrypted Postgres vault),
  * mirroring scripts/backfill_hr_stats.ts — no short-lived bearer token needed. Streams/laps are NOT
  * in Postgres, so they must be fetched live; everything else is read straight from the dev DB.
  *
@@ -103,9 +103,9 @@ async function main() {
     .select({
       id: schema.users.id,
       clerkId: schema.users.clerkId,
-      email: (schema.users as any).email ?? schema.users.clerkId,
-      maxHeartRate: (schema.users as any).maxHeartRate ?? schema.users.id,
-      processHeartRate: (schema.users as any).processHeartRate ?? schema.users.id,
+      email: schema.users.email,
+      maxHeartRate: schema.users.maxHeartRate,
+      processHeartRate: schema.users.processHeartRate,
     })
     .from(schema.users);
   const userById = new Map(userRows.map((u) => [u.id, u]));

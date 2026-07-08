@@ -52,7 +52,20 @@ export const auth = betterAuth({
   account: { modelName: "accounts" },
   verification: { modelName: "verifications" },
   advanced: { database: { generateId: "uuid" } },
-  trustedOrigins: [config.APP_BASE_URL],
+  // Better Auth matches slash-less origins; APP_BASE_URL may carry a path/slash.
+  trustedOrigins: [new URL(config.APP_BASE_URL).origin],
+  databaseHooks: {
+    user: {
+      create: {
+        before: async (user) => {
+          // OTP auto-register has no name input; default to the email
+          // local-part, mirroring the Phase 3 backfill's fallback rule.
+          if (user.name) return;
+          return { data: { ...user, name: user.email?.split("@")[0] ?? null } };
+        },
+      },
+    },
+  },
   plugins: [
     emailOTP({
       sendVerificationOTP: async ({ email, otp, type }) => {

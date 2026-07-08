@@ -55,12 +55,7 @@ async function main() {
       await db.select().from(schema.activities).where(eq(schema.activities.id, id))
     )[0] as any;
     if (!act) continue;
-    const userId = (
-      await db
-        .select({ id: schema.users.id })
-        .from(schema.users)
-        .where(eq(schema.users.id, act.userId))
-    )[0]?.id as string | undefined;
+    const userId = act.userId as string | undefined;
     let token = "";
     if (userId) {
       if (!tokenCache.has(userId)) {
