@@ -11,6 +11,7 @@ import { cors } from "hono/cors";
 import { requestId } from "hono/request-id";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { openAPIRouteHandler } from "hono-openapi";
+import { auth } from "./auth";
 import { config } from "./config";
 import { db } from "./db";
 import { AppError, IntervalsError, StravaError } from "./error";
@@ -110,6 +111,9 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 app.route("/api", publicRouter);
+// Better Auth endpoints (dual-auth window): mounted before the Clerk middleware
+// chain so /api/auth/* is public — mirrors how publicRouter mounts before Clerk.
+app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/", mcpRouter);
 if (config.NODE_ENV !== "production") {
   app.get(

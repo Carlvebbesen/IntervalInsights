@@ -1,4 +1,5 @@
 export * from "./activities";
+export * from "./auth_tables";
 export * from "./chat";
 export * from "./enums";
 export * from "./events";

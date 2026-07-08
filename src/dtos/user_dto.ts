@@ -12,6 +12,9 @@ export function toUserDto(dao: UserDao): UserDto {
   return {
     id: dao.id,
     clerkId: dao.clerkId,
+    email: dao.email,
+    name: dao.name,
+    image: dao.image,
     stravaId: dao.stravaId,
     role: dao.role,
     maxHeartRate: dao.maxHeartRate,

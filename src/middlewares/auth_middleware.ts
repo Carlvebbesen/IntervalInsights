@@ -3,58 +3,140 @@ import { trace } from "@opentelemetry/api";
 import { eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
+import { auth } from "../auth";
 import * as userRepo from "../repositories/user_repository";
-import { users } from "../schema";
+import { type SelectUser, users } from "../schema";
+import { clerkClient } from "../services/clerk_client";
 import type { IGlobalVariables, TGlobalEnv } from "../types/IRouters";
 
+type AuthProvider = "better-auth" | "clerk";
 type AuthIdentity = Pick<IGlobalVariables, "userId" | "clerkUserId" | "role">;
 
 const LAST_SEEN_THROTTLE_MS = 60 * 60 * 1000;
 
-const tagSpanWithUser = ({ userId, clerkUserId, role }: AuthIdentity) => {
+const tagSpanWithUser = ({ userId, clerkUserId, role }: AuthIdentity, provider: AuthProvider) => {
   const span = trace.getActiveSpan();
   span?.setAttribute("user.id", userId);
-  span?.setAttribute("clerk.user.id", clerkUserId);
+  if (clerkUserId) span?.setAttribute("clerk.user.id", clerkUserId);
   span?.setAttribute("user.role", role);
+  // Tracks the Clerk → Better Auth traffic shift; drives the Phase 6 cutover call.
+  span?.setAttribute("auth.provider", provider);
 };
 
-const attachIdentityLogger = (c: Context<TGlobalEnv>, identity: AuthIdentity) => {
-  c.set("logger", c.var.logger.child(identity));
+const bumpLastSeen = async (c: Context<TGlobalEnv>, dbUser: SelectUser): Promise<SelectUser> => {
+  if (dbUser.lastSeenAt && Date.now() - dbUser.lastSeenAt.getTime() <= LAST_SEEN_THROTTLE_MS) {
+    return dbUser;
+  }
+  return (await userRepo.updateById(c.env.db, dbUser.id, { lastSeenAt: new Date() })) ?? dbUser;
 };
 
-export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
-  const auth = getAuth(c);
-
-  if (!auth?.userId) {
-    return c.json({ error: "Unauthorized" }, 401);
-  }
-
-  let dbUser = await c.env.db.query.users.findFirst({
-    where: eq(users.clerkId, auth.userId),
-  });
-
-  if (!dbUser) {
-    const [newUser] = await c.env.db
-      .insert(users)
-      .values({ clerkId: auth.userId, lastSeenAt: new Date() })
-      .returning();
-    dbUser = newUser;
-    c.var.logger.info({ clerkUserId: auth.userId }, "Created new user record");
-  } else if (
-    !dbUser.lastSeenAt ||
-    Date.now() - dbUser.lastSeenAt.getTime() > LAST_SEEN_THROTTLE_MS
-  ) {
-    dbUser = (await userRepo.updateById(c.env.db, dbUser.id, { lastSeenAt: new Date() })) ?? dbUser;
-  }
-
-  const role = dbUser.role ?? "guest";
-  const identity: AuthIdentity = { userId: dbUser.id, clerkUserId: auth.userId, role };
+const finishAuth = async (
+  c: Context<TGlobalEnv>,
+  next: () => Promise<void>,
+  dbUser: SelectUser,
+  provider: AuthProvider,
+) => {
+  const identity: AuthIdentity = {
+    userId: dbUser.id,
+    clerkUserId: dbUser.clerkId,
+    role: dbUser.role ?? "guest",
+  };
   c.set("clerkUserId", identity.clerkUserId);
   c.set("userId", identity.userId);
   c.set("role", identity.role);
   c.set("user", dbUser);
-  tagSpanWithUser(identity);
-  attachIdentityLogger(c, identity);
-
+  tagSpanWithUser(identity, provider);
+  c.set("logger", c.var.logger.child({ ...identity, authProvider: provider }));
   await next();
+};
+
+/**
+ * Fetch email + display name from Clerk for the dual-auth identity bridge.
+ * Failures degrade to a null identity (the request must not fail because Clerk's
+ * management API hiccuped); the Phase 3 backfill re-runs cover any row this
+ * leaves email-less.
+ */
+const fetchClerkIdentity = async (
+  c: Context<TGlobalEnv>,
+  clerkUserId: string,
+): Promise<{ email: string | null; name: string | null }> => {
+  try {
+    const clerkUser = await clerkClient.users.getUser(clerkUserId);
+    const email =
+      clerkUser.primaryEmailAddress?.emailAddress ??
+      clerkUser.emailAddresses?.[0]?.emailAddress ??
+      null;
+    const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || null;
+    return { email: email?.toLowerCase() ?? null, name };
+  } catch (err) {
+    c.var.logger.warn(
+      { err, clerkUserId },
+      "Clerk identity fetch failed — continuing without email",
+    );
+    return { email: null, name: null };
+  }
+};
+
+/**
+ * Dual-auth guard (App Store review window): a Better Auth bearer token and a
+ * legacy Clerk session token both resolve to the same `users` row. The Better
+ * Auth path is tried first — `session.user` IS the app users row (every app
+ * column is an additionalField), so no extra user query is needed. The Clerk
+ * fallback keeps the lazy-create, enriched with email/name from Clerk so rows
+ * created during the dual window can later be matched by Better Auth email
+ * sign-in (the dual-window identity gap).
+ */
+export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
+  const baSession = await auth.api.getSession({ headers: c.req.raw.headers });
+  if (baSession) {
+    // Structurally the full users row — see src/auth.ts additionalFields.
+    const sessionUser = baSession.user as unknown as SelectUser;
+    const dbUser = await bumpLastSeen(c, sessionUser);
+    return finishAuth(c, next, dbUser, "better-auth");
+  }
+
+  const clerkAuth = getAuth(c);
+  if (!clerkAuth?.userId) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+
+  let dbUser = await c.env.db.query.users.findFirst({
+    where: eq(users.clerkId, clerkAuth.userId),
+  });
+
+  if (!dbUser) {
+    const { email, name } = await fetchClerkIdentity(c, clerkAuth.userId);
+    const [newUser] = await c.env.db
+      .insert(users)
+      .values({
+        clerkId: clerkAuth.userId,
+        email,
+        name,
+        emailVerified: email != null,
+        lastSeenAt: new Date(),
+      })
+      .returning();
+    dbUser = newUser;
+    c.var.logger.info({ clerkUserId: clerkAuth.userId }, "Created new user record");
+  } else {
+    if (!dbUser.email) {
+      const { email, name } = await fetchClerkIdentity(c, clerkAuth.userId);
+      if (email) {
+        try {
+          dbUser =
+            (await userRepo.updateById(c.env.db, dbUser.id, {
+              email,
+              name: dbUser.name ?? name,
+              emailVerified: true,
+            })) ?? dbUser;
+        } catch (err) {
+          // Unique-email collision belongs to the pre-cutover sanity check, not here.
+          c.var.logger.warn({ err, userId: dbUser.id }, "Email enrichment failed — continuing");
+        }
+      }
+    }
+    dbUser = await bumpLastSeen(c, dbUser);
+  }
+
+  return finishAuth(c, next, dbUser, "clerk");
 });

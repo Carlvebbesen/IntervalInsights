@@ -21,6 +21,11 @@ const envSchema = z.object({
   // stored Strava/intervals.icu token undecryptable (users re-link).
   TOKEN_ENC_KEY: z.string().min(32),
 
+  // Better Auth (dual-auth window; CLERK_* stay required until the Phase 6 cutover)
+  BETTER_AUTH_SECRET: z.string().min(32),
+  BETTER_AUTH_URL: z.string().url(),
+  RESEND_API_KEY: z.string().min(1),
+
   // App
   APP_BASE_URL: z.string().url(),
   PORT: z.coerce.number().default(3000),

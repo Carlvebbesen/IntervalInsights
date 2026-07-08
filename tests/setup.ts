@@ -23,6 +23,9 @@ const ENV_DEFAULTS: Record<string, string> = {
   OPENAI_API_KEY: "sk-test-openai-dummy",
   PROGRESS_HEARTBEAT_MS: "200",
   TOKEN_ENC_KEY: "test-token-enc-key-0123456789-abcdefghij",
+  BETTER_AUTH_SECRET: "test-better-auth-secret-0123456789-abcdef",
+  BETTER_AUTH_URL: "http://localhost:3000",
+  RESEND_API_KEY: "re_test_dummy",
 };
 
 for (const [key, value] of Object.entries(ENV_DEFAULTS)) {
@@ -185,14 +188,34 @@ mock.module("@clerk/backend", () => ({
 }));
 
 // Clerk Hono helpers: we never want the real JWT check in tests. The test app
-// (tests/helpers/test_app.ts) replaces auth entirely; these stubs just keep
-// imports happy if any production code path still references them.
+// (tests/helpers/test_app.ts) replaces auth entirely; these stubs keep imports
+// happy for code that still references them. `getAuth` is a mutable delegate so
+// the dual-auth guard tests (tests/better_auth_guard.test.ts) can turn the
+// Clerk fallback off/on per test — call reset() when done (global across files).
+export const clerkAuthMock = {
+  getAuth: (() => ({ userId: "clerk_test_user" })) as () => { userId: string } | null,
+  reset() {
+    this.getAuth = () => ({ userId: "clerk_test_user" });
+  },
+};
+
 mock.module("@hono/clerk-auth", () => {
   const noopMiddleware = async (_c: unknown, next: () => Promise<void>) => {
     await next();
   };
   return {
     clerkMiddleware: () => noopMiddleware,
-    getAuth: () => ({ userId: "clerk_test_user" }),
+    getAuth: () => clerkAuthMock.getAuth(),
   };
 });
+
+// Better Auth OTP delivery: capture instead of sending (Resend would 401 with
+// the dummy key anyway). The dual-auth guard tests read the captured code to
+// complete the sign-in flow.
+export const otpCapture = { last: null as { email: string; otp: string } | null };
+
+mock.module("../src/services/auth_email.ts", () => ({
+  sendSignInOtpEmail: async (email: string, otp: string) => {
+    otpCapture.last = { email, otp };
+  },
+}));

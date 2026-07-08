@@ -7,7 +7,8 @@ export interface IGlobalBindings {
 }
 
 export interface IGlobalVariables {
-  clerkUserId: string;
+  /** Legacy Clerk identity — null for Better Auth-native users (dual-auth window). */
+  clerkUserId: string | null;
   userId: string;
   role: "guest" | "premium" | "admin";
   user: SelectUser;

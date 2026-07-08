@@ -10,6 +10,7 @@ const userRouter = new Hono<TGlobalEnv>();
 const UpdateUserSchema = z.object({
   maxHeartRate: z.number().int().positive().max(250).nullable().optional(),
   processHeartRate: z.boolean().optional(),
+  name: z.string().trim().min(1).max(120).optional(),
 });
 
 userRouter.get(

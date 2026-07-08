@@ -40,6 +40,7 @@ export async function acceptTermsOfService(db: Db, userId: string): Promise<User
 export interface UpdateUserInput {
   maxHeartRate?: number | null;
   processHeartRate?: boolean;
+  name?: string;
 }
 
 export async function updateSettings(
@@ -50,6 +51,7 @@ export async function updateSettings(
   const updates: UpdateUserInput = {};
   if (body.maxHeartRate !== undefined) updates.maxHeartRate = body.maxHeartRate;
   if (body.processHeartRate !== undefined) updates.processHeartRate = body.processHeartRate;
+  if (body.name !== undefined) updates.name = body.name;
 
   if (Object.keys(updates).length === 0) {
     throw new AppError(400, "No fields to update");
