@@ -6,9 +6,9 @@ import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import { activities, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsActivity } from "../types/intervals/IIntervalsActivity";
-import { clerkClient } from "./clerk_client";
 import { intervalsApiService } from "./intervals_api_service";
 import { mapIntervalsActivityToInsert } from "./intervals_mappers";
+import { deleteProviderToken } from "./oauth_token_store";
 import { publishSync } from "./progress_service";
 
 type EnrichmentFields = Partial<
@@ -131,12 +131,12 @@ async function commitLink(
 
 export async function linkFromIntervalsActivity(
   context: IGlobalBindings,
-  user: { id: string; clerkId: string },
+  user: { id: string },
   intervalsActivityId: string,
 ): Promise<LinkResult | null> {
   let accessToken: string;
   try {
-    accessToken = await getIntervalsAccessToken(user.clerkId);
+    accessToken = await getIntervalsAccessToken(user.id);
   } catch {
     return null;
   }
@@ -152,7 +152,7 @@ export async function linkFromIntervalsActivity(
 
 export async function linkFromLocalActivity(
   context: IGlobalBindings,
-  user: { id: string; clerkId: string },
+  user: { id: string },
   localActivityId: number,
 ): Promise<LinkResult | null> {
   const activity = await context.db.query.activities.findFirst({
@@ -169,9 +169,9 @@ export async function linkFromLocalActivity(
 
   let accessToken: string;
   try {
-    accessToken = await getIntervalsAccessToken(user.clerkId);
+    accessToken = await getIntervalsAccessToken(user.id);
   } catch (err) {
-    // athleteId set in Postgres but token missing/expired in Clerk metadata —
+    // athleteId set on the user row but the stored token is missing/expired —
     // surface it; otherwise this is indistinguishable from "no match" and the
     // activity silently never links.
     logger.warn({ err, localActivityId }, "intervals.icu link skipped — no usable access token");
@@ -238,7 +238,7 @@ export async function linkFromLocalActivity(
 
 export async function enrichActivityFromIntervalsIcu(
   context: IGlobalBindings,
-  user: { id: string; clerkId: string },
+  user: { id: string },
   localActivityId: number,
 ): Promise<"enriched" | "linked" | "skipped" | "no_match" | "no_token"> {
   const activity = await context.db.query.activities.findFirst({
@@ -262,7 +262,7 @@ export async function enrichActivityFromIntervalsIcu(
 
   let accessToken: string;
   try {
-    accessToken = await getIntervalsAccessToken(user.clerkId);
+    accessToken = await getIntervalsAccessToken(user.id);
   } catch {
     return "no_token";
   }
@@ -372,7 +372,7 @@ function intervalsCompletedMessage(
 
 export async function syncAllFromIntervals(
   context: IGlobalBindings,
-  user: { id: string; clerkId: string },
+  user: { id: string },
 ): Promise<MasterSyncResult> {
   const result: MasterSyncResult = {
     candidates: 0,
@@ -392,7 +392,7 @@ export async function syncAllFromIntervals(
   });
 
   try {
-    const accessToken = await getIntervalsAccessToken(user.clerkId);
+    const accessToken = await getIntervalsAccessToken(user.id);
 
     const localRows = await context.db
       .select({
@@ -526,26 +526,22 @@ export async function syncAllFromIntervals(
   return result;
 }
 
-export async function disconnectIntervals(
-  context: IGlobalBindings,
-  clerkUserId: string,
-): Promise<void> {
-  await clerkClient.users.updateUserMetadata(clerkUserId, {
-    privateMetadata: { intervals: null },
-  });
-  await context.db
+export async function disconnectIntervals(context: IGlobalBindings, userId: string): Promise<void> {
+  const [row] = await context.db
     .update(users)
     .set({ intervalsAthleteId: null })
-    .where(eq(users.clerkId, clerkUserId));
+    .where(eq(users.id, userId))
+    .returning({ id: users.id });
+  if (row) await deleteProviderToken(context.db, row.id, "intervals");
 }
 
 export async function handleIntervalsScopeChange(
   context: IGlobalBindings,
-  user: { clerkId: string },
+  user: { id: string },
 ): Promise<"disconnected" | "still_valid" | "already_disconnected"> {
   let accessToken: string;
   try {
-    accessToken = await getIntervalsAccessToken(user.clerkId);
+    accessToken = await getIntervalsAccessToken(user.id);
   } catch {
     return "already_disconnected";
   }
@@ -555,7 +551,7 @@ export async function handleIntervalsScopeChange(
     return "still_valid";
   } catch (err) {
     if (err instanceof IntervalsError && (err.status === 401 || err.status === 403)) {
-      await disconnectIntervals(context, user.clerkId);
+      await disconnectIntervals(context, user.id);
       return "disconnected";
     }
     throw err;

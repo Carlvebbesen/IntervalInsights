@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, mock } from "bun:test";
 import { eq } from "drizzle-orm";
 import { activities, intervalStructures } from "../src/schema";
+import { deleteProviderToken, writeProviderToken } from "../src/services/oauth_token_store";
 import { closePool, createTestUser, deleteTestUser, getDb, getPool } from "./helpers/db";
 import { insertActivity } from "./helpers/fixtures";
 import { buildTestApp, withIdentity } from "./helpers/test_app";
-import { clerkUsersMock } from "./setup";
 
 const app = buildTestApp(getPool());
 
@@ -293,15 +293,17 @@ describe("POST /api/heart-rate/analysis", () => {
   });
 
   describe("when intervals.icu is not linked", () => {
-    beforeAll(() => {
-      clerkUsersMock.getUser = async () => ({
-        privateMetadata: { strava: {} },
-        publicMetadata: {},
-      });
+    beforeAll(async () => {
+      await deleteProviderToken(getDb(), user.id, "intervals");
     });
 
-    afterAll(() => {
-      clerkUsersMock.reset();
+    afterAll(async () => {
+      await writeProviderToken(getDb(), user.id, "intervals", {
+        access_token: "test-intervals-token",
+        refresh_token: "test-intervals-refresh",
+        expires_at: Math.floor(Date.now() / 1000) + 86_400,
+        athlete_id: "i12345",
+      });
     });
 
     it("returns status:not_linked", () =>

@@ -28,12 +28,13 @@ See `tests/README.md` for how the endpoint suite stubs auth and provisions its D
 **Runtime:** Bun + Hono. The entry point is `src/index.ts`. Public routes mount at `/api`
 (before Clerk); all authenticated routers mount under a versioned `/api/v1` sub-app.
 
-**Auth flow:**
-1. `clerkMiddleware` + `authGuard` (`src/middlewares/auth_middleware.ts`) run on all `/api/*` routes. They resolve `clerkUserId` + internal `userId` (UUID) and `role` from the Postgres `users` table via a fresh `findFirst` on every request — the `users` table is the source of truth for identity/role; there is no Clerk session-claim cache.
-2. `stravaMiddleware` (`src/middlewares/strava_middleware.ts`) is applied per-router on routes that need Strava API access. It reads/refreshes Strava OAuth tokens stored in Clerk **private metadata** and sets `stravaAccessToken` + `stravaAthleteId` on the Hono context.
+**Auth flow (dual-auth window — Better Auth alongside Clerk until the Phase 6 cutover):**
+0. **Registration is explicit** (`disableSignUp: true` on the emailOTP plugin): `POST /api/auth/sign-up/email-otp` creates the guest `users` row (name supplied here, `emailVerified: false`); the first OTP verify flips `emailVerified` true. OTP **sign-in** with an unknown email sends no code and creates no account (email-enumeration protection). The store-review demo account is seeded at boot by `ensureReviewAccount()` (`src/auth.ts`, called from `src/index.ts`) rather than auto-created on first verify.
+1. `authGuard` (`src/middlewares/auth_middleware.ts`) runs on all `/api/*` routes behind `clerkMiddleware`. It first tries a **Better Auth** bearer session (`auth.api.getSession`; `session.user` IS the full `users` row — see `src/auth.ts`), then falls back to the legacy **Clerk** session (`users` lookup by `clerkId`, lazy-create enriched with verified email/name from Clerk). Both paths resolve `userId` (UUID), `role`, and the full `user` row; `clerkUserId` is `null` for Better Auth-native users. The `users` table is the source of truth for identity/role. The active path is tagged as the `auth.provider` span attribute.
+2. `stravaMiddleware` (`src/middlewares/strava_middleware.ts`) is applied per-router on routes that need Strava API access. It reads/refreshes Strava OAuth tokens from the encrypted Postgres vault (`oauth_provider_tokens`, keyed by `users.id`) and sets `stravaAccessToken` + `stravaAthleteId` on the Hono context.
 
 **Two Hono environment types:**
-- `TGlobalEnv` — standard auth only (`userId`, `clerkUserId`)
+- `TGlobalEnv` — standard auth only (`userId`, nullable `clerkUserId`)
 - `TStravaEnv` — extends `TGlobalEnv` with `stravaAccessToken`, `stravaAthleteId`
 
 Routers that need Strava API access must use `TStravaEnv` and apply `stravaMiddleware`.
@@ -41,7 +42,8 @@ Routers that need Strava API access must use `TStravaEnv` and apply `stravaMiddl
 **Public routes (unversioned, mounted at `/api` before Clerk — external systems pin these):**
 - `GET/POST /api/strava/event`, `POST /api/intervals/event` — inbound webhooks
 - `GET /api/health` — liveness probe
-- `GET /api/privacy-policy`, `GET /api/terms-of-service` — legal markdown (consumed by the app)
+- `GET /api/privacy-policy`, `GET /api/terms-of-service` — legal markdown
+- `POST|GET /api/auth/*` — Better Auth endpoints (email-OTP send/verify, session), handled by `auth.handler`. Includes the custom `POST /api/auth/sign-up/email-otp` plugin (name + email) — the only way to register, since OTP sign-in no longer auto-creates accounts. It is enumeration-safe (identical `{success:true}` for a new or already-registered email)
 - Plus the app-root routes `/`, `/app-icon.png`, `/favicon.ico`, `/.well-known/*`, and the MCP router.
 - Human-facing web pages at the app root (rendered HTML, `src/web/pages.ts`, mounted via `registerWebPages`): `GET /privacy-policy`, `GET /terms-of-service` (the same legal markdown rendered to branded HTML via `marked`), and `GET /display/delete-account` — the Google Play account-deletion guide. Linked from the landing footer.
 
@@ -65,7 +67,9 @@ A remote [Model Context Protocol](https://modelcontextprotocol.io) server that l
 - `activities` — one row per Strava activity, stores `analysisStatus`, `trainingType`, `draftAnalysisResult` (JSON), and Strava metadata
 - `interval_segments` — per-segment breakdown of a workout (pace, HR, type, target)
 - `interval_structures` — deduped workout shapes identified by a `signature` hash; activities with the same structure share a row
-- `users` — maps Clerk user IDs to internal UUIDs
+- `users` — the app user AND the Better Auth user model (single-table integration): internal UUID `id`, `email`/`email_verified`/`name`/`image`, `role`, provider athlete ids, and a nullable legacy `clerk_id` (dropped in Phase 6)
+- `sessions`, `accounts`, `verifications` — Better Auth-managed (server-side sessions, future social providers, OTP storage)
+- `oauth_provider_tokens` — encrypted Strava/intervals.icu OAuth tokens, keyed by `users.id`
 
 **Analysis pipeline** (`src/agent/analysis_graph.ts` — LangGraph with Postgres checkpointer):
 Every activity flows through a single graph, paused mid-way for user confirmation. Nodes:
@@ -80,7 +84,7 @@ Every activity flows through a single graph, paused mid-way for user confirmatio
 
 `analysisStatus` lifecycle: `pending` → `ongoing_init` → `initial` (paused, awaiting user) → `ongoing_completed` → `completed`. Plus `error` and `skipped_inactive` terminal/recoverable states.
 
-**Inactivity gate** (`process_strava_event.ts`): reads `lastSignInAt` from Clerk. If user inactive > 90d, drops the Strava activity entirely. If 14–90d inactive, inserts with `analysisStatus = 'skipped_inactive'` (no LLM calls). `GET /api/v1/agents/pending` re-queues these on next pending fetch.
+**Inactivity gate** (`process_strava_event.ts`): reads `users.lastSeenAt` (bumped by `authGuard`, at most hourly). If user inactive > 90d, drops the Strava activity entirely. If 60–90d inactive, inserts with `analysisStatus = 'skipped_inactive'` (no LLM calls). `GET /api/v1/agents/pending` re-queues these on next pending fetch.
 
 **Auto-retry for errors**: `error` activities with `analysisAttemptCount < 2` are retried automatically by `/pending`. After two failures the user must manually retry.
 
@@ -122,9 +126,32 @@ The SDK only starts when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so local dev is s
 - `OTEL_DEPLOYMENT_ENVIRONMENT=production`
 - `GIT_SHA=$RAILWAY_GIT_COMMIT_SHA` (becomes `service.version`)
 
+## API-abuse hardening
+
+Layered deterrence against non-app clients using the backend as a free API. MCP (`/mcp`, OAuth tokens, outside `/api/*`) is the sanctioned external door and is exempt from all of this.
+
+**Tier 1a — Better Auth's built-in IP rate limiter.** We rely on the defaults (no `rateLimit` block in `src/auth.ts`). Verified against `better-auth@1.6.23` (`dist/context/create-context.mjs`, `dist/api/rate-limiter/index.mjs`):
+- **Enabled in production only** (`enabled ?? isProduction`) — silent in dev/`test`. In-memory `memory` store (fine on single-instance Railway; if it ever goes multi-instance, set `rateLimit.storage: "database"`).
+- Global default **100 requests / 10 s per IP** (window `10`, max `100`).
+- Special rule for `/sign-in*`, `/sign-up*`, `/change-password*`, `/change-email*`: **3 / 10 s**.
+- emailOTP `/email-otp/send-verification-otp` (and other OTP send/reset paths): **3 / 60 s**. The app's resend cooldown is 20 s, so a real user never trips it.
+
+**Tier 1b — per-user daily quotas on LLM-backed endpoints** (`src/middlewares/quota_middleware.ts`, always on, in-memory per UTC day). Generous by design — a real user never hits them; the analysis cap is a circuit breaker against scripted model spend:
+- `POST /api/v1/agents/suggest-session` — 100/user/day (429 over cap)
+- `POST /api/v1/agents/parse-intervals` — 100/user/day (429)
+- Analysis starts — 1000/user/day, shared bucket across `/start-analysis`, `/resume-analysis` (429), the Strava import fan-out (`strava_api_router.ts` callback) and requeue retries (`requeue_service.ts`) — the last two are background, so they skip-and-warn rather than 429. A batch import of N ids counts N against the cap but is still one request. Webhook auto-analysis (`startAnalysisByStravaId`) is not counted. A warn fires as a user crosses 80%.
+
+**Tier 2 — app client key** (`src/middlewares/client_key_middleware.ts`, `clientKeyGuard`). Deterrence-only (Clerk-publishable-key pattern): the app sends a shared secret as `x-client-key`; nothing here proves app origin (only device attestation could). Mounted on `/api/*` in `src/index.ts` **after** the public routes (so webhooks/health/legal, whose handlers terminate the chain, stay open) and **before** the Better Auth handler (so OTP send/verify is gated too). Controlled by `APP_CLIENT_KEY` / `APP_CLIENT_KEY_MODE` (see env section): unset ⇒ off; `log` ⇒ warn-and-pass (the rollout phase, while already-installed builds send no header); `enforce` ⇒ 401. Do **not** flip to `enforce` until the app release that sends the header is live (and ideally the Phase 6 cutover) — enforcing early bricks every installed build.
+
+Tier 3 (device attestation / OTP-send captcha) stays a documented contingency, triggered by observed abuse in Grafana (OTP-send volume, per-user analysis-start counts, client-key warn rate), not scheduled work.
+
 ## Environment Variables Required
 
-`DATABASE_URL`, `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` (used to derive the Clerk OAuth/FAPI URL for the MCP server), `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `OPENAI_API_KEY` (for GPT-4o-mini).
+`DATABASE_URL`, `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` (used to derive the Clerk OAuth/FAPI URL for the MCP server), `BETTER_AUTH_SECRET` (min 32 chars, session signing), `BETTER_AUTH_URL` (backend base URL), `RESEND_API_KEY` (OTP email delivery; emails only send in production — dev logs the code), `TOKEN_ENC_KEY` (min 32 chars, provider-token encryption at rest — rotating it invalidates every stored Strava/intervals token), `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `OPENAI_API_KEY` (for GPT-4o-mini). See `src/config.ts` for the full validated set.
+
+Optional store-review demo account: `REVIEW_ACCOUNT_EMAIL` + `REVIEW_ACCOUNT_OTP` (a fixed 6-digit sign-in code for app-store reviewers; both-or-neither, disabled when unset). The review address' OTP email is suppressed — the code lives only in the env. See `src/auth.ts`.
+
+Optional app client key (API-abuse hardening, see below): `APP_CLIENT_KEY` (min 16 chars; unset ⇒ feature off) + `APP_CLIENT_KEY_MODE` (`log` default | `enforce`). See `src/middlewares/client_key_middleware.ts`.
 
 Optional OTel: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` (default `intervals-backend`), `OTEL_SERVICE_VERSION` / `GIT_SHA`, `OTEL_DEPLOYMENT_ENVIRONMENT`.
 

@@ -33,7 +33,6 @@ heartRateRouter.post(
     const result = await getHeartRateAnalysis(
       c.env.db,
       c.get("userId"),
-      c.get("clerkUserId"),
       c.req.valid("json"),
       c.var.logger,
     );

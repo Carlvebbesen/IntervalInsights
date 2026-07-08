@@ -6,7 +6,6 @@
 
 import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
-import { pool as appDbPool } from "../src/db";
 import { mcpAuth } from "../src/mcp/auth";
 import type { TMcpEnv } from "../src/mcp/types";
 import mcpRouter from "../src/routers/mcp_router";
@@ -49,7 +48,9 @@ afterAll(async () => {
   for (const clerkId of provisionedClerkIds) {
     await getPool().query(`DELETE FROM users WHERE clerk_id = $1`, [clerkId]);
   }
-  await appDbPool.end();
+  // Do NOT end src/db.ts's pool here: the strava/intervals token accessors now
+  // resolve through it in other test files that run after this one. It lives for
+  // the whole test process.
   await closePool();
 });
 

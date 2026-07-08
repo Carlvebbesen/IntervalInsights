@@ -14,7 +14,7 @@ export async function proposeSegments(
   config: RunnableConfig,
 ): Promise<Partial<AnalysisState>> {
   const log = logger.child({ node: "proposeSegments", activityId: state.activityId });
-  const { db, clerkUserId } = config.configurable as GraphConfigurable;
+  const { db } = config.configurable as GraphConfigurable;
 
   const trainingType = state.initialResult?.training_type;
   if (!trainingType || !needCompleteAnalysis(trainingType)) {
@@ -41,8 +41,7 @@ export async function proposeSegments(
   if (structure.length) {
     try {
       const fromLaps = state.laps?.length ? getProposedPaceFromLaps(state.laps, structure) : null;
-      draftSets =
-        fromLaps ?? (await getProposedPaceForStructure(db, state.userId, clerkUserId, structure));
+      draftSets = fromLaps ?? (await getProposedPaceForStructure(db, state.userId, structure));
     } catch (err) {
       log.warn({ err }, "pace proposal failed — proposed segments will carry null target paces");
     }

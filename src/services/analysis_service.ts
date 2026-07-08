@@ -55,13 +55,13 @@ async function markErrorIfStatusIn(
 async function getUserContext(
   db: IGlobalBindings["db"],
   userId: string,
-): Promise<{ clerkId: string; intervalsAthleteId: string | null } | null> {
+): Promise<{ intervalsAthleteId: string | null } | null> {
   const user = await db.query.users.findFirst({
     where: eq(users.id, userId),
-    columns: { clerkId: true, intervalsAthleteId: true },
+    columns: { intervalsAthleteId: true },
   });
   if (!user) return null;
-  return { clerkId: user.clerkId, intervalsAthleteId: user.intervalsAthleteId ?? null };
+  return { intervalsAthleteId: user.intervalsAthleteId ?? null };
 }
 
 export const startAnalysis = async (
@@ -128,7 +128,6 @@ export const startAnalysis = async (
           thread_id: String(activityId),
           db,
           stravaAccessToken,
-          clerkUserId: userCtx.clerkId,
           intervalsAthleteId: userCtx.intervalsAthleteId,
         },
       },
@@ -221,7 +220,6 @@ export const resumeAnalysis = async (
       thread_id: String(activityId),
       db,
       stravaAccessToken,
-      clerkUserId: userCtx.clerkId,
       intervalsAthleteId: userCtx.intervalsAthleteId,
     },
   };

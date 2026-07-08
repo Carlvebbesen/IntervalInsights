@@ -63,24 +63,18 @@ async function main() {
       console.log(`[reval] ${id} NOT FOUND`);
       continue;
     }
-    const userRow = (
-      await db
-        .select({ clerkId: schema.users.clerkId })
-        .from(schema.users)
-        .where(eq(schema.users.id, act.userId))
-    )[0];
-    const clerkId = userRow?.clerkId as string | undefined;
+    const userId = act.userId as string | undefined;
 
     let token = "";
-    if (clerkId) {
-      if (!tokenCache.has(clerkId)) {
+    if (userId) {
+      if (!tokenCache.has(userId)) {
         try {
-          tokenCache.set(clerkId, (await getStravaAccessTokens(clerkId)).access_token);
+          tokenCache.set(userId, (await getStravaAccessTokens(userId)).access_token);
         } catch {
-          tokenCache.set(clerkId, "");
+          tokenCache.set(userId, "");
         }
       }
-      token = tokenCache.get(clerkId) ?? "";
+      token = tokenCache.get(userId) ?? "";
     }
 
     // Clear the skip-guard so startAnalysis actually re-runs (it resets the thread itself).

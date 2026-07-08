@@ -10,6 +10,7 @@ const userRouter = new Hono<TGlobalEnv>();
 const UpdateUserSchema = z.object({
   maxHeartRate: z.number().int().positive().max(250).nullable().optional(),
   processHeartRate: z.boolean().optional(),
+  name: z.string().trim().min(1).max(120).optional(),
 });
 
 userRouter.get(
@@ -100,7 +101,7 @@ userRouter.delete(
   "/data",
   describeRoute({
     description:
-      "Permanently delete the authenticated user's account: removes all activities (interval segments cascade), the user row, revokes Strava OAuth, and clears Clerk metadata.",
+      "Permanently delete the authenticated user's account: revokes Strava OAuth, removes all activities (interval segments cascade), events, gears, and the user row (sessions and stored provider tokens cascade).",
     responses: {
       200: {
         description: "All user data deleted",
@@ -109,11 +110,7 @@ userRouter.delete(
     },
   }),
   async (c) => {
-    const result = await userController.deleteAccount(
-      c.env.db,
-      c.get("userId"),
-      c.get("clerkUserId"),
-    );
+    const result = await userController.deleteAccount(c.env.db, c.get("userId"));
     return c.json(result);
   },
 );

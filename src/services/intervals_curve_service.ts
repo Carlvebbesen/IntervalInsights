@@ -64,10 +64,10 @@ function buildCurvesParam(
  * the requested window. Read-only.
  */
 export async function fetchBestEffortCurve(
-  clerkUserId: string,
+  userId: string,
   opts: { type?: string; window?: BestEffortWindow; oldest?: string; newest?: string },
 ): Promise<BestEffortResult> {
-  const result = await withIntervalsToken(clerkUserId, (accessToken) =>
+  const result = await withIntervalsToken(userId, (accessToken) =>
     fetchBestEffortCurveWithToken(accessToken, opts),
   );
   return result.status === "not_linked" ? { status: "not_linked", data: null } : result.data;

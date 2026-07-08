@@ -6,6 +6,12 @@ import { eq, sql } from "drizzle-orm";
 import { Pool } from "pg";
 import { activities, events, users } from "../../src/schema";
 import * as schema from "../../src/schema";
+import { writeProviderToken } from "../../src/services/oauth_token_store";
+
+// Mirrors the far-future tokens the old Clerk `getUser` mock returned, now seeded
+// (encrypted) into `oauth_provider_tokens` so the real strava/intervals
+// middlewares resolve for every test user by default.
+const TOKEN_FAR_FUTURE = Math.floor(Date.now() / 1000) + 86_400;
 
 const DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
@@ -40,6 +46,10 @@ export async function closePool() {
 export async function createTestUser(opts?: {
   role?: "guest" | "premium" | "admin";
   processHeartRate?: boolean;
+  /** Seed encrypted Strava tokens so strava-guarded routes resolve (default true). */
+  strava?: boolean;
+  /** Seed encrypted intervals.icu tokens so intervals-guarded routes resolve (default true). */
+  intervals?: boolean;
 }) {
   const db = getDb();
   const clerkId = `test_clerk_${randomUUID()}`;
@@ -51,6 +61,23 @@ export async function createTestUser(opts?: {
       processHeartRate: opts?.processHeartRate ?? false,
     })
     .returning();
+
+  if (opts?.strava !== false) {
+    await writeProviderToken(db, user.id, "strava", {
+      access_token: "test-strava-token",
+      refresh_token: "test-strava-refresh",
+      expires_at: TOKEN_FAR_FUTURE,
+      athlete_id: "12345",
+    });
+  }
+  if (opts?.intervals !== false) {
+    await writeProviderToken(db, user.id, "intervals", {
+      access_token: "test-intervals-token",
+      refresh_token: "test-intervals-refresh",
+      expires_at: TOKEN_FAR_FUTURE,
+      athlete_id: "i12345",
+    });
+  }
   return { id: user.id, clerkId };
 }
 

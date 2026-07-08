@@ -3,6 +3,11 @@ import { describeRoute, resolver, validator } from "hono-openapi";
 import z from "zod";
 import { runInBackground } from "../../background";
 import {
+  ANALYSIS_START_DAILY_MAX,
+  ANALYSIS_START_QUOTA,
+  tryConsumeQuota,
+} from "../../middlewares/quota_middleware";
+import {
   ErrorSchema,
   StravaSummaryActivitySchema,
   SyncResultSchema,
@@ -91,6 +96,13 @@ stravaApiRouter.post(
         ids,
         c.env.db,
         (internalId, stravaActivityId) => {
+          // Per-activity circuit breaker: the import POST is 1 request, but each
+          // id fans out to a background analysis (real model spend), so the cap
+          // is counted here rather than as route middleware.
+          if (
+            !tryConsumeQuota(ANALYSIS_START_QUOTA, ANALYSIS_START_DAILY_MAX, userId, c.var.logger)
+          )
+            return;
           runInBackground(
             "analysis.start",
             () => startAnalysis(c.env.db, accessToken, internalId, stravaActivityId, userId),

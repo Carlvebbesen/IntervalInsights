@@ -1,7 +1,8 @@
 // GDPR account deletion: DELETE /api/v1/user/data must remove EVERY row the
 // user owns (activities + interval_segments cascade, events + attributes,
-// gears + defaults, chat conversations + messages cascade, the users row) and
-// clear the Clerk private metadata — while another user's rows survive intact.
+// gears + defaults, chat conversations + messages cascade, the users row, and
+// the encrypted oauth_provider_tokens rows via cascade) — while another user's
+// rows survive intact.
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
@@ -13,7 +14,6 @@ import {
   intervalSegments,
   users,
 } from "../src/schema";
-import { clerkUsersMock } from "./setup";
 import { closePool, createTestUser, deleteTestUser, getDb, getPool } from "./helpers/db";
 import { insertActivity, insertEvent } from "./helpers/fixtures";
 import { buildTestApp, withIdentity } from "./helpers/test_app";
@@ -24,7 +24,6 @@ const db = getDb();
 let userA: { id: string; clerkId: string };
 let userB: { id: string; clerkId: string };
 
-const metadataCalls: Array<{ clerkUserId?: string; params?: unknown }> = [];
 const fetchCalls: string[] = [];
 const realFetch = globalThis.fetch;
 
@@ -85,16 +84,10 @@ beforeAll(async () => {
     fetchCalls.push(String(input));
     return new Response("{}", { status: 200 });
   }) as typeof fetch;
-
-  clerkUsersMock.updateUserMetadata = async (clerkUserId?: string, params?: unknown) => {
-    metadataCalls.push({ clerkUserId, params });
-    return {};
-  };
 });
 
 afterAll(async () => {
   globalThis.fetch = realFetch;
-  clerkUsersMock.reset();
   await deleteTestUser(userB.id);
   // userA is deleted by the endpoint; clean up defensively if the test failed.
   await deleteTestUser(userA.id).catch(() => {});
@@ -151,12 +144,12 @@ describe("DELETE /api/v1/user/data", () => {
         expect(fetchCalls.some((url) => url.includes("strava.com/oauth/deauthorize"))).toBe(
           true,
         );
-        // …and the Clerk private metadata was cleared for user A.
-        const clerkCall = metadataCalls.find((c) => c.clerkUserId === userA.clerkId);
-        expect(clerkCall).toBeDefined();
-        expect(clerkCall?.params).toEqual({
-          privateMetadata: { strava: null, intervals: null },
-        });
+        // …and user A's encrypted provider-token rows were removed (cascade).
+        const { rows: tokenRows } = await getPool().query<{ n: number }>(
+          "SELECT count(*)::int AS n FROM oauth_provider_tokens WHERE user_id = $1",
+          [userA.id],
+        );
+        expect(tokenRows[0].n).toBe(0);
       },
     ));
 });

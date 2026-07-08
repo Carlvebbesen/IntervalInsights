@@ -33,11 +33,11 @@ async function main() {
   for (const id of ids) {
     const act = (await db.select().from(schema.activities).where(eq(schema.activities.id, id)))[0] as any;
     if (!act) { console.log(`${id}: not found`); continue; }
-    const user = (await db.select({ id: schema.users.id, clerkId: schema.users.clerkId }).from(schema.users).where(eq(schema.users.id, act.userId)))[0];
+    const user = (await db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.id, act.userId)))[0];
     const sets = generateCompleteIntervalSet(CASES[id] as any);
     const expected = sets.reduce((n, s) => n + s.steps.length, 0);
     try {
-      const segs = await previewSegments(db, user.id, user.clerkId, id, sets as any, "LONG_INTERVALS", logger);
+      const segs = await previewSegments(db, user.id, id, sets as any, "LONG_INTERVALS", logger);
       const got = segs.filter((s) => s.type === "INTERVALS").length;
       console.log(`${String(id).padEnd(5)} ${(act.intervalsIcuId ? "yes" : "no ").padEnd(4)}  ${String(expected).padStart(5)}  ${String(got).padStart(8)}  ${got === expected ? "OK" : `WRONG (${got}!=${expected})`}`);
     } catch (e) {

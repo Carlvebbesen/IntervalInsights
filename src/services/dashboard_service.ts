@@ -20,7 +20,6 @@ function getStartOfWeek(date: Date): Date {
 export async function getDashboard(
   db: Db,
   userId: string,
-  clerkUserId: string,
   now: Date,
 ): Promise<z.infer<typeof DashboardResponseSchema>> {
   const startOfThisWeek = getStartOfWeek(now);
@@ -151,7 +150,7 @@ export async function getDashboard(
 
   const todayStr = toISODate(now);
   const weekAgoStr = toISODate(sevenDaysAgo);
-  const wellness = await fetchWellnessSummary(clerkUserId, weekAgoStr, todayStr);
+  const wellness = await fetchWellnessSummary(userId, weekAgoStr, todayStr);
 
   return {
     summary: {

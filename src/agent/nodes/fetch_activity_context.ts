@@ -30,7 +30,7 @@ export async function fetchActivityContext(
   state: AnalysisState,
   config: RunnableConfig,
 ): Promise<Partial<AnalysisState>> {
-  const { db, stravaAccessToken, clerkUserId } = config.configurable as GraphConfigurable;
+  const { db, stravaAccessToken } = config.configurable as GraphConfigurable;
   const log = logger.child({ node: "fetchActivityContext", activityId: state.activityId });
 
   const [_, row, processHeartRate] = await Promise.all([
@@ -55,7 +55,7 @@ export async function fetchActivityContext(
 
   let context: ActivityContext;
   if (intervalsIcuId) {
-    context = await fetchFromIntervals(clerkUserId, intervalsIcuId, processHeartRate);
+    context = await fetchFromIntervals(state.userId, intervalsIcuId, processHeartRate);
   } else if (stravaActivityId != null) {
     context = await fetchFromStrava(stravaAccessToken, stravaActivityId, processHeartRate);
   } else {
@@ -121,11 +121,11 @@ async function fetchFromStrava(
 }
 
 async function fetchFromIntervals(
-  clerkUserId: string,
+  userId: string,
   intervalsIcuId: string,
   processHeartRate: boolean,
 ): Promise<ActivityContext> {
-  const accessToken = await getIntervalsAccessToken(clerkUserId);
+  const accessToken = await getIntervalsAccessToken(userId);
   const activity = await intervalsApiService.getActivity(accessToken, intervalsIcuId);
   const isIndoor = activity.trainer ?? false;
 

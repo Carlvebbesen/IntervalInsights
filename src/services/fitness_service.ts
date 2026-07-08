@@ -143,12 +143,12 @@ function buildFitnessPoint(w: IIntervalsWellness, hrv: HrvAssessment): IFitnessP
  * then trims the output to the requested range.
  */
 export async function fetchFitnessSeries(
-  clerkUserId: string,
+  userId: string,
   oldest: string,
   newest: string,
 ): Promise<IFitnessSeriesResult> {
   const result = await withIntervalsToken(
-    clerkUserId,
+    userId,
     async (accessToken): Promise<IFitnessSeriesResult> => {
       const extendedOldest = shiftIsoDate(oldest, -(BASELINE_DAYS + ROLLING_DAYS));
       const records = await intervalsApiService.getWellness(accessToken, extendedOldest, newest);
@@ -172,10 +172,10 @@ export async function fetchFitnessSeries(
  * when intervals.icu isn't linked or has no wellness record for that day.
  */
 export async function fetchFitnessDayBlock(
-  clerkUserId: string,
+  userId: string,
   date: string,
 ): Promise<IFitnessPoint | null> {
-  const result = await withIntervalsToken(clerkUserId, async (accessToken) => {
+  const result = await withIntervalsToken(userId, async (accessToken) => {
     const extendedOldest = shiftIsoDate(date, -(BASELINE_DAYS + ROLLING_DAYS));
     const records = await intervalsApiService.getWellness(accessToken, extendedOldest, date);
 

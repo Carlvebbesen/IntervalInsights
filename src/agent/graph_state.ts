@@ -21,7 +21,6 @@ export type SegmentBoundary = {
 export type GraphConfigurable = {
   db: GraphDb;
   stravaAccessToken: string;
-  clerkUserId: string;
   intervalsAthleteId: string | null;
 };
 

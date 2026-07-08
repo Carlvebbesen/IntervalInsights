@@ -2,6 +2,7 @@ import { createMiddleware } from "hono/factory";
 import { config } from "../config";
 import { StravaError } from "../error";
 import { getFreshOAuthTokens } from "../services/oauth_token_refresh";
+import type { StoredOAuthToken } from "../services/oauth_token_store";
 import type { TStravaEnv } from "../types/IRouters";
 
 interface StravaTokenResponse {
@@ -11,26 +12,28 @@ interface StravaTokenResponse {
   expires_in: number;
   refresh_token: string;
 }
-interface StravaClerkData {
+
+interface StravaTokens {
   access_token: string;
   refresh_token: string;
   expires_at: number;
   athlete_id?: number;
 }
-type UserMetadata = {
-  strava?: StravaClerkData;
-};
 
-export const getStravaAccessTokens = (clerkUserId: string) =>
-  getFreshOAuthTokens<StravaClerkData>({
+export const getStravaAccessTokens = (userId: string) =>
+  getFreshOAuthTokens<StravaTokens>({
     provider: "strava",
-    clerkUserId,
-    read: (privateMetadata) => {
-      const tokens = (privateMetadata as UserMetadata).strava;
-      if (!tokens?.access_token || !tokens?.refresh_token) {
+    userId,
+    read: (stored) => {
+      if (!stored?.access_token || !stored?.refresh_token) {
         throw new StravaError(403, "Strava account not linked");
       }
-      return tokens;
+      return {
+        access_token: stored.access_token,
+        refresh_token: stored.refresh_token,
+        expires_at: stored.expires_at ?? 0,
+        athlete_id: stored.athlete_id != null ? Number(stored.athlete_id) : undefined,
+      };
     },
     isExpired: (tokens) => tokens.expires_at < Math.floor(Date.now() / 1000) + 300,
     refresh: async (tokens) => {
@@ -57,12 +60,35 @@ export const getStravaAccessTokens = (clerkUserId: string) =>
         athlete_id: tokens.athlete_id,
       };
     },
+    toStored: (tokens): StoredOAuthToken => ({
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_at: tokens.expires_at,
+      athlete_id: tokens.athlete_id != null ? String(tokens.athlete_id) : undefined,
+    }),
   });
 
 export const stravaMiddleware = createMiddleware<TStravaEnv>(async (c, next) => {
-  const clerkUserId = c.get("clerkUserId");
-  const tokens = await getStravaAccessTokens(clerkUserId);
+  const userId = c.get("userId");
+  const tokens = await getStravaAccessTokens(userId);
   c.set("stravaAccessToken", tokens.access_token);
   c.set("stravaAthleteId", tokens.athlete_id);
+  await next();
+});
+
+// Token-optional variant: resolves the Strava token when the user has one but
+// passes through (leaving it unset) when they don't, instead of 403ing. Use it
+// on routes that degrade gracefully without Strava — e.g. GET /pending, which
+// only touches Strava to re-queue stale rows. This also covers migrated users
+// whose `users.stravaId` is set but whose token vault hasn't been backfilled.
+export const softStravaMiddleware = createMiddleware<TStravaEnv>(async (c, next) => {
+  const userId = c.get("userId");
+  try {
+    const tokens = await getStravaAccessTokens(userId);
+    c.set("stravaAccessToken", tokens.access_token);
+    c.set("stravaAthleteId", tokens.athlete_id);
+  } catch (err) {
+    if (!(err instanceof StravaError)) throw err;
+  }
   await next();
 });

@@ -2,7 +2,14 @@ import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
 import * as analysisController from "../controllers/analysis_controller";
-import { stravaMiddleware } from "../middlewares/strava_middleware";
+import {
+  ANALYSIS_START_DAILY_MAX,
+  ANALYSIS_START_QUOTA,
+  dailyQuota,
+  PARSE_INTERVALS_DAILY_MAX,
+  PARSE_INTERVALS_QUOTA,
+} from "../middlewares/quota_middleware";
+import { softStravaMiddleware, stravaMiddleware } from "../middlewares/strava_middleware";
 import { trainingTypeEnum } from "../schema/enums";
 import {
   EditedSegmentSchema,
@@ -14,10 +21,12 @@ import {
 import type { TStravaEnv } from "../types/IRouters";
 
 const agentsRouter = new Hono<TStravaEnv>();
-agentsRouter.use("*", stravaMiddleware);
 
+// /pending degrades without Strava (only requeue needs it); the analysis
+// mutations below require a live token, so they apply stravaMiddleware per-route.
 agentsRouter.get(
   "/pending",
+  softStravaMiddleware,
   describeRoute({
     description: "Get activities pending analysis (re-queues skipped_inactive and error rows).",
     responses: {
@@ -49,6 +58,8 @@ const startAnalysisSchema = z.object({
 
 agentsRouter.post(
   "/start-analysis",
+  stravaMiddleware,
+  dailyQuota(ANALYSIS_START_QUOTA, ANALYSIS_START_DAILY_MAX),
   describeRoute({
     description: "Start the LangGraph analysis pipeline for an activity",
     responses: {
@@ -92,6 +103,8 @@ const resumeAnalysisSchema = z.object({
 
 agentsRouter.post(
   "/resume-analysis",
+  stravaMiddleware,
+  dailyQuota(ANALYSIS_START_QUOTA, ANALYSIS_START_DAILY_MAX),
   describeRoute({
     description: "Resume the LangGraph analysis pipeline after user input",
     responses: {
@@ -129,6 +142,7 @@ const parseIntervalsSchema = z.object({
 
 agentsRouter.post(
   "/parse-intervals",
+  dailyQuota(PARSE_INTERVALS_QUOTA, PARSE_INTERVALS_DAILY_MAX),
   describeRoute({
     description:
       "Parse a free-text workout description (e.g. '6x800m @ 3:45 with 90s rest') into ExpandedIntervalSet[] with proposed paces filled.",
@@ -153,7 +167,6 @@ agentsRouter.post(
     const result = await analysisController.parseIntervals(
       c.env.db,
       c.get("userId"),
-      c.get("clerkUserId"),
       text,
       trainingType ?? null,
       c.var.logger,

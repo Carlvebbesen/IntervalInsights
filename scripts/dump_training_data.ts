@@ -33,7 +33,7 @@ import { runScript } from "./_harness";
  *                         Lap mapping drops) + its predicted activity type. The top segmentation rung
  *                         trusts these; we keep them raw to grade rung 1 against truth.
  *
- * Runs IN-PROCESS using the local .env (CLERK_SECRET_KEY resolves OAuth tokens from Clerk metadata),
+ * Runs IN-PROCESS using the local .env (provider tokens come from the encrypted Postgres vault),
  * mirroring scripts/backfill_hr_stats.ts — no short-lived bearer token needed. Streams/laps are NOT
  * in Postgres, so they must be fetched live; everything else is read straight from the dev DB.
  *
@@ -103,9 +103,9 @@ async function main() {
     .select({
       id: schema.users.id,
       clerkId: schema.users.clerkId,
-      email: (schema.users as any).email ?? schema.users.clerkId,
-      maxHeartRate: (schema.users as any).maxHeartRate ?? schema.users.id,
-      processHeartRate: (schema.users as any).processHeartRate ?? schema.users.id,
+      email: schema.users.email,
+      maxHeartRate: schema.users.maxHeartRate,
+      processHeartRate: schema.users.processHeartRate,
     })
     .from(schema.users);
   const userById = new Map(userRows.map((u) => [u.id, u]));
@@ -140,25 +140,25 @@ async function main() {
 
   const stravaTokenCache = new Map<string, string | null>();
   const intervalsTokenCache = new Map<string, string | null>();
-  async function stravaTokenFor(clerkId: string): Promise<string | null> {
-    if (stravaTokenCache.has(clerkId)) return stravaTokenCache.get(clerkId) ?? null;
+  async function stravaTokenFor(userId: string): Promise<string | null> {
+    if (stravaTokenCache.has(userId)) return stravaTokenCache.get(userId) ?? null;
     try {
-      const t = (await getStravaAccessTokens(clerkId)).access_token;
-      stravaTokenCache.set(clerkId, t);
+      const t = (await getStravaAccessTokens(userId)).access_token;
+      stravaTokenCache.set(userId, t);
       return t;
     } catch {
-      stravaTokenCache.set(clerkId, null);
+      stravaTokenCache.set(userId, null);
       return null;
     }
   }
-  async function intervalsTokenFor(clerkId: string): Promise<string | null> {
-    if (intervalsTokenCache.has(clerkId)) return intervalsTokenCache.get(clerkId) ?? null;
+  async function intervalsTokenFor(userId: string): Promise<string | null> {
+    if (intervalsTokenCache.has(userId)) return intervalsTokenCache.get(userId) ?? null;
     try {
-      const t = await getIntervalsAccessToken(clerkId);
-      intervalsTokenCache.set(clerkId, t);
+      const t = await getIntervalsAccessToken(userId);
+      intervalsTokenCache.set(userId, t);
       return t;
     } catch {
-      intervalsTokenCache.set(clerkId, null);
+      intervalsTokenCache.set(userId, null);
       return null;
     }
   }
@@ -170,7 +170,7 @@ async function main() {
   for (let i = 0; i < acts.length; i++) {
     const act = acts[i] as any;
     const user = userById.get(act.userId);
-    const clerkId = user?.clerkId as string | undefined;
+    const tokenUserId = user?.id as string | undefined;
     const errors: string[] = [];
 
     // ---- DB-side (always, no API) ----
@@ -225,10 +225,10 @@ async function main() {
     let intervalsIcuRaw: any = null;
     let stravaRaw: any = null;
 
-    if (!DRY_RUN && clerkId) {
+    if (!DRY_RUN && tokenUserId) {
       try {
         if (source.kind === "intervals") {
-          const itoken = await intervalsTokenFor(clerkId);
+          const itoken = await intervalsTokenFor(tokenUserId);
           if (!itoken) throw new Error("no intervals.icu token");
           const rawStreams = await intervalsApiService.getActivityStreams(
             itoken,
@@ -250,7 +250,7 @@ async function main() {
             streamsRaw: rawStreams,
           };
         } else if (source.kind === "strava") {
-          const stoken = await stravaTokenFor(clerkId);
+          const stoken = await stravaTokenFor(tokenUserId);
           if (!stoken) throw new Error("no Strava token");
           const rawStreams = await stravaApiService.getActivityStreams(
             stoken,

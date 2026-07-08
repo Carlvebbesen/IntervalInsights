@@ -9,7 +9,6 @@ import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import * as activityRepo from "../repositories/activity_repository";
 import * as userRepo from "../repositories/user_repository";
 import { events, gears } from "../schema";
-import { clerkClient } from "../services/clerk_client";
 import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
@@ -41,6 +40,7 @@ export async function acceptTermsOfService(db: Db, userId: string): Promise<User
 export interface UpdateUserInput {
   maxHeartRate?: number | null;
   processHeartRate?: boolean;
+  name?: string;
 }
 
 export async function updateSettings(
@@ -51,6 +51,7 @@ export async function updateSettings(
   const updates: UpdateUserInput = {};
   if (body.maxHeartRate !== undefined) updates.maxHeartRate = body.maxHeartRate;
   if (body.processHeartRate !== undefined) updates.processHeartRate = body.processHeartRate;
+  if (body.name !== undefined) updates.name = body.name;
 
   if (Object.keys(updates).length === 0) {
     throw new AppError(400, "No fields to update");
@@ -62,25 +63,21 @@ export async function updateSettings(
 }
 
 /**
- * Permanently delete the user: their activities (interval_segments cascade),
- * events (event_attributes cascade), gears (gear_defaults cascade), then the
- * user row (chat conversations/messages cascade), then revoke Strava OAuth and
- * clear Clerk metadata. Events and gears reference users with ON DELETE NO
- * ACTION, so they must be removed explicitly or the user delete fails. External
- * cleanup failures are swallowed so a missing Strava link can't block deletion.
+ * Permanently delete the user. Revoke Strava OAuth FIRST — deleting the user row
+ * cascades `oauth_provider_tokens` away, so the token must be read before then.
+ * Then the user's activities (interval_segments cascade), events (event_attributes
+ * cascade), gears (gear_defaults cascade), and the user row itself (chat
+ * conversations/messages + oauth token rows cascade). Events and gears reference
+ * users with ON DELETE NO ACTION, so they must be removed explicitly or the user
+ * delete fails. External cleanup failures are swallowed so a missing Strava link
+ * can't block deletion.
  */
 export async function deleteAccount(
   db: Db,
   userId: string,
-  clerkUserId: string,
 ): Promise<{ success: true; message: string }> {
-  await activityRepo.deleteAllForUser(db, userId);
-  await db.delete(events).where(eq(events.userId, userId));
-  await db.delete(gears).where(eq(gears.userId, userId));
-  await userRepo.deleteById(db, userId);
-
   try {
-    const tokens = await getStravaAccessTokens(clerkUserId);
+    const tokens = await getStravaAccessTokens(userId);
     await fetch("https://www.strava.com/oauth/deauthorize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -90,9 +87,10 @@ export async function deleteAccount(
     // Strava may not be linked — continue with cleanup
   }
 
-  await clerkClient.users.updateUserMetadata(clerkUserId, {
-    privateMetadata: { strava: null, intervals: null },
-  });
+  await activityRepo.deleteAllForUser(db, userId);
+  await db.delete(events).where(eq(events.userId, userId));
+  await db.delete(gears).where(eq(gears.userId, userId));
+  await userRepo.deleteById(db, userId);
 
   return { success: true, message: "All user data deleted" };
 }

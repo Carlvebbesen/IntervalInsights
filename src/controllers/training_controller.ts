@@ -92,7 +92,6 @@ async function repairDanglingToolCalls(
 export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest): Response {
   const db = c.env.db;
   const userId = c.get("userId");
-  const clerkUserId = c.get("clerkUserId");
   const stravaAccessToken = c.get("stravaAccessToken");
   const log = c.var.logger;
 
@@ -126,7 +125,6 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
       ctx = {
         db,
         userId,
-        clerkUserId,
         stravaAccessToken,
         intervalsConnected: !!user?.intervalsAthleteId,
         userTime: body.userTime,

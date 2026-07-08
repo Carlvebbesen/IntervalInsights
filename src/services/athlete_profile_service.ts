@@ -32,12 +32,7 @@ const prettyType = (t: string): string => t.replace(/_/g, " ").toLowerCase();
  * instead of guessing. Every source is best-effort: a failure or missing datum
  * drops its line rather than the whole block. Returns "" when nothing is known.
  */
-export async function buildAthleteProfileBlock(
-  db: Db,
-  userId: string,
-  clerkUserId: string,
-  now: Date,
-): Promise<string> {
+export async function buildAthleteProfileBlock(db: Db, userId: string, now: Date): Promise<string> {
   const runningTypes = [...RUNNING_SPORT_TYPES];
   const since90 = new Date(now);
   since90.setUTCDate(since90.getUTCDate() - PROFILE_WINDOW_DAYS);
@@ -48,7 +43,7 @@ export async function buildAthleteProfileBlock(
     dashboardRepo.weeklyRunDistanceSince(db, userId, runningTypes, since84).catch(() => []),
     dashboardRepo.longTermRunStatsSince(db, userId, runningTypes, since90).catch(() => null),
     dashboardRepo.trainingTypeDistribution(db, userId, since90, now).catch(() => []),
-    fetchPaceAnchor(db, userId, clerkUserId, now).catch(() => null),
+    fetchPaceAnchor(db, userId, now).catch(() => null),
     structureRepo.listDistinctForUser(db, userId).catch(() => []),
   ]);
 

@@ -58,12 +58,6 @@ async function main() {
       console.log(`[verify] ${id} not found`);
       continue;
     }
-    const clerkId = (
-      await db
-        .select({ clerkId: schema.users.clerkId })
-        .from(schema.users)
-        .where(eq(schema.users.id, act.userId))
-    )[0]?.clerkId as string;
     const draft: any = act.draftAnalysisResult ?? {};
     const segs: any[] = Array.isArray(draft.proposedSegments)
       ? [...draft.proposedSegments].sort((a, b) => a.segmentIndex - b.segmentIndex)
@@ -88,7 +82,7 @@ async function main() {
     let firstWorkLapStart: number | null = null;
     let workLapCount: number | null = null;
     try {
-      const laps = await getLaps(db, act.userId, clerkId, id);
+      const laps = await getLaps(db, act.userId, id);
       const maxSp = Math.max(0, ...laps.map((l: any) => l.average_speed ?? 0));
       let cum = 0;
       let wc = 0;

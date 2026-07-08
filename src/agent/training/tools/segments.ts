@@ -13,7 +13,7 @@ const getActivitySegments = defineTool({
   params: z.object({ activityId: z.number().int() }),
   handler: async (ctx, args) => {
     await resolveOwnedActivity(ctx, args.activityId);
-    return getSegmentsForActivity(ctx.db, ctx.clerkUserId, args.activityId);
+    return getSegmentsForActivity(ctx.db, ctx.userId, args.activityId);
   },
 });
 

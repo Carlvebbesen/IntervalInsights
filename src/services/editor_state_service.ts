@@ -30,7 +30,6 @@ type WorkoutSet = z.infer<typeof workoutSet>;
 export async function previewSegments(
   db: Db,
   userId: string,
-  clerkUserId: string,
   activityId: number,
   sets: ExpandedIntervalSet[],
   trainingType: TrainingType,
@@ -41,7 +40,7 @@ export async function previewSegments(
 
   const activity = await activityRepo.requireOwnedActivity(db, userId, activityId);
 
-  const streamSet = await getStreamSet(db, userId, clerkUserId, activityId);
+  const streamSet = await getStreamSet(db, userId, activityId);
   const time = streamSet.time;
   const distance = streamSet.distance;
   if (!time?.data?.length || !distance?.data?.length) {
@@ -49,12 +48,12 @@ export async function previewSegments(
   }
   const statsStreams = { time, distance, heartrate: streamSet.heartrate };
 
-  const laps = await getLaps(db, userId, clerkUserId, activityId);
+  const laps = await getLaps(db, userId, activityId);
 
   let intervalsIcuIntervals: IIntervalsInterval[] | null = null;
   if (activity.intervalsIcuId) {
     try {
-      const token = await getIntervalsAccessToken(clerkUserId);
+      const token = await getIntervalsAccessToken(userId);
       intervalsIcuIntervals = extractIntervalsList(
         await intervalsApiService.getActivityIntervals(token, activity.intervalsIcuId),
       );
@@ -150,7 +149,6 @@ async function loadEditorStreams(
 export async function getEditorState(
   db: Db,
   userId: string,
-  clerkUserId: string,
   accessToken: string | undefined,
   activityId: number,
   input: {
@@ -169,25 +167,9 @@ export async function getEditorState(
 
   const sets =
     input.sets ??
-    (await getProposedPace(
-      db,
-      userId,
-      clerkUserId,
-      accessToken,
-      input.structure ?? [],
-      activityId,
-      log,
-    ));
+    (await getProposedPace(db, userId, accessToken, input.structure ?? [], activityId, log));
 
-  const segments = await previewSegments(
-    db,
-    userId,
-    clerkUserId,
-    activityId,
-    sets,
-    input.trainingType,
-    log,
-  );
+  const segments = await previewSegments(db, userId, activityId, sets, input.trainingType, log);
 
   let streams: EditorStreams | null = null;
   if (input.includeStreams !== false && accessToken) {

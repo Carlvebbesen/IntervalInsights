@@ -136,7 +136,6 @@ export async function resumeActivityAnalysis(
 export async function getProposedPace(
   db: Db,
   userId: string,
-  clerkUserId: string,
   accessToken: string | undefined,
   structure: WorkoutSet[],
   activityId: number | undefined,
@@ -182,7 +181,7 @@ export async function getProposedPace(
     } else {
       log.info("no activityId provided — using history");
     }
-    const proposedPaces = await getProposedPaceForStructure(db, userId, clerkUserId, structure);
+    const proposedPaces = await getProposedPaceForStructure(db, userId, structure);
     log.info({ sets: proposedPaces.length }, "returning pace from history");
     return proposedPaces;
   } catch (err) {
@@ -194,7 +193,6 @@ export async function getProposedPace(
 export async function parseIntervals(
   db: Db,
   userId: string,
-  clerkUserId: string,
   text: string,
   trainingType: TrainingType | null,
   logger: Logger,
@@ -204,7 +202,7 @@ export async function parseIntervals(
     if (!parsed || parsed.sets.length === 0) {
       return [];
     }
-    return getProposedPaceForStructure(db, userId, clerkUserId, parsed.sets);
+    return getProposedPaceForStructure(db, userId, parsed.sets);
   } catch (err) {
     logger.error({ err }, "Error parsing intervals");
     throw new AppError(500, "Failed to parse intervals");

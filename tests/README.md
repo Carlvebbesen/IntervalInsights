@@ -28,14 +28,21 @@ TEST_DATABASE_URL=postgres://user:pass@localhost:5432/intervals_test bun test
   `requeue_service`, `process_strava_event`, `process_intervals_event`,
   `parse_intervals_agent`).
 - Mocks `@clerk/backend` and `@hono/clerk-auth` so no real auth network calls
-  are made; Clerk private-metadata returns fake Strava + Intervals tokens so
-  the real Strava/Intervals middlewares pass through.
+  are made. Provider tokens live in Postgres (`oauth_provider_tokens`) —
+  `createTestUser` seeds encrypted Strava + Intervals rows by default so the
+  real Strava/Intervals middlewares pass through (opt out with
+  `{ strava: false }` / `{ intervals: false }`).
+- Mocks `src/services/auth_email.ts` (OTP delivery) into an in-memory capture
+  (`otpCapture`) so the dual-auth guard tests (`better_auth_guard.test.ts`)
+  can complete a real Better Auth OTP sign-in.
 
 ## Test architecture
 
 - `tests/helpers/test_app.ts` builds a fresh Hono app that mirrors
-  `src/index.ts` but replaces the Clerk-backed `authGuard` with a test guard
+  `src/index.ts` but replaces the dual-auth `authGuard` with a test guard
   that reads identity from an `AsyncLocalStorage` populated by `withIdentity()`.
+  The real guard (Better Auth bearer + Clerk fallback) is exercised by the
+  focused `better_auth_guard.test.ts` suite.
 - `tests/helpers/db.ts` owns the Postgres pool, plus
   `createTestUser` / `deleteTestUser` helpers that prefix Clerk IDs with
   `test_clerk_` and clean up cascaded children explicitly (the FKs from

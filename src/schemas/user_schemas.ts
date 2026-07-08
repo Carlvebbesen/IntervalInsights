@@ -5,7 +5,10 @@ import { userRoleEnum } from "../schema/enums";
 export const UserSchema = z
   .object({
     id: z.string(),
-    clerkId: z.string(),
+    clerkId: z.string().nullable(),
+    email: z.string().nullable(),
+    name: z.string().nullable(),
+    image: z.string().nullable(),
     stravaId: z.string().nullable(),
     role: z.enum(userRoleEnum.enumValues).nullable(),
     maxHeartRate: z.number().nullable(),

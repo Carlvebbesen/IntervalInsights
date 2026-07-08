@@ -2,6 +2,11 @@ import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import * as suggestSessionController from "../controllers/suggest_session_controller";
 import {
+  dailyQuota,
+  SUGGEST_SESSION_DAILY_MAX,
+  SUGGEST_SESSION_QUOTA,
+} from "../middlewares/quota_middleware";
+import {
   ErrorSchema,
   SuggestSessionRequestSchema,
   SuggestSessionResponseSchema,
@@ -12,6 +17,7 @@ const suggestSessionRouter = new Hono<TGlobalEnv>();
 
 suggestSessionRouter.post(
   "/suggest-session",
+  dailyQuota(SUGGEST_SESSION_QUOTA, SUGGEST_SESSION_DAILY_MAX),
   describeRoute({
     description:
       "Suggest a structured interval session for a day, with readiness-adjusted target paces (from the athlete's own history) and a human-readable readiness advisory. Non-streaming, free for all users. Cached briefly per (user, structure, day).",
@@ -44,7 +50,6 @@ suggestSessionRouter.post(
     const result = await suggestSessionController.suggestSession(
       c.env.db,
       c.get("userId"),
-      c.get("clerkUserId"),
       { structureId, structure, date, weather, mode, recentlySuggested },
       c.var.logger,
     );

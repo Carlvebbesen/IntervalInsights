@@ -50,7 +50,6 @@ type MetricKey = (typeof METRIC_KEYS)[number];
 export async function getHeartRateAnalysis(
   db: Db,
   userId: string,
-  clerkUserId: string,
   filters: HeartRateAnalysisFilters,
   logger: Logger,
 ): Promise<Result> {
@@ -58,8 +57,8 @@ export async function getHeartRateAnalysis(
 
   // 1. intervals.icu must be linked (zones come from there). Mirror the
   // not_linked discriminator used by the wellness/fitness series.
-  const result = await withIntervalsToken(clerkUserId, (intervalsToken) =>
-    analyzeWithToken(db, userId, clerkUserId, intervalsToken, filters, log),
+  const result = await withIntervalsToken(userId, (intervalsToken) =>
+    analyzeWithToken(db, userId, intervalsToken, filters, log),
   );
   return result.status === "not_linked" ? { status: "not_linked" } : result.data;
 }
@@ -67,7 +66,6 @@ export async function getHeartRateAnalysis(
 async function analyzeWithToken(
   db: Db,
   userId: string,
-  clerkUserId: string,
   intervalsToken: string,
   filters: HeartRateAnalysisFilters,
   log: Logger,
@@ -89,7 +87,7 @@ async function analyzeWithToken(
   // missing for activities that predate the pipeline change. Compute a bounded
   // number synchronously and background-fill the rest (their median/mode are
   // null this time and fill in for the next request).
-  await fillMissingStats(db, clerkUserId, intervalsToken, rows, log);
+  await fillMissingStats(db, userId, intervalsToken, rows, log);
 
   // 5. Build one point per activity, choosing whole-activity vs work metrics.
   const intervalsOnly = filters.intervalsOnly === true;
@@ -128,7 +126,7 @@ export function toPoint(row: HrAnalysisRow, intervalsOnly: boolean): Point {
 
 async function fillMissingStats(
   db: Db,
-  clerkUserId: string,
+  userId: string,
   intervalsToken: string,
   rows: HrAnalysisRow[],
   log: Logger,
@@ -140,7 +138,7 @@ async function fillMissingStats(
   // Strava is the fallback for activities not linked to an intervals.icu record.
   let stravaToken: string | null = null;
   try {
-    stravaToken = (await getStravaAccessTokens(clerkUserId)).access_token;
+    stravaToken = (await getStravaAccessTokens(userId)).access_token;
   } catch (err) {
     log.warn({ err }, "no Strava token — relying on intervals.icu streams only");
   }

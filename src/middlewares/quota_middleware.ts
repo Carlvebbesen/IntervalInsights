@@ -1,0 +1,107 @@
+import { createMiddleware } from "hono/factory";
+import { AppError } from "../error";
+import { type Logger, logger as rootLogger } from "../logger";
+import type { TGlobalEnv } from "../types/IRouters";
+
+/**
+ * Per-user daily quotas on LLM-backed endpoints — the real cost cap behind the
+ * API-abuse hardening. In-memory `Map<userId, {day, count}>` per quota name,
+ * keyed on the UTC day; deliberately not persisted (single instance, and a
+ * restart-reset is acceptable for circuit-breaker semantics). No schema, no deps.
+ *
+ * Caps are generous by design: interactive endpoints assume a human tapping, and
+ * the analysis cap only exists so a scripted abuser can't run unbounded model
+ * spend — a full multi-year batch import stays well under it.
+ */
+
+export const SUGGEST_SESSION_QUOTA = "suggest-session";
+export const PARSE_INTERVALS_QUOTA = "parse-intervals";
+export const ANALYSIS_START_QUOTA = "analysis-start";
+
+export const SUGGEST_SESSION_DAILY_MAX = 100;
+export const PARSE_INTERVALS_DAILY_MAX = 100;
+export const ANALYSIS_START_DAILY_MAX = 1000;
+
+interface QuotaEntry {
+  day: string;
+  count: number;
+}
+
+const stores = new Map<string, Map<string, QuotaEntry>>();
+
+// Injectable clock — production always uses the real one; tests drive day rollover.
+let clock: () => Date = () => new Date();
+const utcDay = (): string => clock().toISOString().slice(0, 10);
+
+/** Increment the (name, userId) counter for today; returns the new count. */
+function bump(name: string, userId: string): number {
+  let store = stores.get(name);
+  if (!store) {
+    store = new Map();
+    stores.set(name, store);
+  }
+  const day = utcDay();
+  const entry = store.get(userId);
+  if (!entry || entry.day !== day) {
+    store.set(userId, { day, count: 1 });
+    return 1;
+  }
+  entry.count += 1;
+  return entry.count;
+}
+
+/** Warn exactly once, as the user crosses 80% of the cap, so Grafana surfaces anyone approaching. */
+function warnApproaching(name: string, userId: string, count: number, max: number, log: Logger) {
+  if (count === Math.ceil(max * 0.8)) {
+    log.warn({ quota: name, userId, count, max }, "user approaching daily quota");
+  }
+}
+
+/** Increment and enforce; throws `AppError(429)` once the cap is exceeded. */
+export function consumeQuota(name: string, max: number, userId: string, log: Logger = rootLogger) {
+  const count = bump(name, userId);
+  if (count > max) {
+    throw new AppError(429, "Daily limit reached — please try again tomorrow.");
+  }
+  warnApproaching(name, userId, count, max, log);
+}
+
+/**
+ * Non-throwing circuit-breaker variant for background / fan-out paths (import,
+ * requeue): returns `false` once over cap so the caller can skip the work
+ * instead of failing the surrounding request.
+ */
+export function tryConsumeQuota(
+  name: string,
+  max: number,
+  userId: string,
+  log: Logger = rootLogger,
+): boolean {
+  const count = bump(name, userId);
+  if (count > max) {
+    log.warn({ quota: name, userId, count, max }, "daily quota exceeded — skipping");
+    return false;
+  }
+  warnApproaching(name, userId, count, max, log);
+  return true;
+}
+
+/** Route middleware wrapper — applied AFTER authGuard so `userId` is resolved. */
+export function dailyQuota(name: string, max: number) {
+  return createMiddleware<TGlobalEnv>(async (c, next) => {
+    const userId = c.get("userId");
+    if (userId) consumeQuota(name, max, userId, c.var.logger);
+    await next();
+  });
+}
+
+/** Test hooks. */
+export function __resetQuotaStore() {
+  stores.clear();
+}
+export function __setClock(fn: (() => Date) | null) {
+  clock = fn ?? (() => new Date());
+}
+export function __peekQuota(name: string, userId: string): number {
+  return stores.get(name)?.get(userId)?.count ?? 0;
+}

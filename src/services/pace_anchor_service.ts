@@ -327,7 +327,6 @@ async function storedRunningEfforts(db: Db, userId: string, now: Date): Promise<
 export async function fetchPaceAnchor(
   db: Db,
   userId: string,
-  clerkUserId: string,
   now: Date = new Date(),
 ): Promise<PaceAnchorResult> {
   try {
@@ -341,7 +340,7 @@ export async function fetchPaceAnchor(
     oldestDate.setUTCDate(oldestDate.getUTCDate() - 90);
     const oldest = toISODate(oldestDate);
 
-    const curve = await fetchBestEffortCurve(clerkUserId, {
+    const curve = await fetchBestEffortCurve(userId, {
       type: "Run",
       window: "custom",
       oldest,

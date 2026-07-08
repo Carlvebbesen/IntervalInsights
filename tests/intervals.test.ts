@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { closePool, createTestUser, deleteTestUser, getPool } from "./helpers/db";
+import { writeProviderToken } from "../src/services/oauth_token_store";
+import { closePool, createTestUser, deleteTestUser, getDb, getPool } from "./helpers/db";
 import { buildTestApp, withIdentity } from "./helpers/test_app";
 
 const app = buildTestApp(getPool());
@@ -101,6 +102,17 @@ describe("/api/intervals/auth", () => {
 });
 
 describe("/api/intervals (sync)", () => {
+  // The disconnect test above removes the intervals token; re-link before the
+  // strava/intervals middleware gates /sync.
+  beforeAll(async () => {
+    await writeProviderToken(getDb(), user.id, "intervals", {
+      access_token: "test-intervals-token",
+      refresh_token: "test-intervals-refresh",
+      expires_at: Math.floor(Date.now() / 1000) + 86_400,
+      athlete_id: "i12345",
+    });
+  });
+
   it("POST /sync kicks off the link service in the background", () =>
     withIdentity(identity(), async () => {
       const res = await app.fetch(

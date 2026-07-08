@@ -16,7 +16,7 @@ export async function maybeEnrichWithIntervalsIcu(
   state: AnalysisState,
   config: RunnableConfig,
 ): Promise<Partial<AnalysisState>> {
-  const { db, clerkUserId, intervalsAthleteId } = config.configurable as GraphConfigurable;
+  const { db, intervalsAthleteId } = config.configurable as GraphConfigurable;
   const log = logger.child({ node: "maybeEnrichWithIntervalsIcu", activityId: state.activityId });
 
   if (!intervalsAthleteId) {
@@ -49,11 +49,7 @@ export async function maybeEnrichWithIntervalsIcu(
     // analysis stalled). Proactively GET activities by date and link directly
     // before giving up. Best-effort: on failure, proceed without enrichment.
     try {
-      const link = await linkFromLocalActivity(
-        { db },
-        { id: state.userId, clerkId: clerkUserId },
-        state.activityId,
-      );
+      const link = await linkFromLocalActivity({ db }, { id: state.userId }, state.activityId);
       if (link) {
         intervalsIcuId = link.intervalsActivityId;
         log.info({ intervalsIcuId }, "linked via GET-by-date fallback");
@@ -69,7 +65,7 @@ export async function maybeEnrichWithIntervalsIcu(
   }
 
   try {
-    const accessToken = await getIntervalsAccessToken(clerkUserId);
+    const accessToken = await getIntervalsAccessToken(state.userId);
     const [intervalsMeta, intervalsRaw] = await Promise.all([
       intervalsApiService.getActivity(accessToken, intervalsIcuId),
       intervalsApiService.getActivityIntervals(accessToken, intervalsIcuId),

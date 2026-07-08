@@ -22,10 +22,27 @@ const ENV_DEFAULTS: Record<string, string> = {
   APP_BASE_URL: "http://localhost:3000/",
   OPENAI_API_KEY: "sk-test-openai-dummy",
   PROGRESS_HEARTBEAT_MS: "200",
+  TOKEN_ENC_KEY: "test-token-enc-key-0123456789-abcdefghij",
+  BETTER_AUTH_SECRET: "test-better-auth-secret-0123456789-abcdef",
+  BETTER_AUTH_URL: "http://localhost:3000",
+  RESEND_API_KEY: "re_test_dummy",
+  REVIEW_ACCOUNT_EMAIL: "store-review@test.local",
+  REVIEW_ACCOUNT_OTP: "731409",
 };
 
 for (const [key, value] of Object.entries(ENV_DEFAULTS)) {
   if (!process.env[key]) process.env[key] = value;
+}
+
+// Bun auto-loads the worktree `.env`, whose URLs point at prod — force the ones
+// tests assert on (e.g. the MCP protected-resource `resource`) to localhost so
+// the suite is hermetic regardless of the developer's `.env`.
+const ENV_FORCE: Record<string, string> = {
+  APP_BASE_URL: "http://localhost:3000/",
+  BETTER_AUTH_URL: "http://localhost:3000",
+};
+for (const [key, value] of Object.entries(ENV_FORCE)) {
+  process.env[key] = value;
 }
 
 // ─── Mocks for service modules ────────────────────────────────────────────────
@@ -125,29 +142,21 @@ mock.module("../src/agent/parse_intervals_agent.ts", () => ({
   invokeParseIntervalsAgent: async () => ({ sets: [] }),
 }));
 
-// Clerk: the real client makes HTTPS calls. Stub everything to no-op.
-// privateMetadata returns valid-looking Strava+Intervals tokens so the real
-// strava/intervals middlewares (which run inside their routers) don't bail
-// with a 403 during tests.
-const FAR_FUTURE = Math.floor(Date.now() / 1000) + 86_400;
+// Clerk: the real client makes HTTPS calls. Stub it. Provider OAuth tokens live
+// in Postgres (`oauth_provider_tokens`, seeded by tests/helpers/db.ts), so the
+// only remaining `getUser` consumer is the dual-auth guard's identity
+// enrichment, which reads verified email addresses + name.
 const defaultGetUser = async () => ({
-  privateMetadata: {
-    strava: {
-      access_token: "test-strava-token",
-      refresh_token: "test-strava-refresh",
-      expires_at: FAR_FUTURE,
-      athlete_id: 12345,
-    },
-    intervals: {
-      access_token: "test-intervals-token",
-      refresh_token: "test-intervals-refresh",
-      expires_at: FAR_FUTURE,
-      athlete_id: "i12345",
-    },
+  primaryEmailAddress: {
+    emailAddress: "clerk-test-user@example.test",
+    verification: { status: "verified" },
   },
-  publicMetadata: {},
+  emailAddresses: [
+    { emailAddress: "clerk-test-user@example.test", verification: { status: "verified" } },
+  ],
+  firstName: "Clerk",
+  lastName: "TestUser",
 });
-const defaultUpdateUserMetadata = async () => ({});
 // Default: no OAuth token — MCP requests are unauthenticated until a test
 // swaps this to return a real-looking auth object.
 const defaultAuthenticateRequest = async () => ({ toAuth: () => null });
@@ -156,17 +165,12 @@ const defaultAuthenticateRequest = async () => ({ toAuth: () => null });
 // token) and MUST call reset() when done — the mock is global across files.
 export const clerkUsersMock = {
   getUser: defaultGetUser as (userId?: string) => Promise<unknown>,
-  updateUserMetadata: defaultUpdateUserMetadata as (
-    userId?: string,
-    params?: unknown,
-  ) => Promise<unknown>,
   authenticateRequest: defaultAuthenticateRequest as (
     request?: Request,
     options?: unknown,
   ) => Promise<{ toAuth: () => unknown }>,
   reset() {
     this.getUser = defaultGetUser;
-    this.updateUserMetadata = defaultUpdateUserMetadata;
     this.authenticateRequest = defaultAuthenticateRequest;
   },
 };
@@ -175,8 +179,6 @@ mock.module("@clerk/backend", () => ({
   createClerkClient: () => ({
     users: {
       getUser: (userId?: string) => clerkUsersMock.getUser(userId),
-      updateUserMetadata: (userId?: string, params?: unknown) =>
-        clerkUsersMock.updateUserMetadata(userId, params),
     },
     authenticateRequest: (request?: Request, options?: unknown) =>
       clerkUsersMock.authenticateRequest(request, options),
@@ -184,14 +186,34 @@ mock.module("@clerk/backend", () => ({
 }));
 
 // Clerk Hono helpers: we never want the real JWT check in tests. The test app
-// (tests/helpers/test_app.ts) replaces auth entirely; these stubs just keep
-// imports happy if any production code path still references them.
+// (tests/helpers/test_app.ts) replaces auth entirely; these stubs keep imports
+// happy for code that still references them. `getAuth` is a mutable delegate so
+// the dual-auth guard tests (tests/better_auth_guard.test.ts) can turn the
+// Clerk fallback off/on per test — call reset() when done (global across files).
+export const clerkAuthMock = {
+  getAuth: (() => ({ userId: "clerk_test_user" })) as () => { userId: string } | null,
+  reset() {
+    this.getAuth = () => ({ userId: "clerk_test_user" });
+  },
+};
+
 mock.module("@hono/clerk-auth", () => {
   const noopMiddleware = async (_c: unknown, next: () => Promise<void>) => {
     await next();
   };
   return {
     clerkMiddleware: () => noopMiddleware,
-    getAuth: () => ({ userId: "clerk_test_user" }),
+    getAuth: () => clerkAuthMock.getAuth(),
   };
 });
+
+// Better Auth OTP delivery: capture instead of sending (Resend would 401 with
+// the dummy key anyway). The dual-auth guard tests read the captured code to
+// complete the sign-in flow.
+export const otpCapture = { last: null as { email: string; otp: string } | null };
+
+mock.module("../src/services/auth_email.ts", () => ({
+  sendSignInOtpEmail: async (email: string, otp: string) => {
+    otpCapture.last = { email, otp };
+  },
+}));

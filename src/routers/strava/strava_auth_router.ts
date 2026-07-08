@@ -1,4 +1,3 @@
-import { getAuth } from "@hono/clerk-auth";
 import { Hono } from "hono";
 import { describeRoute, validator } from "hono-openapi";
 import z from "zod";
@@ -55,23 +54,19 @@ stravaAuthRouter.post(
   "/exchange",
   describeRoute({
     description:
-      "Exchange a Strava OAuth `code` for tokens, store them in Clerk private metadata, and link the Strava athlete to the authenticated Clerk user.",
+      "Exchange a Strava OAuth `code` for tokens, store them encrypted in the token vault, and link the Strava athlete to the authenticated user.",
     responses: {
       200: okJson(StravaExchangeResponseSchema, "Strava account linked"),
       400: errJson("Missing authorization code"),
-      401: errJson("Not signed in to Clerk, or Strava rejected the code"),
+      401: errJson("Strava rejected the code"),
+      409: errJson("Strava account already linked to another user"),
       500: errJson("Internal server error"),
     },
   }),
   validator("json", StravaExchangeBodySchema),
   async (c) => {
-    const auth = getAuth(c);
-    if (!auth?.userId) {
-      return c.json({ error: "You must be logged in to connect Strava." }, 401);
-    }
-
     const { code } = c.req.valid("json");
-    await linkStravaAccount(c.env.db, auth.userId, code, c.var.logger);
+    await linkStravaAccount(c.env.db, c.get("userId"), code, c.var.logger);
 
     return c.json({
       success: true,

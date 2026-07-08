@@ -11,11 +11,13 @@ import { cors } from "hono/cors";
 import { requestId } from "hono/request-id";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { openAPIRouteHandler } from "hono-openapi";
+import { auth, ensureReviewAccount } from "./auth";
 import { config } from "./config";
 import { db } from "./db";
 import { AppError, IntervalsError, StravaError } from "./error";
 import { logger } from "./logger";
 import { authGuard } from "./middlewares/auth_middleware";
+import { clientKeyGuard } from "./middlewares/client_key_middleware";
 import activitiesRouter, { stravaActivitiesRouter } from "./routers/activities_router";
 import adminRouter from "./routers/admin_router";
 import agentsRouter from "./routers/agents_router";
@@ -103,7 +105,7 @@ app.use(
   cors({
     origin: "*",
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization"],
+    allowHeaders: ["Content-Type", "Authorization", "x-client-key"],
     exposeHeaders: ["Content-Length", "X-Request-Id"],
     maxAge: 3600,
   }),
@@ -113,6 +115,13 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 app.route("/api", publicRouter);
+// App client key: mounted after the public routes (so webhooks/health/legal,
+// registered above, terminate their chains before it) and before the Better
+// Auth handler (so OTP send/verify is gated too). See client_key_middleware.ts.
+app.use("/api/*", clientKeyGuard({ key: config.APP_CLIENT_KEY, mode: config.APP_CLIENT_KEY_MODE }));
+// Better Auth endpoints (dual-auth window): mounted before the Clerk middleware
+// chain so /api/auth/* is public — mirrors how publicRouter mounts before Clerk.
+app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/", mcpRouter);
 if (config.NODE_ENV !== "production") {
   app.get(
@@ -204,6 +213,11 @@ app.onError((err, c) => {
   c.var.logger.error({ err }, "Internal Error");
   return c.json({ error: "Internal Server Error" }, 500);
 });
+
+// Bun awaits module top-level before serving — seed the store-review demo
+// account (no-op when REVIEW_ACCOUNT_* is unset) now that OTP auto-register is
+// gone. There is no shared boot path, so this is the sole prod call site.
+await ensureReviewAccount();
 
 export default {
   port: config.PORT,

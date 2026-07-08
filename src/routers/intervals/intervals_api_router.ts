@@ -7,8 +7,7 @@ const intervalsApiRouter = new Hono<TIntervalsEnv>();
 
 intervalsApiRouter.post("/sync", async (c) => {
   const userId = c.get("userId");
-  const clerkId = c.get("clerkUserId");
-  void syncAllFromIntervals(c.env, { id: userId, clerkId }).catch((err) => {
+  void syncAllFromIntervals(c.env, { id: userId }).catch((err) => {
     logger.error({ err, userId }, "intervals.icu master sync (background) failed");
   });
   return c.json({ status: "started" as const }, 202);

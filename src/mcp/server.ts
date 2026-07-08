@@ -39,7 +39,6 @@ export function buildMcpContext(c: Context<TMcpEnv>): { ctx: CoachCtx; tools: Co
   const ctx: CoachCtx = {
     db: c.env.db,
     userId: c.get("userId"),
-    clerkUserId: c.get("clerkUserId"),
     stravaAccessToken: "",
     intervalsConnected: availability.intervalsConnected,
     userTime: new Date().toISOString(),
@@ -62,7 +61,7 @@ export function buildMcpServer(ctx: CoachCtx, tools: CoachTool[]): McpServer {
       async (args): Promise<CallToolResult> => {
         if (tool.requires === "strava" && !ctx.stravaAccessToken) {
           try {
-            const tokens = await getStravaAccessTokens(ctx.clerkUserId);
+            const tokens = await getStravaAccessTokens(ctx.userId);
             ctx.stravaAccessToken = tokens.access_token;
           } catch {
             return toolError("Strava account is not linked or the session has expired.");
