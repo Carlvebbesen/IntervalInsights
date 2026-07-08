@@ -211,7 +211,50 @@ export function trainingBucketFor(
   }
 }
 
-/** Road vs trail surface inferred from a Strava sport type. */
-export function surfaceForSportType(sportType: string): GearSurface {
-  return sportType === "TrailRun" ? "TRAIL" : "ROAD";
+/** The gear context an activity implies: which gear type it uses and, where
+ * determinable, the surface. `surface` is null when the sport type has no
+ * deterministic surface (on-snow skis — Strava can't distinguish classic/skate). */
+export type GearContext = { gearType: GearType; surface: GearSurface | null };
+
+/**
+ * Maps a Strava sport type (+ indoor flag) to its gear context (D3). Returns
+ * null for sport types that carry no gear (suggestions are skipped; manual
+ * assignment stays allowed).
+ */
+export function gearContextForActivity(sportType: string, indoor: boolean): GearContext | null {
+  switch (sportType) {
+    case "TrailRun":
+      return { gearType: "SHOES", surface: "TRAIL" };
+    case "Run":
+    case "VirtualRun":
+      return { gearType: "SHOES", surface: indoor ? "TREADMILL" : "ROAD" };
+    case "Ride":
+    case "VirtualRide":
+    case "EBikeRide":
+      return { gearType: "BICYCLE", surface: "ROAD" };
+    case "GravelRide":
+      return { gearType: "BICYCLE", surface: "GRAVEL" };
+    case "MountainBikeRide":
+      return { gearType: "BICYCLE", surface: "MTB" };
+    case "NordicSki":
+    case "BackcountrySki":
+      return { gearType: "SKIS", surface: null };
+    case "RollerSki":
+      return { gearType: "SKIS", surface: "ROLLERSKI" };
+    default:
+      return null;
+  }
 }
+
+/** Sport types whose gear lives in Strava (shoes + bikes); skis have no Strava
+ * gear. Scopes the activity supplement + mileage linking in the gear sync. */
+export const STRAVA_GEAR_SPORT_TYPES = [
+  "Run",
+  "TrailRun",
+  "VirtualRun",
+  "Ride",
+  "VirtualRide",
+  "EBikeRide",
+  "GravelRide",
+  "MountainBikeRide",
+] as const;

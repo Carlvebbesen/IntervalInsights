@@ -22,6 +22,8 @@ let aStrava: number;
 let aSig: number;
 let aType: number;
 let aRetired: number;
+let bike: number;
+let aRide: number;
 
 async function insertGear(
   model: string,
@@ -75,6 +77,22 @@ beforeAll(async () => {
       intervalStructureId: structureId,
     })
   ).id;
+
+  // A bicycle + a prior ride using it feeds recents-by-type for BICYCLE.
+  bike = await insertGear("Bike One", { gearType: "BICYCLE", surface: "ROAD" });
+  await insertActivity(user.id, {
+    sportType: "Ride",
+    localGearId: bike,
+    analysisStatus: "completed",
+    trainingType: "EASY",
+  });
+  aRide = (
+    await insertActivity(user.id, {
+      sportType: "Ride",
+      analysisStatus: "pending",
+      trainingType: "EASY",
+    })
+  ).id;
 });
 
 afterAll(async () => {
@@ -126,6 +144,15 @@ describe("GET /api/v1/agents/pending gear preselect chain", () => {
     for (const row of pending.values()) {
       expect(row.gearSuggestions).not.toContain(shoeRetired);
       expect(row.suggestedGearId).not.toBe(shoeRetired);
+    }
+  });
+
+  it("keys candidates on gear type: a ride suggests the bike, never shoes", async () => {
+    const pending = await fetchPending();
+    const ride = pending.get(aRide);
+    expect(ride?.suggestedGearId).toBe(bike);
+    for (const id of [shoeStrava, shoeSig, shoeType, shoeBucket, shoeRetired]) {
+      expect(ride?.gearSuggestions).not.toContain(id);
     }
   });
 });

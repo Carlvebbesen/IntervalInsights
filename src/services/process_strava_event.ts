@@ -156,6 +156,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
         await linkActivityGearOnIngest(context.db, user.id, accessToken, twin.id, {
           stravaGearId: data.gear_id,
           sportType: data.sport_type,
+          indoor: data.trainer ?? false,
           startDateLocal: activity.startDateLocal,
         });
       }
@@ -188,6 +189,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
       await linkActivityGearOnIngest(context.db, user.id, accessToken, inserted.id, {
         stravaGearId: data.gear_id,
         sportType: data.sport_type,
+        indoor: data.trainer ?? false,
         startDateLocal: activity.startDateLocal,
       });
     }
@@ -239,6 +241,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
         {
           stravaGearId: newStravaGearId,
           sportType: data.sport_type,
+          indoor: data.trainer ?? false,
           startDateLocal: activity.startDateLocal,
         },
       );

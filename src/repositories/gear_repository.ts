@@ -450,40 +450,43 @@ export async function linkActivitiesByStravaGearId(
 
 // ─── Suggestions / stats helpers ────────────────────────────────────────────────
 
-/** Active gears most recently used on a surface, most-recent first (for suggestions). */
-export async function recentGearIdsBySurface(
+/** Active gears of a type most recently used, most-recent first (for suggestions). */
+export async function recentGearIdsByGearType(
   db: Db,
   userId: string,
-  surface: GearSurface,
+  gearType: GearType,
   limit = 3,
 ): Promise<number[]> {
   const rows = await db
     .select({ gearId: activities.localGearId })
     .from(activities)
     .innerJoin(gears, eq(gears.id, activities.localGearId))
-    .where(and(eq(activities.userId, userId), eq(gears.surface, surface), eq(gears.isActive, true)))
+    .where(
+      and(eq(activities.userId, userId), eq(gears.gearType, gearType), eq(gears.isActive, true)),
+    )
     .groupBy(activities.localGearId)
     .orderBy(desc(sql`max(${activities.startDateLocal})`))
     .limit(limit);
   return rows.map((r) => r.gearId).filter((x): x is number => x !== null);
 }
 
-/** Ids of the user's active (non-retired) gears — for filtering suggestion candidates. */
-export async function activeGearIds(db: Db, userId: string): Promise<Set<number>> {
+/** Map of the user's active (non-retired) gear ids → gear type — for filtering
+ * suggestion candidates to the activity's gear type. */
+export async function activeGearTypeById(db: Db, userId: string): Promise<Map<number, GearType>> {
   const rows = await db
-    .select({ id: gears.id })
+    .select({ id: gears.id, gearType: gears.gearType })
     .from(gears)
     .where(and(eq(gears.userId, userId), eq(gears.isActive, true)));
-  return new Set(rows.map((r) => r.id));
+  return new Map(rows.map((r) => [r.id, r.gearType]));
 }
 
-/** Active gears on a surface whose `useTypes` contains the training type,
+/** Active gears of a type whose `useTypes` contains the training type,
  * most recently used first (never-used ones last, newest-created first). */
 export async function gearIdsByUseType(
   db: Db,
   userId: string,
   trainingType: TrainingType,
-  surface: GearSurface,
+  gearType: GearType,
   limit = 3,
 ): Promise<number[]> {
   const rows = await db
@@ -493,7 +496,7 @@ export async function gearIdsByUseType(
     .where(
       and(
         eq(gears.userId, userId),
-        eq(gears.surface, surface),
+        eq(gears.gearType, gearType),
         eq(gears.isActive, true),
         arrayContains(gears.useTypes, [trainingType]),
       ),
