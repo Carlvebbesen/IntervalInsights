@@ -1,10 +1,35 @@
-import { betterAuth } from "better-auth";
+import { type BetterAuthPlugin, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { bearer, emailOTP } from "better-auth/plugins";
 import { config } from "./config";
 import { db } from "./db";
 import * as schema from "./schema";
 import { sendSignInOtpEmail } from "./services/auth_email";
+
+/**
+ * Native clients (the Flutter app via `flutter_better_auth`) always carry a
+ * persistent session cookie but send no browser `Origin`, so Better Auth's
+ * cookie-triggered CSRF check 403s every `/api/auth/*` POST after the first
+ * sign-in. The package mimics the Expo protocol and sends `expo-origin`; this
+ * bridge promotes it to `origin` so the app scheme (in `trustedOrigins`) passes
+ * the check. We do NOT install `@better-auth/expo` — that would drag in its
+ * authorization-proxy endpoint and redirect hooks we don't use.
+ *
+ * Not a CSRF hole: a browser cannot send `expo-origin` cross-site — it's a
+ * non-simple header, so it triggers a CORS preflight, and our CORS
+ * `allowHeaders` (src/index.ts) does not list it.
+ */
+const expoOriginBridge = {
+  id: "expo-origin-bridge",
+  async onRequest(request: Request) {
+    if (request.headers.get("origin")) return; // never override a real Origin
+    const expoOrigin = request.headers.get("expo-origin");
+    if (!expoOrigin) return;
+    const headers = new Headers(request.headers);
+    headers.set("origin", expoOrigin);
+    return { request: new Request(request, { headers }) };
+  },
+} satisfies BetterAuthPlugin;
 
 /**
  * Better Auth instance (dual-auth window: runs alongside Clerk until Phase 6).
@@ -51,9 +76,19 @@ export const auth = betterAuth({
   },
   account: { modelName: "accounts" },
   verification: { modelName: "verifications" },
-  advanced: { database: { generateId: "uuid" } },
+  advanced: {
+    database: { generateId: "uuid" },
+    // Keep the cookie-triggered CSRF origin check ON in every environment.
+    // Better Auth defaults `skipOriginCheck` to true under NODE_ENV=test, which
+    // would silently disable the check the expo-origin bridge exists to satisfy —
+    // pinning it false lets the regression tests exercise the real behaviour.
+    // No-op in production (already the default there).
+    disableOriginCheck: false,
+  },
   // Better Auth matches slash-less origins; APP_BASE_URL may carry a path/slash.
-  trustedOrigins: [new URL(config.APP_BASE_URL).origin],
+  // `intervalinsights://` is the native app scheme, trusted so the expo-origin
+  // bridge above satisfies the CSRF check for cookie-bearing app requests.
+  trustedOrigins: [new URL(config.APP_BASE_URL).origin, "intervalinsights://"],
   databaseHooks: {
     user: {
       create: {
@@ -82,5 +117,6 @@ export const auth = betterAuth({
       storeOTP: "encrypted",
     }),
     bearer(),
+    expoOriginBridge,
   ],
 });

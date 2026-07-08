@@ -34,7 +34,7 @@ app.get("/api/whoami", (c) =>
 const fetchApp = (path: string, init?: RequestInit) =>
   app.fetch(new Request(`http://localhost${path}`, init), { db });
 
-async function signInWithOtp(email: string): Promise<string> {
+async function signInResponse(email: string): Promise<Response> {
   const sendRes = await fetchApp("/api/auth/email-otp/send-verification-otp", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -51,9 +51,22 @@ async function signInWithOtp(email: string): Promise<string> {
     body: JSON.stringify({ email, otp }),
   });
   expect(signInRes.status).toBe(200);
+  return signInRes;
+}
+
+async function signInWithOtp(email: string): Promise<string> {
+  const signInRes = await signInResponse(email);
   const token = signInRes.headers.get("set-auth-token");
   if (!token) throw new Error("no set-auth-token header on sign-in response");
   return token;
+}
+
+// Rebuilds a `Cookie:` request header from a sign-in response's Set-Cookie(s) —
+// name=value pairs only, dropping attributes (Path/HttpOnly/…).
+function cookieHeaderFrom(res: Response): string {
+  const setCookies = res.headers.getSetCookie();
+  if (setCookies.length === 0) throw new Error("no set-cookie on sign-in response");
+  return setCookies.map((c) => c.split(";")[0]).join("; ");
 }
 
 afterEach(() => {
@@ -174,5 +187,51 @@ describe("dual-auth guard", () => {
     const baBody = (await baRes.json()) as { userId: string; role: string };
     expect(baBody.userId).toBe(seeded.id);
     expect(baBody.role).toBe("premium"); // role came from the existing row, not re-registered
+  });
+});
+
+// The 2026-07-08 device smoke test failed here: after the first sign-in the
+// native cookie jar makes every later /api/auth POST carry the session cookie
+// with no Origin, so Better Auth's cookie-triggered CSRF check 403s
+// (MISSING_OR_NULL_ORIGIN). The expo-origin bridge in src/auth.ts fixes it.
+// signInWithOtp authenticates via the set-auth-token bearer header and never
+// replays the cookie, so these send Cookie: explicitly to exercise the check.
+describe("cookie-triggered CSRF origin check (expo-origin bridge)", () => {
+  it("sign-out with a session cookie and no origin is still rejected (CSRF intact)", async () => {
+    clerkAuthMock.getAuth = () => null;
+    const cookie = cookieHeaderFrom(await signInResponse(`csrf-403-${randomUUID()}@example.test`));
+
+    const res = await fetchApp("/api/auth/sign-out", {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("sign-out with a session cookie and expo-origin passes the check", async () => {
+    clerkAuthMock.getAuth = () => null;
+    const cookie = cookieHeaderFrom(await signInResponse(`csrf-signout-${randomUUID()}@example.test`));
+
+    const res = await fetchApp("/api/auth/sign-out", {
+      method: "POST",
+      headers: { Cookie: cookie, "expo-origin": "intervalinsights://" },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("send-verification-otp with a session cookie and expo-origin passes (the call that failed on device)", async () => {
+    clerkAuthMock.getAuth = () => null;
+    const cookie = cookieHeaderFrom(await signInResponse(`csrf-send-${randomUUID()}@example.test`));
+
+    const res = await fetchApp("/api/auth/email-otp/send-verification-otp", {
+      method: "POST",
+      headers: {
+        Cookie: cookie,
+        "expo-origin": "intervalinsights://",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ email: `csrf-send-target-${randomUUID()}@example.test`, type: "sign-in" }),
+    });
+    expect(res.status).toBe(200);
   });
 });
