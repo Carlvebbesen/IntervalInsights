@@ -41,8 +41,9 @@ Routers that need Strava API access must use `TStravaEnv` and apply `stravaMiddl
 **Public routes (unversioned, mounted at `/api` before Clerk — external systems pin these):**
 - `GET/POST /api/strava/event`, `POST /api/intervals/event` — inbound webhooks
 - `GET /api/health` — liveness probe
-- `GET /api/privacy-policy`, `GET /api/terms-of-service` — legal markdown
+- `GET /api/privacy-policy`, `GET /api/terms-of-service` — legal markdown (consumed by the app)
 - Plus the app-root routes `/`, `/app-icon.png`, `/favicon.ico`, `/.well-known/*`, and the MCP router.
+- Human-facing web pages at the app root (rendered HTML, `src/web/pages.ts`, mounted via `registerWebPages`): `GET /privacy-policy`, `GET /terms-of-service` (the same legal markdown rendered to branded HTML via `marked`), and `GET /display/delete-account` — the Google Play account-deletion guide. Linked from the landing footer.
 
 **Authenticated routers (mounted under `/api/v1`, behind `clerkMiddleware` + `authGuard`):**
 - `/api/v1/activity` — list, detail, `PATCH /:id` metadata, gear, segments, laps, splits, streams, editor-state (`TGlobalEnv` + `TStravaEnv` sub-router)
