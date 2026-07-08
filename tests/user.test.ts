@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { closePool, createTestUser, deleteTestUser, getPool } from "./helpers/db";
-import { buildTestApp, withIdentity } from "./helpers/test_app";
+import { eq } from "drizzle-orm";
+import { users } from "../src/schema";
+import { closePool, createTestUser, deleteTestUser, getDb, getPool } from "./helpers/db";
+import { buildTestApp, type TestIdentity, withIdentity } from "./helpers/test_app";
 
 const app = buildTestApp(getPool());
 
@@ -87,46 +89,101 @@ describe("/api/user", () => {
     }));
 });
 
-describe("/api/user — admin gate", () => {
-  it("admin role can hit /api/admin", async () => {
+describe("/api/admin — role management", () => {
+  const storedRole = async (userId: string) => {
+    const row = await getDb().query.users.findFirst({ where: eq(users.id, userId) });
+    return row?.role;
+  };
+
+  const patchRole = (actor: { id: string; clerkId: string }, actorRole: TestIdentity["role"], targetId: string, body: unknown) =>
+    withIdentity({ userId: actor.id, clerkUserId: actor.clerkId, role: actorRole }, () =>
+      app.fetch(
+        new Request(`http://test/api/v1/admin/users/${targetId}/role`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      ),
+    );
+
+  it("admin can set a non-admin role on a non-admin user", async () => {
     const adminUser = await createTestUser({ role: "admin" });
+    const target = await createTestUser({ role: "guest" });
     try {
-      const res = await withIdentity(
-        { userId: adminUser.id, clerkUserId: adminUser.clerkId, role: "admin" },
-        () =>
-          app.fetch(
-            new Request(`http://test/api/v1/admin/users/${adminUser.id}/role`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ role: "premium" }),
-            }),
-          ),
-      );
+      const res = await patchRole(adminUser, "admin", target.id, { role: "premium" });
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.role).toBe("premium");
+      expect(await storedRole(target.id)).toBe("premium");
     } finally {
       await deleteTestUser(adminUser.id);
+      await deleteTestUser(target.id);
     }
   });
 
-  it("non-admin role gets 403 on /api/admin", async () => {
+  it("a guest cannot set any role on themselves", async () => {
     const guestUser = await createTestUser({ role: "guest" });
     try {
-      const res = await withIdentity(
-        { userId: guestUser.id, clerkUserId: guestUser.clerkId, role: "guest" },
-        () =>
-          app.fetch(
-            new Request(`http://test/api/v1/admin/users/${guestUser.id}/role`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ role: "admin" }),
-            }),
-          ),
-      );
-      expect(res.status).toBe(403);
+      for (const role of ["guest", "premium", "admin"] as const) {
+        const res = await patchRole(guestUser, "guest", guestUser.id, { role });
+        expect(res.status).toBe(403);
+      }
+      expect(await storedRole(guestUser.id)).toBe("guest");
     } finally {
       await deleteTestUser(guestUser.id);
+    }
+  });
+
+  it("a premium user cannot set any role either", async () => {
+    const premiumUser = await createTestUser({ role: "premium" });
+    try {
+      for (const role of ["guest", "premium", "admin"] as const) {
+        const res = await patchRole(premiumUser, "premium", premiumUser.id, { role });
+        expect(res.status).toBe(403);
+      }
+      expect(await storedRole(premiumUser.id)).toBe("premium");
+    } finally {
+      await deleteTestUser(premiumUser.id);
+    }
+  });
+
+  it("an admin cannot grant the admin role", async () => {
+    const adminUser = await createTestUser({ role: "admin" });
+    const target = await createTestUser({ role: "guest" });
+    try {
+      const res = await patchRole(adminUser, "admin", target.id, { role: "admin" });
+      // Rejected by the request schema — admin is not an accepted value.
+      expect(res.status).toBe(400);
+      expect(await storedRole(target.id)).toBe("guest");
+    } finally {
+      await deleteTestUser(adminUser.id);
+      await deleteTestUser(target.id);
+    }
+  });
+
+  it("an admin cannot change another admin's role", async () => {
+    const adminUser = await createTestUser({ role: "admin" });
+    const otherAdmin = await createTestUser({ role: "admin" });
+    try {
+      for (const role of ["guest", "premium"] as const) {
+        const res = await patchRole(adminUser, "admin", otherAdmin.id, { role });
+        expect(res.status).toBe(403);
+      }
+      expect(await storedRole(otherAdmin.id)).toBe("admin");
+    } finally {
+      await deleteTestUser(adminUser.id);
+      await deleteTestUser(otherAdmin.id);
+    }
+  });
+
+  it("an admin cannot demote themselves", async () => {
+    const adminUser = await createTestUser({ role: "admin" });
+    try {
+      const res = await patchRole(adminUser, "admin", adminUser.id, { role: "guest" });
+      expect(res.status).toBe(403);
+      expect(await storedRole(adminUser.id)).toBe("admin");
+    } finally {
+      await deleteTestUser(adminUser.id);
     }
   });
 });

@@ -8,9 +8,12 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { auth } from "../src/auth";
+import { AppError } from "../src/error";
 import { logger } from "../src/logger";
 import { authGuard } from "../src/middlewares/auth_middleware";
+import adminRouter from "../src/routers/admin_router";
 import { users } from "../src/schema";
 import type { TGlobalEnv } from "../src/types/IRouters";
 import { createTestUser, deleteTestUser, getDb } from "./helpers/db";
@@ -30,6 +33,14 @@ app.use("/api/*", authGuard);
 app.get("/api/whoami", (c) =>
   c.json({ userId: c.get("userId"), clerkUserId: c.get("clerkUserId"), role: c.get("role") }),
 );
+// Real admin router behind the REAL guard, so role checks resolve from the DB row.
+app.route("/api/admin", adminRouter);
+app.onError((err, c) => {
+  if (err instanceof AppError) {
+    return c.json({ error: err.message }, err.status as ContentfulStatusCode);
+  }
+  throw err;
+});
 
 const fetchApp = (path: string, init?: RequestInit) =>
   app.fetch(new Request(`http://localhost${path}`, init), { db });
@@ -304,5 +315,55 @@ describe("cookie-triggered CSRF origin check (expo-origin bridge)", () => {
       body: JSON.stringify({ email: `csrf-send-target-${randomUUID()}@example.test`, type: "sign-in" }),
     });
     expect(res.status).toBe(200);
+  });
+});
+
+// A client can claim any role it likes in a request body; the stored users.role
+// row (resolved by the real authGuard on every request) must stay authoritative.
+describe("role escalation — stored role is authoritative", () => {
+  async function signInFreshGuest(): Promise<{ token: string; userId: string }> {
+    clerkAuthMock.getAuth = () => null;
+    const token = await signInWithOtp(`escalation-${randomUUID()}@example.test`);
+    const res = await fetchApp("/api/whoami", { headers: { Authorization: `Bearer ${token}` } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { userId: string; role: string };
+    createdUserIds.push(body.userId);
+    expect(body.role).toBe("guest");
+    return { token, userId: body.userId };
+  }
+
+  it("a guest sending role:admin to the admin API is rejected on the stored role", async () => {
+    const { token, userId } = await signInFreshGuest();
+
+    const res = await fetchApp(`/api/admin/users/${userId}/role`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "admin" }),
+    });
+    expect(res.status).toBe(403);
+
+    const row = await db.query.users.findFirst({ where: eq(users.id, userId) });
+    expect(row?.role).toBe("guest");
+  });
+
+  it("update-user cannot change the stored role (input:false strips it)", async () => {
+    const { token, userId } = await signInFreshGuest();
+
+    const res = await fetchApp("/api/auth/update-user", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Spoofed Admin", role: "admin" }),
+    });
+    // Whether Better Auth strips the field (200) or rejects the body (400),
+    // the stored role must be untouched.
+    expect([200, 400]).toContain(res.status);
+
+    const row = await db.query.users.findFirst({ where: eq(users.id, userId) });
+    expect(row?.role).toBe("guest");
+
+    const whoami = await fetchApp("/api/whoami", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(((await whoami.json()) as { role: string }).role).toBe("guest");
   });
 });

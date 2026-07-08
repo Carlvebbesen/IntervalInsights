@@ -15,23 +15,29 @@ const roleParamSchema = z.object({
 });
 
 const roleSchema = z.object({
-  role: z.enum(["guest", "premium", "admin"]),
+  role: z.enum(["guest", "premium"]),
 });
 
 const roleResponseSchema = z.object({
   id: z.string(),
-  role: z.enum(["guest", "premium", "admin"]),
+  role: z.enum(["guest", "premium"]),
 });
 
 adminRouter.patch(
   "/users/:id/role",
   describeRoute({
     description:
-      "Set a user's role (admin only). Role is stored in the DB users table (source of truth); not mirrored to Clerk.",
+      "Set a user's role (admin only). Role is stored in the DB users table (source of truth). " +
+      "The admin role is out of reach: it cannot be granted here, and users who already hold it " +
+      "cannot be modified — both require a direct database update.",
     responses: {
       200: {
         description: "Updated user role",
         content: { "application/json": { schema: resolver(roleResponseSchema) } },
+      },
+      403: {
+        description: "Attempted to grant admin or to modify an existing admin",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
       },
       404: {
         description: "User not found",
