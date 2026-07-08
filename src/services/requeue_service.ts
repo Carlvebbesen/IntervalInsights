@@ -1,6 +1,11 @@
 import { sql } from "drizzle-orm";
 import { runInBackground } from "../background";
 import { logger } from "../logger";
+import {
+  ANALYSIS_START_DAILY_MAX,
+  ANALYSIS_START_QUOTA,
+  tryConsumeQuota,
+} from "../middlewares/quota_middleware";
 import { activities } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import { startAnalysis } from "./analysis_service";
@@ -70,6 +75,9 @@ export async function requeueStaleActivities(
   }
 
   for (const row of requeued) {
+    // Shares the analysis-start cap with manual/import starts (background
+    // circuit breaker, not a user-facing limit — skip silently once over).
+    if (!tryConsumeQuota(ANALYSIS_START_QUOTA, ANALYSIS_START_DAILY_MAX, userId, logger)) break;
     // Restart by internal id: intervals.icu-only rows (stravaActivityId null)
     // are fetchable too — addressing by Strava id stranded them in `pending`.
     runInBackground(

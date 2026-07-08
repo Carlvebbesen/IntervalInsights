@@ -2,6 +2,13 @@ import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
 import * as analysisController from "../controllers/analysis_controller";
+import {
+  ANALYSIS_START_DAILY_MAX,
+  ANALYSIS_START_QUOTA,
+  dailyQuota,
+  PARSE_INTERVALS_DAILY_MAX,
+  PARSE_INTERVALS_QUOTA,
+} from "../middlewares/quota_middleware";
 import { stravaMiddleware } from "../middlewares/strava_middleware";
 import { trainingTypeEnum } from "../schema/enums";
 import {
@@ -49,6 +56,7 @@ const startAnalysisSchema = z.object({
 
 agentsRouter.post(
   "/start-analysis",
+  dailyQuota(ANALYSIS_START_QUOTA, ANALYSIS_START_DAILY_MAX),
   describeRoute({
     description: "Start the LangGraph analysis pipeline for an activity",
     responses: {
@@ -92,6 +100,7 @@ const resumeAnalysisSchema = z.object({
 
 agentsRouter.post(
   "/resume-analysis",
+  dailyQuota(ANALYSIS_START_QUOTA, ANALYSIS_START_DAILY_MAX),
   describeRoute({
     description: "Resume the LangGraph analysis pipeline after user input",
     responses: {
@@ -129,6 +138,7 @@ const parseIntervalsSchema = z.object({
 
 agentsRouter.post(
   "/parse-intervals",
+  dailyQuota(PARSE_INTERVALS_QUOTA, PARSE_INTERVALS_DAILY_MAX),
   describeRoute({
     description:
       "Parse a free-text workout description (e.g. '6x800m @ 3:45 with 90s rest') into ExpandedIntervalSet[] with proposed paces filled.",

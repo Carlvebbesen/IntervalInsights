@@ -34,6 +34,17 @@ for (const [key, value] of Object.entries(ENV_DEFAULTS)) {
   if (!process.env[key]) process.env[key] = value;
 }
 
+// Bun auto-loads the worktree `.env`, whose URLs point at prod — force the ones
+// tests assert on (e.g. the MCP protected-resource `resource`) to localhost so
+// the suite is hermetic regardless of the developer's `.env`.
+const ENV_FORCE: Record<string, string> = {
+  APP_BASE_URL: "http://localhost:3000/",
+  BETTER_AUTH_URL: "http://localhost:3000",
+};
+for (const [key, value] of Object.entries(ENV_FORCE)) {
+  process.env[key] = value;
+}
+
 // ─── Mocks for service modules ────────────────────────────────────────────────
 // Each test file may override these per-test via mock.module again, but the
 // defaults are sensible no-ops / empty data so endpoints just return.

@@ -125,11 +125,32 @@ The SDK only starts when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so local dev is s
 - `OTEL_DEPLOYMENT_ENVIRONMENT=production`
 - `GIT_SHA=$RAILWAY_GIT_COMMIT_SHA` (becomes `service.version`)
 
+## API-abuse hardening
+
+Layered deterrence against non-app clients using the backend as a free API. MCP (`/mcp`, OAuth tokens, outside `/api/*`) is the sanctioned external door and is exempt from all of this.
+
+**Tier 1a — Better Auth's built-in IP rate limiter.** We rely on the defaults (no `rateLimit` block in `src/auth.ts`). Verified against `better-auth@1.6.23` (`dist/context/create-context.mjs`, `dist/api/rate-limiter/index.mjs`):
+- **Enabled in production only** (`enabled ?? isProduction`) — silent in dev/`test`. In-memory `memory` store (fine on single-instance Railway; if it ever goes multi-instance, set `rateLimit.storage: "database"`).
+- Global default **100 requests / 10 s per IP** (window `10`, max `100`).
+- Special rule for `/sign-in*`, `/sign-up*`, `/change-password*`, `/change-email*`: **3 / 10 s**.
+- emailOTP `/email-otp/send-verification-otp` (and other OTP send/reset paths): **3 / 60 s**. The app's resend cooldown is 20 s, so a real user never trips it.
+
+**Tier 1b — per-user daily quotas on LLM-backed endpoints** (`src/middlewares/quota_middleware.ts`, always on, in-memory per UTC day). Generous by design — a real user never hits them; the analysis cap is a circuit breaker against scripted model spend:
+- `POST /api/v1/agents/suggest-session` — 100/user/day (429 over cap)
+- `POST /api/v1/agents/parse-intervals` — 100/user/day (429)
+- Analysis starts — 1000/user/day, shared bucket across `/start-analysis`, `/resume-analysis` (429), the Strava import fan-out (`strava_api_router.ts` callback) and requeue retries (`requeue_service.ts`) — the last two are background, so they skip-and-warn rather than 429. A batch import of N ids counts N against the cap but is still one request. Webhook auto-analysis (`startAnalysisByStravaId`) is not counted. A warn fires as a user crosses 80%.
+
+**Tier 2 — app client key** (`src/middlewares/client_key_middleware.ts`, `clientKeyGuard`). Deterrence-only (Clerk-publishable-key pattern): the app sends a shared secret as `x-client-key`; nothing here proves app origin (only device attestation could). Mounted on `/api/*` in `src/index.ts` **after** the public routes (so webhooks/health/legal, whose handlers terminate the chain, stay open) and **before** the Better Auth handler (so OTP send/verify is gated too). Controlled by `APP_CLIENT_KEY` / `APP_CLIENT_KEY_MODE` (see env section): unset ⇒ off; `log` ⇒ warn-and-pass (the rollout phase, while already-installed builds send no header); `enforce` ⇒ 401. Do **not** flip to `enforce` until the app release that sends the header is live (and ideally the Phase 6 cutover) — enforcing early bricks every installed build.
+
+Tier 3 (device attestation / OTP-send captcha) stays a documented contingency, triggered by observed abuse in Grafana (OTP-send volume, per-user analysis-start counts, client-key warn rate), not scheduled work.
+
 ## Environment Variables Required
 
 `DATABASE_URL`, `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` (used to derive the Clerk OAuth/FAPI URL for the MCP server), `BETTER_AUTH_SECRET` (min 32 chars, session signing), `BETTER_AUTH_URL` (backend base URL), `RESEND_API_KEY` (OTP email delivery; emails only send in production — dev logs the code), `TOKEN_ENC_KEY` (min 32 chars, provider-token encryption at rest — rotating it invalidates every stored Strava/intervals token), `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `OPENAI_API_KEY` (for GPT-4o-mini). See `src/config.ts` for the full validated set.
 
 Optional store-review demo account: `REVIEW_ACCOUNT_EMAIL` + `REVIEW_ACCOUNT_OTP` (a fixed 6-digit sign-in code for app-store reviewers; both-or-neither, disabled when unset). The review address' OTP email is suppressed — the code lives only in the env. See `src/auth.ts`.
+
+Optional app client key (API-abuse hardening, see below): `APP_CLIENT_KEY` (min 16 chars; unset ⇒ feature off) + `APP_CLIENT_KEY_MODE` (`log` default | `enforce`). See `src/middlewares/client_key_middleware.ts`.
 
 Optional OTel: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` (default `intervals-backend`), `OTEL_SERVICE_VERSION` / `GIT_SHA`, `OTEL_DEPLOYMENT_ENVIRONMENT`.
 

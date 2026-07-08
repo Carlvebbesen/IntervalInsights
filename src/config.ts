@@ -36,6 +36,13 @@ const envSchema = z
       .regex(/^\d{6}$/)
       .optional(),
 
+    // App client key (deterrence-only, Clerk-publishable-key pattern): the app
+    // sends it as `x-client-key` on every `/api/*` call. Unset = feature fully
+    // off (dev/tests unaffected). `log` warns on mismatch and lets the request
+    // through; `enforce` 401s. See src/middlewares/client_key_middleware.ts.
+    APP_CLIENT_KEY: z.string().min(16).optional(),
+    APP_CLIENT_KEY_MODE: z.enum(["log", "enforce"]).default("log"),
+
     // App
     APP_BASE_URL: z.string().url(),
     PORT: z.coerce.number().default(3000),
