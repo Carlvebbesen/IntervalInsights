@@ -1,6 +1,8 @@
+import { createAuthEndpoint } from "@better-auth/core/api";
 import { type BetterAuthPlugin, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { bearer, emailOTP } from "better-auth/plugins";
+import { z } from "zod";
 import { config } from "./config";
 import { db } from "./db";
 import { logger } from "./logger";
@@ -40,6 +42,67 @@ const expoOriginBridge = {
     return { request: new Request(request, { headers }) };
   },
 } satisfies BetterAuthPlugin;
+
+/**
+ * Explicit sign-up endpoint (replaces the removed OTP auto-register — sign-in
+ * with `disableSignUp: true` no longer creates accounts). The client hits this
+ * to register, then runs the normal send-verification-otp → sign-in/email-otp
+ * round-trip. No session is created here.
+ *
+ * Enumeration-safe: returns the identical `{ success: true }` whether the email
+ * is new (row created) or already registered (nothing created, name ignored),
+ * so a caller can never tell which. Rate limiting is free from the `/sign-up`
+ * path prefix (Better Auth's built-in rule, production only).
+ */
+const signUpEmailOtp = {
+  id: "signup-email-otp",
+  endpoints: {
+    signUpEmailOTP: createAuthEndpoint(
+      "/sign-up/email-otp",
+      {
+        method: "POST",
+        body: z.object({
+          name: z.string().trim().min(1).max(100),
+          email: z.string().email(),
+        }),
+      },
+      async (ctx) => {
+        const { name, email } = ctx.body;
+        if (await ctx.context.internalAdapter.findUserByEmail(email)) {
+          return ctx.json({ success: true });
+        }
+        try {
+          await ctx.context.internalAdapter.createUser({ email, name, emailVerified: false });
+        } catch (err) {
+          // Unique-violation race: a concurrent request created the row between
+          // our check and insert. Re-check; if it now exists, that's success.
+          if (!(await ctx.context.internalAdapter.findUserByEmail(email))) throw err;
+        }
+        return ctx.json({ success: true });
+      },
+    ),
+  },
+} satisfies BetterAuthPlugin;
+
+/**
+ * Seed the store-review demo account (Item 3 of the sign-in/sign-up split).
+ * Removing OTP auto-register means the review address is no longer created on
+ * first verify, so we ensure the row exists at boot. Idempotent; a no-op when
+ * the env pair is unset. Called explicitly (prod: src/index.ts; tests: the
+ * review-account describe) — never as an import-time side effect.
+ */
+export async function ensureReviewAccount(): Promise<void> {
+  if (config.REVIEW_ACCOUNT_EMAIL === undefined) return;
+  await db
+    .insert(schema.users)
+    .values({
+      email: config.REVIEW_ACCOUNT_EMAIL,
+      name: "Store Review",
+      emailVerified: true,
+      role: "guest",
+    })
+    .onConflictDoNothing({ target: schema.users.email });
+}
 
 /**
  * Better Auth instance (dual-auth window: runs alongside Clerk until Phase 6).
@@ -103,8 +166,9 @@ export const auth = betterAuth({
     user: {
       create: {
         before: async (user) => {
-          // OTP auto-register has no name input; default to the email
-          // local-part, mirroring the Phase 3 backfill's fallback rule.
+          // Defensive name fallback for any nameless createUser (our sign-up
+          // endpoint always supplies one): default to the email local-part,
+          // mirroring the Phase 3 backfill's fallback rule.
           if (user.name) return;
           return { data: { ...user, name: user.email?.split("@")[0] ?? null } };
         },
@@ -135,8 +199,12 @@ export const auth = betterAuth({
       // requires the stored OTP to be recoverable, hence encrypted (not hashed).
       resendStrategy: "reuse",
       storeOTP: "encrypted",
+      // Unknown-email sign-in sends no code and creates no account (enumeration
+      // protection). Registration goes through the signUpEmailOtp plugin below.
+      disableSignUp: true,
     }),
     bearer(),
     expoOriginBridge,
+    signUpEmailOtp,
   ],
 });

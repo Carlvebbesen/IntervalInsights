@@ -11,7 +11,7 @@ import { cors } from "hono/cors";
 import { requestId } from "hono/request-id";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { openAPIRouteHandler } from "hono-openapi";
-import { auth } from "./auth";
+import { auth, ensureReviewAccount } from "./auth";
 import { config } from "./config";
 import { db } from "./db";
 import { AppError, IntervalsError, StravaError } from "./error";
@@ -205,6 +205,11 @@ app.onError((err, c) => {
   c.var.logger.error({ err }, "Internal Error");
   return c.json({ error: "Internal Server Error" }, 500);
 });
+
+// Bun awaits module top-level before serving — seed the store-review demo
+// account (no-op when REVIEW_ACCOUNT_* is unset) now that OTP auto-register is
+// gone. There is no shared boot path, so this is the sole prod call site.
+await ensureReviewAccount();
 
 export default {
   port: config.PORT,
