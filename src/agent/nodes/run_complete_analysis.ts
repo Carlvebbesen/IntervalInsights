@@ -3,7 +3,11 @@ import { eq } from "drizzle-orm";
 import { logger } from "../../logger";
 import { activities } from "../../schema";
 import { INTERVAL_TRAINING_TYPES, isPowerSport } from "../../schema/enums";
-import { mapBoundariesToSegments, toBoundaries } from "../../services/segment_mapping_service";
+import {
+  boundariesMatchUserShape,
+  mapBoundariesToSegments,
+  toBoundaries,
+} from "../../services/segment_mapping_service";
 import { needCompleteAnalysis } from "../../services/utils";
 import type { StreamSet } from "../../types/strava/IStream";
 import type { AnalysisState, GraphConfigurable, SegmentBoundary } from "../graph_state";
@@ -46,7 +50,8 @@ export async function runCompleteAnalysis(
       `[runCompleteAnalysis activity=${state.activityId}] streams missing time or distance — cannot compute segment stats`,
     );
   }
-  const statsStreams = state.streams as Required<Pick<StreamSet, "time" | "distance">> &
+  const streams = state.streams;
+  const statsStreams = streams as Required<Pick<StreamSet, "time" | "distance">> &
     Pick<StreamSet, "heartrate">;
 
   await db
@@ -54,16 +59,12 @@ export async function runCompleteAnalysis(
     .set({ analysisStatus: "ongoing_completed", analysisStartedAt: new Date() })
     .where(eq(activities.id, state.activityId));
 
-  const boundaries: SegmentBoundary[] = state.userEditedSegments.length
-    ? state.userEditedSegments
-    : toBoundaries(state.proposedSegments);
-
-  if (boundaries.length === 0) {
-    log.warn("no edited or proposed segments — falling back to inline produceSegments (legacy)");
-    const fallback = await produceSegments({
+  const deriveFromUserShape = (reason: string) => {
+    log.warn(reason);
+    return produceSegments({
       activityId: state.activityId,
       statsStreams,
-      streams: state.streams,
+      streams,
       laps: state.laps,
       isIndoor: state.isIndoor,
       userSets: state.userSets,
@@ -73,13 +74,39 @@ export async function runCompleteAnalysis(
       intervalsIcuIntervals: state.intervalsIcuPrediction?.intervals ?? null,
       declaredReps:
         state.structureSource !== "model"
-          ? state.userSets.reduce((n, s) => n + s.steps.length, 0)
+          ? state.userSets.reduce((n, s) => n + s.steps.length, 0) || undefined
           : undefined,
       log,
       tag: `[runCompleteAnalysis activity=${state.activityId}]`,
     });
+  };
+
+  const hasEdits = state.userEditedSegments.length > 0;
+  const boundaries: SegmentBoundary[] = hasEdits
+    ? state.userEditedSegments
+    : toBoundaries(state.proposedSegments);
+
+  if (boundaries.length === 0) {
+    const fallback = await deriveFromUserShape(
+      "no edited or proposed segments — falling back to inline produceSegments (legacy)",
+    );
     log.info({ computedSegments: fallback.length }, "computed segments (legacy fallback)");
     return { computedSegments: fallback };
+  }
+
+  // D5: user's explicit boundary edits always win. But when boundaries come from
+  // the stale proposal and their work count disagrees with the (possibly
+  // notes-reconciled) userSets, mapping labels onto them would ship the wrong rep
+  // count — re-derive boundaries from the user shape instead.
+  if (!hasEdits && !boundariesMatchUserShape(boundaries, state.userSets)) {
+    const rederived = await deriveFromUserShape(
+      "proposed boundaries disagree with user shape — re-deriving segments from user sets",
+    );
+    log.info(
+      { computedSegments: rederived.length },
+      "computed segments (re-derived, boundary/sets mismatch)",
+    );
+    return { computedSegments: rederived };
   }
 
   const computedSegments = mapBoundariesToSegments(
@@ -91,7 +118,7 @@ export async function runCompleteAnalysis(
   );
 
   log.info(
-    { computedSegments: computedSegments.length, fromEdits: state.userEditedSegments.length > 0 },
+    { computedSegments: computedSegments.length, fromEdits: hasEdits },
     "computed segments (deterministic mapping)",
   );
   return { computedSegments };

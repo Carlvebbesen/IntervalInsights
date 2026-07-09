@@ -8,8 +8,9 @@ import {
 } from "../../services/text_intent_service";
 import { lapsMatchIntervals, needCompleteAnalysis } from "../../services/utils";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";
-import { invokeActivityAnalysisAgent, type WorkoutAnalysisOutput } from "../initial_analysis_agent";
+import { invokeActivityAnalysisAgent } from "../initial_analysis_agent";
 import { ANALYSIS_VERSION, invokeWithRateLimitRetry } from "../model";
+import { countStructureReps } from "../segment_production";
 
 export async function runInitialAgent(
   state: AnalysisState,
@@ -57,8 +58,8 @@ export async function runInitialAgent(
       log.info(
         {
           structureSource: "text",
-          modelReps: countReps(initialResult.structure),
-          declaredReps: countReps(result.structure),
+          modelReps: countStructureReps(initialResult.structure) ?? 0,
+          declaredReps: countStructureReps(result.structure) ?? 0,
           modelType: initialResult.training_type,
           declaredType: result.training_type,
         },
@@ -108,14 +109,4 @@ export async function runInitialAgent(
   );
 
   return { initialResult: finalResult, lapsMatchStructure, structureSource };
-}
-
-/** Total work reps implied by a structure (set_reps × Σ step.reps), for logging. */
-function countReps(structure: WorkoutAnalysisOutput["structure"]): number {
-  if (!structure) return 0;
-  let n = 0;
-  for (const set of structure) {
-    n += (set.set_reps ?? 1) * set.steps.reduce((s, st) => s + (st.reps ?? 1), 0);
-  }
-  return n;
 }

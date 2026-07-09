@@ -19,7 +19,6 @@ import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
 import {
   analysisStatusEnum,
   type TargetTypeEnum,
-  type TrainingType,
   trainingTypeEnum,
   type WorkoutPartType,
 } from "./enums";
@@ -30,7 +29,6 @@ import { intervalStructures } from "./interval_structure";
 import { users } from "./users";
 
 export type IntervalsIcuPrediction = {
-  trainingType?: TrainingType;
   subType?: string | null;
   intervals?: IIntervalsInterval[];
 };

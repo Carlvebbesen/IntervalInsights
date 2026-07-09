@@ -94,7 +94,6 @@ export async function previewSegments(
     isIndoor: activity.indoor ?? false,
     userSets: sets,
     initialResult,
-    userNotes: "",
     trainingType,
     intervalsIcuIntervals,
     log,

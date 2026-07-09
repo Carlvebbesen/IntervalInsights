@@ -61,7 +61,7 @@ export async function produceSegments(params: {
   isIndoor: boolean;
   userSets: ExpandedIntervalSet[];
   initialResult: WorkoutAnalysisOutput | null;
-  userNotes: string;
+  userNotes?: string;
   trainingType: TrainingType;
   intervalsIcuIntervals?: IIntervalsInterval[] | null;
   // Authoritative work-rep count from a text/notes-declared structure. When set,
@@ -73,6 +73,7 @@ export async function produceSegments(params: {
 }): Promise<InsertIntervalSegment[]> {
   const { activityId, statsStreams, streams, laps, userSets, initialResult, log } = params;
   const t0 = statsStreams.time.data[0] ?? 0;
+  const userNotes = params.userNotes ?? "";
   const declaredReps = params.declaredReps;
   const workCount = (segments: InsertIntervalSegment[]): number =>
     segments.filter((s) => s.type === "INTERVALS").length;
@@ -154,7 +155,7 @@ export async function produceSegments(params: {
   const segmentPlan = await invokeWithRateLimitRetry(() =>
     invokeCompleteActivityAnalysisAgent(
       streams,
-      params.userNotes,
+      userNotes,
       params.trainingType,
       laps,
       initialResult,

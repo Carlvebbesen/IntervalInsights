@@ -285,23 +285,6 @@ export const resumeAnalysis = async (
   });
 };
 
-export const startAnalysisByStravaId = async (
-  db: IGlobalBindings["db"],
-  stravaAccessToken: string,
-  stravaActivityId: number,
-  userId: string,
-): Promise<void> => {
-  const result = await db.query.activities.findFirst({
-    where: eq(activities.stravaActivityId, stravaActivityId),
-    columns: { id: true },
-  });
-  if (!result) {
-    logger.error({ stravaActivityId }, "Activity not found in DB");
-    return;
-  }
-  await startAnalysis(db, stravaAccessToken, result.id, stravaActivityId, userId);
-};
-
 export const triggerAnalysisByStravaId = async (
   db: IGlobalBindings["db"],
   stravaAccessToken: string,

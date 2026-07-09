@@ -130,13 +130,10 @@ function formatIntervalsIcuBlock(prediction: IntervalsIcuPrediction | null | und
       return `| ${idx + 1} | ${i.type} | ${i.distance}m | ${i.moving_time}s | ${pace} | ${hr} | ${load} |`;
     })
     .join("\n");
-  const typeHint = prediction.trainingType
-    ? `intervals.icu suggests training type: **${prediction.trainingType}**${prediction.subType ? ` (sub: ${prediction.subType})` : ""}.`
-    : "";
   const tableBlock = rows
     ? `\n| # | Type | Distance | Time | Avg pace | Avg HR | Load |\n|---|------|----------|------|----------|--------|------|\n${rows}`
     : "";
-  return `\n  ### INTERVALS.ICU PREDICTION (treat as a strong hint, not ground truth)\n  ${typeHint}${tableBlock}\n`;
+  return `\n  ### INTERVALS.ICU PREDICTION (treat as a strong hint, not ground truth)\n  ${tableBlock}\n`;
 }
 
 /**

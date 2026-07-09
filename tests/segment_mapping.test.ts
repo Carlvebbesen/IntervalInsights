@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  boundariesMatchUserShape,
   type FullSegmentSpec,
   mapBoundariesToSegments,
   recomputeSegmentStats,
@@ -7,7 +8,10 @@ import {
   toBoundaries,
 } from "../src/services/segment_mapping_service";
 import type { SegmentBoundary } from "../src/agent/graph_state";
-import type { ExpandedIntervalSet } from "../src/types/ExpandedIntervalSet";
+import type {
+  ExpandedIntervalSet,
+  ExpandedIntervalStep,
+} from "../src/types/ExpandedIntervalSet";
 
 function streams() {
   return {
@@ -226,5 +230,37 @@ describe("toBoundaries", () => {
     }[] = [{ type: "WARMUP", setGroupIndex: 0, timeSeriesEndTime: 20, actualDistance: 60 }];
     const out = toBoundaries(full);
     expect(out).toEqual([{ type: "WARMUP", setGroupIndex: 0, timeSeriesEndTime: 20 }]);
+  });
+});
+
+describe("boundariesMatchUserShape", () => {
+  const step: ExpandedIntervalStep = {
+    work_type: "DISTANCE",
+    work_value: 400,
+    recovery_type: "TIME",
+    recovery_value: 60,
+    target_pace: 3.5,
+  };
+  const setWith = (n: number): ExpandedIntervalSet => ({ steps: Array.from({ length: n }, () => step) });
+  const workBoundaries = (n: number): SegmentBoundary[] => [
+    { type: "WARMUP", setGroupIndex: 0, timeSeriesEndTime: 10 },
+    ...Array.from({ length: n }, (_, i) => ({
+      type: "INTERVALS" as const,
+      setGroupIndex: 1,
+      timeSeriesEndTime: 20 + i * 10,
+    })),
+    { type: "COOL_DOWN", setGroupIndex: 0, timeSeriesEndTime: 20 + n * 10 },
+  ];
+
+  it("matching work counts → true", () => {
+    expect(boundariesMatchUserShape(workBoundaries(8), [setWith(8)])).toBe(true);
+  });
+
+  it("proposal 10 work boundaries vs 8 user steps → false", () => {
+    expect(boundariesMatchUserShape(workBoundaries(10), [setWith(8)])).toBe(false);
+  });
+
+  it("empty userSets → true (nothing to enforce)", () => {
+    expect(boundariesMatchUserShape(workBoundaries(10), [])).toBe(true);
   });
 });

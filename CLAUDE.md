@@ -90,7 +90,7 @@ Every activity flows through a single graph, paused mid-way for user confirmatio
 
 **Auto-retry for errors**: `error` activities with `analysisAttemptCount < 2` are retried automatically by `/pending`. After two failures the user must manually retry.
 
-**Idempotency**: `startAnalysis` and `restartAnalysisByStravaId` skip activities already in `{ongoing_init, ongoing_completed, initial, completed, skipped_inactive}`. GET endpoints NEVER trigger analysis.
+**Idempotency**: `startAnalysis` and `triggerAnalysisByStravaId` skip activities already in `{ongoing_init, ongoing_completed, initial, completed, skipped_inactive}`. GET endpoints NEVER trigger analysis.
 
 **Agents** (`src/agent/`):
 - `initial_analysis_agent.ts` — classify + draft structure, with optional intervals.icu prediction block.
@@ -141,7 +141,7 @@ Layered deterrence against non-app clients using the backend as a free API. MCP 
 **Tier 1b — per-user daily quotas on LLM-backed endpoints** (`src/middlewares/quota_middleware.ts`, always on, in-memory per UTC day). Generous by design — a real user never hits them; the analysis cap is a circuit breaker against scripted model spend:
 - `POST /api/v1/agents/suggest-session` — 100/user/day (429 over cap)
 - `POST /api/v1/agents/parse-intervals` — 100/user/day (429)
-- Analysis starts — 1000/user/day, shared bucket across `/start-analysis`, `/resume-analysis` (429), the Strava import fan-out (`strava_api_router.ts` callback) and requeue retries (`requeue_service.ts`) — the last two are background, so they skip-and-warn rather than 429. A batch import of N ids counts N against the cap but is still one request. Webhook auto-analysis (`startAnalysisByStravaId`) is not counted. A warn fires as a user crosses 80%.
+- Analysis starts — 1000/user/day, shared bucket across `/start-analysis`, `/resume-analysis` (429), the Strava import fan-out (`strava_api_router.ts` callback) and requeue retries (`requeue_service.ts`) — the last two are background, so they skip-and-warn rather than 429. A batch import of N ids counts N against the cap but is still one request. Webhook auto-analysis (`triggerAnalysisByStravaId`, via `process_strava_event.ts`) is not counted. A warn fires as a user crosses 80%.
 
 **Tier 2 — app client key** (`src/middlewares/client_key_middleware.ts`, `clientKeyGuard`). Deterrence-only (Clerk-publishable-key pattern): the app sends a shared secret as `x-client-key`; nothing here proves app origin (only device attestation could). Mounted on `/api/*` in `src/index.ts` **after** the public routes (so webhooks/health/legal, whose handlers terminate the chain, stay open) and **before** the Better Auth handler (so OTP send/verify is gated too). Controlled by `APP_CLIENT_KEY` / `APP_CLIENT_KEY_MODE` (see env section): unset ⇒ off; `log` ⇒ warn-and-pass (the rollout phase, while already-installed builds send no header); `enforce` ⇒ 401. Do **not** flip to `enforce` until the app release that sends the header is live (and ideally the Phase 6 cutover) — enforcing early bricks every installed build.
 

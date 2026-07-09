@@ -58,7 +58,6 @@ export async function proposeSegments(
     isIndoor: state.isIndoor,
     userSets: draftSets,
     initialResult: state.initialResult,
-    userNotes: "",
     trainingType,
     intervalsIcuIntervals: state.intervalsIcuPrediction?.intervals ?? null,
     declaredReps:
