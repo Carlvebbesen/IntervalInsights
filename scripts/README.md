@@ -26,6 +26,17 @@ runScript({ name: "my_script", once: false, db, pool }, main);
   logs and exits 0 without running again. Use for one-time data backfills.
 - On failure the body should `throw` (the harness records `status = 'failed'` and exits 1).
 
+### Checking what's pending on the current DB
+
+```bash
+bun run scripts:status     # == bun run scripts/status.ts
+```
+
+Read-only status against `DATABASE_URL`: lists every Drizzle migration
+(journal vs `drizzle.__drizzle_migrations`) and every run-once script
+(registry vs `script_runs`) with applied/pending state. Exits 1 when anything
+is pending, so it can gate other commands.
+
 ### Running all pending run-once scripts
 
 ```bash
@@ -35,8 +46,9 @@ bun run scripts:run        # == bun run scripts/run_pending.ts
 Migration-style runner: checks `script_runs`, then runs only the run-once scripts that
 haven't completed yet (in order, clerk sync last), streaming each script's output and
 stopping on the first failure. Already-completed scripts are skipped. The ordered registry
-lives in `scripts/run_pending.ts` — keep it in sync with the `once: true` scripts. This is a
-manual command; it is **not** wired into deploy (deploy runs only `db:migrate`).
+lives in `scripts/_registry.ts` (shared with `status.ts`) — keep it in sync with the
+`once: true` scripts. This is a manual command; it is **not** wired into deploy
+(deploy runs only `db:migrate`).
 
 ### Baselining already-run scripts
 

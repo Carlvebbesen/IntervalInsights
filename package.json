@@ -12,6 +12,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "scripts:run": "bun run scripts/run_pending.ts",
+    "scripts:status": "bun run scripts/status.ts",
     "brain:sync": "rm -rf knowledge/brain && mkdir -p knowledge && cp -R ../interval-brain/brain knowledge/brain && rm -rf knowledge/brain/_templates && rm -f knowledge/brain/log.md"
   },
   "dependencies": {
