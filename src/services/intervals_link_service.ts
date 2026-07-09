@@ -6,6 +6,7 @@ import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import { activities, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsActivity } from "../types/intervals/IIntervalsActivity";
+import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { intervalsApiService } from "./intervals_api_service";
 import { mapIntervalsActivityToInsert } from "./intervals_mappers";
 import { deleteProviderToken } from "./oauth_token_store";
@@ -16,6 +17,7 @@ type EnrichmentFields = Partial<
     InsertActivity,
     | "elapsedTime"
     | "maxHeartRate"
+    | "hasHeartrate"
     | "averagePower"
     | "weightedAveragePower"
     | "calories"
@@ -30,10 +32,12 @@ type EnrichmentFields = Partial<
   >
 >;
 
-function buildEnrichment(activity: IIntervalsActivity): EnrichmentFields {
-  return {
+function buildEnrichment(
+  activity: IIntervalsActivity,
+  processHeartRate: boolean,
+): EnrichmentFields {
+  const base: EnrichmentFields = {
     elapsedTime: activity.elapsed_time ?? null,
-    maxHeartRate: activity.max_heartrate ?? null,
     averagePower: activity.icu_average_watts ?? null,
     weightedAveragePower: activity.icu_weighted_avg_watts ?? null,
     calories: activity.calories ?? null,
@@ -45,6 +49,19 @@ function buildEnrichment(activity: IIntervalsActivity): EnrichmentFields {
     icuFtp: activity.icu_ftp ?? null,
     icuCtl: activity.icu_ctl ?? null,
     icuAtl: activity.icu_atl ?? null,
+  };
+  // GDPR consent gate: when HR processing is off, never persist HR from
+  // intervals.icu. Omit the HR fields entirely (rather than writing null) so an
+  // enrich pass over an existing row can't clobber HR another source legitimately
+  // stored under consent. Setting hasHeartrate only when true also repairs the
+  // flag intervals ingest historically never set.
+  if (!processHeartRate) return base;
+  return {
+    ...base,
+    maxHeartRate: activity.max_heartrate ?? null,
+    ...(activity.average_heartrate != null || activity.max_heartrate != null
+      ? { hasHeartrate: true }
+      : {}),
   };
 }
 
@@ -117,6 +134,7 @@ async function commitLink(
   context: IGlobalBindings,
   localActivityId: number,
   intervalsActivity: IIntervalsActivity,
+  processHeartRate: boolean,
 ): Promise<void> {
   await context.db
     .update(activities)
@@ -124,7 +142,7 @@ async function commitLink(
       intervalsIcuId: intervalsActivity.id,
       intervalsAnalyzed: true,
       intervalsIcuEnrichedAt: new Date(),
-      ...buildEnrichment(intervalsActivity),
+      ...buildEnrichment(intervalsActivity, processHeartRate),
     })
     .where(and(eq(activities.id, localActivityId), isNull(activities.intervalsIcuId)));
 }
@@ -146,7 +164,8 @@ export async function linkFromIntervalsActivity(
   const match = await findLocalByFuzzyMatch(context, user.id, intervalsActivity);
   if (!match) return null;
 
-  await commitLink(context, match.id, intervalsActivity);
+  const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
+  await commitLink(context, match.id, intervalsActivity, processHeartRate);
   return { localActivityId: match.id, intervalsActivityId };
 }
 
@@ -166,6 +185,8 @@ export async function linkFromLocalActivity(
     },
   });
   if (!activity || activity.intervalsIcuId) return null;
+
+  const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
 
   let accessToken: string;
   try {
@@ -204,7 +225,7 @@ export async function linkFromLocalActivity(
         logger.error({ err, intervalsActivityId: exact[0].id }, "intervals.icu getActivity failed");
         full = exact[0];
       }
-      await commitLink(context, activity.id, full);
+      await commitLink(context, activity.id, full, processHeartRate);
       return { localActivityId: activity.id, intervalsActivityId: full.id };
     }
   }
@@ -232,7 +253,7 @@ export async function linkFromLocalActivity(
     full = fuzzy[0];
   }
 
-  await commitLink(context, activity.id, full);
+  await commitLink(context, activity.id, full, processHeartRate);
   return { localActivityId: activity.id, intervalsActivityId: full.id };
 }
 
@@ -278,11 +299,12 @@ export async function enrichActivityFromIntervalsIcu(
     return "no_match";
   }
 
+  const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
   await context.db
     .update(activities)
     .set({
       intervalsIcuEnrichedAt: new Date(),
-      ...buildEnrichment(full),
+      ...buildEnrichment(full, processHeartRate),
     })
     .where(eq(activities.id, activity.id));
 
@@ -393,6 +415,7 @@ export async function syncAllFromIntervals(
 
   try {
     const accessToken = await getIntervalsAccessToken(user.id);
+    const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
 
     const localRows = await context.db
       .select({
@@ -477,18 +500,18 @@ export async function syncAllFromIntervals(
                 "intervals.icu getActivity failed during master sync — using list payload",
               );
             }
-            await commitLink(context, localMatch.id, full);
+            await commitLink(context, localMatch.id, full, processHeartRate);
             knownIntervalsIds.add(intervalsActivity.id);
             const idx = unlinkedLocals.indexOf(localMatch);
             if (idx >= 0) unlinkedLocals.splice(idx, 1);
             result.linked++;
           } else {
             const payload: InsertActivity = {
-              ...mapIntervalsActivityToInsert(intervalsActivity, user.id),
+              ...mapIntervalsActivityToInsert(intervalsActivity, user.id, processHeartRate),
               intervalsAnalyzed: true,
               intervalsIcuEnrichedAt: new Date(),
               analysisStatus: AUTO_ANALYZE_ON_IMPORT ? "pending" : "completed",
-              ...buildEnrichment(intervalsActivity),
+              ...buildEnrichment(intervalsActivity, processHeartRate),
             };
             await context.db.insert(activities).values(payload).onConflictDoNothing();
             knownIntervalsIds.add(intervalsActivity.id);

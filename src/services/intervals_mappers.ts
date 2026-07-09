@@ -22,7 +22,9 @@ function parseIntervalsLocalStart(value: string): Date {
 export function mapIntervalsActivityToInsert(
   activity: IIntervalsActivity,
   userId: string,
+  processHeartRate: boolean,
 ): InsertActivity {
+  const hasHr = activity.average_heartrate != null || activity.max_heartrate != null;
   return {
     userId,
     stravaActivityId: null,
@@ -35,7 +37,8 @@ export function mapIntervalsActivityToInsert(
     movingTime: activity.moving_time ?? 0,
     elapsedTime: activity.elapsed_time ?? null,
     totalElevationGain: activity.total_elevation_gain ?? null,
-    averageHeartRate: activity.average_heartrate ?? null,
+    averageHeartRate: processHeartRate ? (activity.average_heartrate ?? null) : null,
+    hasHeartrate: processHeartRate && hasHr,
     startDateLocal: parseIntervalsLocalStart(activity.start_date_local),
     indoor: activity.trainer ?? false,
   };
