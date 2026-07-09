@@ -82,7 +82,7 @@ function trampolinePage(
 </head>
 <body>
   <main>
-    <img class="icon" src="/app-icon.png" alt="Interval Insights icon" />
+    <img class="icon" src="/app-icon.png?v=2" alt="Interval Insights icon" />
     <h1>${escapeHtml(title)}</h1>
     <p>${escapeHtml(lead)}</p>
     <a id="open-app" class="button" href="${escapeHtml(appLinkUrl)}">Open Interval Insights</a>

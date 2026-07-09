@@ -150,7 +150,7 @@ function shell(title: string, content: string): string {
 <body>
   <nav>
     <a href="/" class="logo">
-      <img src="/app-icon.png" alt="Interval Insights icon" />
+      <img src="/app-icon.png?v=2" alt="Interval Insights icon" />
       Interval<span>Insights</span>
     </a>
     <a href="/" class="nav-back">← Back to home</a>
