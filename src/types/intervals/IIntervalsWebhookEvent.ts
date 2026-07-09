@@ -1,5 +1,8 @@
 export type IntervalsActivityEventType =
   | "ACTIVITY_UPLOADED"
+  // The dashboard's "created" checkbox may deliver this instead of UPLOADED;
+  // treated as an alias of UPLOADED by the handler.
+  | "ACTIVITY_CREATED"
   | "ACTIVITY_UPDATED"
   | "ACTIVITY_ANALYZED"
   | "ACTIVITY_DELETED";

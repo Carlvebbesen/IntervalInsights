@@ -165,7 +165,13 @@ publicRouter.post(
 );
 
 const IntervalsActivityEventSchema = z.object({
-  type: z.enum(["ACTIVITY_UPLOADED", "ACTIVITY_UPDATED", "ACTIVITY_ANALYZED", "ACTIVITY_DELETED"]),
+  type: z.enum([
+    "ACTIVITY_UPLOADED",
+    "ACTIVITY_CREATED",
+    "ACTIVITY_UPDATED",
+    "ACTIVITY_ANALYZED",
+    "ACTIVITY_DELETED",
+  ]),
   athlete_id: z.string(),
   timestamp: z.string().optional(),
   activity: z

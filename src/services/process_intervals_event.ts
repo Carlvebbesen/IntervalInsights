@@ -1,7 +1,11 @@
 import { logger } from "../logger";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsWebhookEvent } from "../types/intervals/IIntervalsWebhookEvent";
-import { handleIntervalsScopeChange, linkFromIntervalsActivity } from "./intervals_link_service";
+import {
+  handleIntervalsScopeChange,
+  linkOrCreateFromIntervalsActivity,
+  refreshLinkedIntervalsActivity,
+} from "./intervals_link_service";
 import { progressService } from "./progress_service";
 
 export async function processIntervalsWebhook(
@@ -11,59 +15,120 @@ export async function processIntervalsWebhook(
   const log = logger.child({ fn: "processIntervalsWebhook", type: event.type });
 
   if (event.type === "TEST") {
-    log.info({ athleteId: event.athlete_id }, "Intervals.icu TEST event acknowledged");
+    log.info(
+      { athleteId: event.athlete_id, outcome: "ignored" },
+      "Intervals.icu TEST acknowledged",
+    );
     return;
   }
 
   const user = await context.db.query.users.findFirst({
     where: (u, { eq }) => eq(u.intervalsAthleteId, event.athlete_id),
-    columns: { id: true, clerkId: true },
+    columns: { id: true, clerkId: true, lastSeenAt: true },
   });
 
   if (!user) {
-    log.info({ athleteId: event.athlete_id }, "No user found for Intervals.icu athlete");
-    return;
-  }
-
-  if (event.type === "ACTIVITY_UPLOADED" || event.type === "ACTIVITY_ANALYZED") {
-    const activity = (event as { activity?: { id: string | number } }).activity;
-    const activityId = activity ? String(activity.id) : undefined;
-    if (!activityId) {
-      log.info("Activity event missing activity.id, skipping");
-      return;
-    }
-    const result = await linkFromIntervalsActivity(context, user, activityId);
-    if (!result) {
-      log.info(
-        { intervalsActivityId: activityId },
-        "No matching local activity for Intervals.icu activity",
-      );
-      return;
-    }
     log.info(
-      {
-        intervalsActivityId: result.intervalsActivityId,
-        localActivityId: result.localActivityId,
-      },
-      "Linked Intervals.icu activity",
+      { athleteId: event.athlete_id, outcome: "ignored" },
+      "No user found for Intervals.icu athlete",
     );
-    await progressService.publish(user.id, {
-      type: "progress",
-      data: {
-        id: result.localActivityId,
-        kind: "intervals_sync",
-        phase: "received",
-        message: "intervals.icu activity linked",
-      },
-    });
     return;
   }
 
   if (event.type === "APP_SCOPE_CHANGED") {
     const outcome = await handleIntervalsScopeChange(context, user);
-    log.info({ clerkUserId: user.clerkId, outcome }, "APP_SCOPE_CHANGED");
+    log.info(
+      { athleteId: event.athlete_id, clerkUserId: user.clerkId, outcome },
+      "APP_SCOPE_CHANGED",
+    );
     return;
   }
 
-  log.info("Ignoring Intervals.icu event");
+  const rawActivity = (event as { activity?: { id: string | number } }).activity;
+  const intervalsActivityId = rawActivity ? String(rawActivity.id) : undefined;
+
+  if (event.type === "ACTIVITY_DELETED") {
+    // Not enabled in the dashboard; mirroring deletion is an explicit follow-up.
+    log.info(
+      { athleteId: event.athlete_id, intervalsActivityId, outcome: "ignored" },
+      "Ignoring Intervals.icu ACTIVITY_DELETED",
+    );
+    return;
+  }
+
+  const isIngest = event.type === "ACTIVITY_UPLOADED" || event.type === "ACTIVITY_CREATED";
+  const isAnalyzed = event.type === "ACTIVITY_ANALYZED";
+  const isUpdated = event.type === "ACTIVITY_UPDATED";
+
+  if (!isIngest && !isAnalyzed && !isUpdated) {
+    log.info({ athleteId: event.athlete_id, outcome: "ignored" }, "Ignoring Intervals.icu event");
+    return;
+  }
+
+  if (!intervalsActivityId) {
+    log.info(
+      { athleteId: event.athlete_id, outcome: "ignored" },
+      "Activity event missing activity.id, skipping",
+    );
+    return;
+  }
+
+  // UPDATED / ANALYZED on an already-linked row: refresh enrichment + numeric
+  // metadata (user-authored title/description/notes are preserved). When no
+  // local row matches yet, fall through to link-or-create — for ANALYZED this
+  // is the ~60 s-delayed safety net; for UPDATED it's a first-seen activity.
+  if (isUpdated || isAnalyzed) {
+    const existing = await context.db.query.activities.findFirst({
+      where: (a, { and, eq }) =>
+        and(eq(a.userId, user.id), eq(a.intervalsIcuId, intervalsActivityId)),
+      columns: { id: true },
+    });
+    if (existing) {
+      const refresh = await refreshLinkedIntervalsActivity(context, user, existing.id);
+      log.info(
+        {
+          athleteId: event.athlete_id,
+          intervalsActivityId,
+          localActivityId: existing.id,
+          outcome: isUpdated ? "updated" : "refreshed",
+          refresh,
+        },
+        "intervals.icu activity refreshed",
+      );
+      return;
+    }
+  }
+
+  const result = await linkOrCreateFromIntervalsActivity(context, user, intervalsActivityId);
+  log.info(
+    {
+      athleteId: event.athlete_id,
+      intervalsActivityId,
+      localActivityId: result.localActivityId,
+      outcome: result.outcome,
+    },
+    "intervals.icu activity ingested",
+  );
+
+  // Surface a freshly-created pending activity to the app (mirrors strava_ingest).
+  // Linked outcomes keep the existing row's status, so no "received" card there.
+  if (result.outcome === "created" && result.localActivityId) {
+    const row = await context.db.query.activities.findFirst({
+      where: (a, { eq }) => eq(a.id, result.localActivityId as number),
+      columns: { title: true, startDateLocal: true, analysisStatus: true },
+    });
+    if (row) {
+      await progressService.publish(user.id, {
+        type: "progress",
+        data: {
+          id: result.localActivityId,
+          kind: "intervals_ingest",
+          phase: "received",
+          analysisStatus: row.analysisStatus ?? "pending",
+          title: row.title ?? undefined,
+          startDateLocal: row.startDateLocal?.toISOString(),
+        },
+      });
+    }
+  }
 }
