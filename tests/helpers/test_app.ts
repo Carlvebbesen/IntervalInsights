@@ -36,6 +36,7 @@ import suggestSessionRouter from "../../src/routers/suggest_session_router";
 import userRouter from "../../src/routers/user_router";
 import * as schema from "../../src/schema";
 import type { TGlobalEnv } from "../../src/types/IRouters";
+import { registerOAuthCallbackPages } from "../../src/web/oauth_callback_page";
 import { registerWebPages } from "../../src/web/pages";
 
 export type TestIdentity = {
@@ -86,6 +87,7 @@ export function buildTestApp(pool: Pool) {
   app.use("*", testLoggerMiddleware);
 
   registerWebPages(app);
+registerOAuthCallbackPages(app);
 
   app.route("/api", publicRouter);
 
