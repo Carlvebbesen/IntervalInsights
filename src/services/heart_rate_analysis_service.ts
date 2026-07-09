@@ -178,11 +178,11 @@ async function fillMissingStats(
  * no usable source exists.
  */
 async function resolveStreams(
-  intervalsToken: string,
+  intervalsToken: string | null,
   stravaToken: string | null,
   row: HrAnalysisRow,
 ): Promise<Pick<StreamSet, "time" | "heartrate"> | null> {
-  if (row.intervalsIcuId) {
+  if (intervalsToken && row.intervalsIcuId) {
     try {
       const normalized = normalizeIntervalsStreams(
         await intervalsApiService.getActivityStreams(intervalsToken, row.intervalsIcuId, [
@@ -215,9 +215,9 @@ export function normalizeIntervalsStreams(raw: unknown): Pick<StreamSet, "time" 
  * fallback), compute whole-activity and work-interval stats, persist them, and
  * mutate `row` in place so the response reflects the freshly computed values.
  */
-async function computeAndPersistRow(
+export async function computeAndPersistRow(
   db: Db,
-  intervalsToken: string,
+  intervalsToken: string | null,
   stravaToken: string | null,
   row: HrAnalysisRow,
 ): Promise<void> {
