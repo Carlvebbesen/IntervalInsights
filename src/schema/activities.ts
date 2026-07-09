@@ -54,6 +54,11 @@ export type DraftAnalysisResult = WorkoutAnalysisOutput & {
   acceptedSets?: ExpandedIntervalSet[];
   segmentsFromLaps?: boolean;
   proposedSegments?: ProposedSegmentDraft[];
+  // Provenance of the adopted structure: "text" when the title/description
+  // declared it (text authority), else "model". `declaredStructure` is what the
+  // text gate parsed, kept for observability.
+  structureSource?: "text" | "model";
+  declaredStructure?: WorkoutAnalysisOutput["structure"] | null;
 };
 
 export const activities = pgTable(

@@ -71,6 +71,10 @@ export async function runCompleteAnalysis(
       userNotes: state.userNotes,
       trainingType,
       intervalsIcuIntervals: state.intervalsIcuPrediction?.intervals ?? null,
+      declaredReps:
+        state.structureSource !== "model"
+          ? state.userSets.reduce((n, s) => n + s.steps.length, 0)
+          : undefined,
       log,
       tag: `[runCompleteAnalysis activity=${state.activityId}]`,
     });
