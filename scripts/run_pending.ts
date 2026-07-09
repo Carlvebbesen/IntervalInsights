@@ -3,16 +3,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "../src/schema";
 import { scriptRuns } from "../src/schema";
-
-// Ordered registry of run-once scripts. Keep in sync with the `once: true`
-// scripts in this directory; clerk sync runs last.
-const ONCE_SCRIPTS = [
-  "backfill_events",
-  "backfill_gears",
-  "backfill_hr_stats",
-  "run_backfill_fold",
-  "sync_clerk_to_db",
-] as const;
+import { ONCE_SCRIPTS } from "./_registry";
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required");
