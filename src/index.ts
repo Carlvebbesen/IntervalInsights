@@ -35,6 +35,7 @@ import suggestSessionRouter from "./routers/suggest_session_router";
 import trainingRouter from "./routers/training_router";
 import userRouter from "./routers/user_router";
 import type { TGlobalEnv } from "./types/IRouters";
+import { registerOAuthCallbackPages } from "./web/oauth_callback_page";
 import { registerWebPages } from "./web/pages";
 
 const app = new Hono<TGlobalEnv>();
@@ -88,6 +89,7 @@ app.get("/.well-known/assetlinks.json", async (_c) => {
 });
 
 registerWebPages(app);
+registerOAuthCallbackPages(app);
 
 app.use("*", requestId());
 app.use(

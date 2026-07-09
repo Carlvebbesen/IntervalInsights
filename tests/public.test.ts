@@ -149,6 +149,38 @@ describe("public web pages (rendered HTML)", () => {
   });
 });
 
+describe("oauth callback trampoline pages", () => {
+  it("GET /strava-callback serves the trampoline with the code forwarded via intent://", async () => {
+    const res = await app.fetch(new Request("http://test/strava-callback?code=abc123"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/html");
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    const body = await res.text();
+    expect(body).toContain("Open Interval Insights");
+    expect(body).toContain("intent://");
+    expect(body).toContain("package=no.cvebbesen.intervalinsights");
+    expect(body).toContain("code=abc123");
+  });
+
+  it("GET /intervals-callback forwards a provider error and renders the cancelled copy", async () => {
+    const res = await app.fetch(new Request("http://test/intervals-callback?error=access_denied"));
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("cancelled");
+    expect(body).toContain("error=access_denied");
+  });
+
+  it("drops unknown query params and neutralizes HTML in forwarded values", async () => {
+    const res = await app.fetch(
+      new Request('http://test/strava-callback?code=x"><script>alert(1)</script>&evil=1'),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).not.toContain("<script>alert(1)</script>");
+    expect(body).not.toContain("evil=1");
+  });
+});
+
 describe("auth gate", () => {
   it("authenticated routes refuse to run without a test identity", async () => {
     // No withIdentity() wrapper → testAuthGuard returns 401.
