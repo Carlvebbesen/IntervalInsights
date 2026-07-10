@@ -10,7 +10,7 @@ import type { ProposedSegmentDraft, TrainingType } from "../schema";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
-import { getLaps, getStreamSet } from "./activity_source_service";
+import { getStreamSet, getStreamsAndLaps } from "./activity_source_service";
 import { intervalsApiService } from "./intervals_api_service";
 import { extractIntervalsList } from "./intervals_mappers";
 
@@ -38,7 +38,7 @@ export async function previewSegments(
 
   const activity = await activityRepo.requireOwnedActivity(db, userId, activityId);
 
-  const streamSet = await getStreamSet(db, userId, activityId, [
+  const { streams: streamSet, laps } = await getStreamsAndLaps(db, userId, activityId, [
     "time",
     "distance",
     "altitude",
@@ -52,8 +52,6 @@ export async function previewSegments(
     throw new AppError(400, "Activity streams missing time/distance");
   }
   const statsStreams = { time, distance, heartrate: streamSet.heartrate };
-
-  const laps = await getLaps(db, userId, activityId);
 
   let intervalsIcuIntervals: IIntervalsInterval[] | null = null;
   if (activity.intervalsIcuId) {

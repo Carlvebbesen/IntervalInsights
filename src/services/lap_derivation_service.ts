@@ -8,7 +8,7 @@ import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { Lap } from "../types/strava/IDetailedActivity";
 import type { StreamSet } from "../types/strava/IStream";
-import { getLaps, getStreamSet } from "./activity_source_service";
+import { getStreamsAndLaps } from "./activity_source_service";
 import { expandRestSegments } from "./segment_fold_service";
 import { calculateSegmentStats, generateCompleteIntervalSet } from "./utils";
 
@@ -348,10 +348,7 @@ export async function getSegmentsForActivity(
     ? [...STREAM_KEYS]
     : STREAM_KEYS.filter((k) => k !== "heartrate");
   try {
-    const [streams, laps] = await Promise.all([
-      getStreamSet(db, userId, activityId, streamKeys),
-      getLaps(db, userId, activityId),
-    ]);
+    const { streams, laps } = await getStreamsAndLaps(db, userId, activityId, streamKeys);
     if (!streams?.time || !streams?.distance) {
       log.info("re-derivation skipped: streams missing time/distance");
       return [];

@@ -4,7 +4,7 @@ import { AppError } from "../../error";
 import { logger } from "../../logger";
 import { getIntervalsAccessToken } from "../../middlewares/intervals_middleware";
 import { activities } from "../../schema";
-import { getLaps, getStreamSet } from "../../services/activity_source_service";
+import { getStreamsAndLaps } from "../../services/activity_source_service";
 import { intervalsApiService } from "../../services/intervals_api_service";
 import { stravaApiService } from "../../services/strava_api_service";
 import type { Lap } from "../../types/strava/IDetailedActivity";
@@ -62,19 +62,16 @@ export async function fetchActivityContext(
 
   // latlng is fetched for venue detection (confirms a distance→venue snap in
   // the signature). Outdoor only in practice — indoor activities have no GPS.
-  // heartrate is consent-gated inside getStreamSet. Indoor laps are kept:
+  // heartrate is consent-gated inside getStreamsAndLaps. Indoor laps are kept:
   // treadmill sessions often lap warmup/work/cooldown, which the deterministic
   // segmenter uses for boundaries. See [[deterministic-interval-segmentation]].
-  const [streams, laps] = await Promise.all([
-    getStreamSet(db, state.userId, state.activityId, [
-      "time",
-      "velocity_smooth",
-      "heartrate",
-      "distance",
-      "moving",
-      "latlng",
-    ]),
-    getLaps(db, state.userId, state.activityId),
+  const { streams, laps } = await getStreamsAndLaps(db, state.userId, state.activityId, [
+    "time",
+    "velocity_smooth",
+    "heartrate",
+    "distance",
+    "moving",
+    "latlng",
   ]);
 
   const context: ActivityContext = { ...meta, streams, laps };
