@@ -50,6 +50,13 @@ export const AnalysisStateAnnotation = Annotation.Root({
     default: () => null,
   }),
   lapsMatchStructure: Annotation<boolean>({ reducer: overwrite, default: () => false }),
+  // Provenance of the authoritative structure: "text" (title/description),
+  // "notes" (resume-time notes), or "model". Anything other than "model" tells
+  // segment production a text-declared rep count must be enforced.
+  structureSource: Annotation<"model" | "text" | "notes">({
+    reducer: overwrite,
+    default: () => "model",
+  }),
 
   userNotes: Annotation<string>({ reducer: overwrite, default: () => "" }),
   userSets: Annotation<ExpandedIntervalSet[]>({ reducer: overwrite, default: () => [] }),

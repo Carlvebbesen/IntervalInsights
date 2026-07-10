@@ -19,7 +19,6 @@ import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
 import {
   analysisStatusEnum,
   type TargetTypeEnum,
-  type TrainingType,
   trainingTypeEnum,
   type WorkoutPartType,
 } from "./enums";
@@ -30,7 +29,6 @@ import { intervalStructures } from "./interval_structure";
 import { users } from "./users";
 
 export type IntervalsIcuPrediction = {
-  trainingType?: TrainingType;
   subType?: string | null;
   intervals?: IIntervalsInterval[];
 };
@@ -54,6 +52,11 @@ export type DraftAnalysisResult = WorkoutAnalysisOutput & {
   acceptedSets?: ExpandedIntervalSet[];
   segmentsFromLaps?: boolean;
   proposedSegments?: ProposedSegmentDraft[];
+  // Provenance of the adopted structure: "text" when the title/description
+  // declared it (text authority), else "model". `declaredStructure` is what the
+  // text gate parsed, kept for observability.
+  structureSource?: "text" | "model";
+  declaredStructure?: WorkoutAnalysisOutput["structure"] | null;
 };
 
 export const activities = pgTable(

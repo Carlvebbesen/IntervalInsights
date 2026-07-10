@@ -41,7 +41,9 @@ export function ensureWarmupFirst(
 }
 
 /** Total work reps implied by an LLM-extracted structure (set_reps × Σ step.reps). */
-function countStructureReps(structure: WorkoutAnalysisOutput["structure"]): number | undefined {
+export function countStructureReps(
+  structure: WorkoutAnalysisOutput["structure"],
+): number | undefined {
   if (!structure || structure.length === 0) return undefined;
   let n = 0;
   for (const set of structure) {
@@ -59,21 +61,29 @@ export async function produceSegments(params: {
   isIndoor: boolean;
   userSets: ExpandedIntervalSet[];
   initialResult: WorkoutAnalysisOutput | null;
-  userNotes: string;
+  userNotes?: string;
   trainingType: TrainingType;
   intervalsIcuIntervals?: IIntervalsInterval[] | null;
+  // Authoritative work-rep count from a text/notes-declared structure. When set,
+  // a rung whose produced work count contradicts it is rejected (falls through to
+  // the next rung) rather than shipping the wrong count. Undefined ⇒ no change.
+  declaredReps?: number;
   log: Logger;
   tag: string;
 }): Promise<InsertIntervalSegment[]> {
   const { activityId, statsStreams, streams, laps, userSets, initialResult, log } = params;
   const t0 = statsStreams.time.data[0] ?? 0;
+  const userNotes = params.userNotes ?? "";
+  const declaredReps = params.declaredReps;
+  const workCount = (segments: InsertIntervalSegment[]): number =>
+    segments.filter((s) => s.type === "INTERVALS").length;
 
   // Preferred rung: when the activity is linked to intervals.icu, its own
   // WORK/RECOVERY breakdown is authoritative — use it before any heuristic.
   const intervalsIcu = params.intervalsIcuIntervals;
   if (intervalsIcu && intervalsIcu.length > 0) {
     log.info({ intervals: intervalsIcu.length }, "intervals.icu linked — attempting its breakdown");
-    const expectedReps = countStructureReps(initialResult?.structure);
+    const expectedReps = declaredReps ?? countStructureReps(initialResult?.structure);
     const fromIcu = buildSegmentsFromIntervalsIcu(
       activityId,
       intervalsIcu,
@@ -93,10 +103,19 @@ export async function produceSegments(params: {
     log.info("structure unchanged — attempting lap-derived segments");
     const fromLaps = buildSegmentsFromLaps(activityId, laps, userSets, statsStreams, params.tag);
     if (fromLaps) {
-      log.info({ segments: fromLaps.length }, "lap-derived segments");
-      return ensureWarmupFirst(fromLaps, activityId, t0);
+      const reps = workCount(fromLaps);
+      if (declaredReps !== undefined && reps !== declaredReps) {
+        log.info(
+          { workCount: reps, declaredReps },
+          "lap-derived work count contradicts declared shape — falling through",
+        );
+      } else {
+        log.info({ segments: fromLaps.length }, "lap-derived segments");
+        return ensureWarmupFirst(fromLaps, activityId, t0);
+      }
+    } else {
+      log.info("lap-derivation failed — trying deterministic segmenter");
     }
-    log.info("lap-derivation failed — trying deterministic segmenter");
   }
 
   // Deterministic segmenter (speed/HR + the known/inferred structure) for the
@@ -107,15 +126,23 @@ export async function produceSegments(params: {
   // a bad split.
   const deterministic = buildSegmentsDeterministic(activityId, laps, userSets, statsStreams);
   if (deterministic && deterministic.confidence >= DETERMINISTIC_CONFIDENCE_THRESHOLD) {
-    log.info(
-      {
-        segments: deterministic.segments.length,
-        confidence: deterministic.confidence,
-        mode: deterministic.mode,
-      },
-      "deterministic segments",
-    );
-    return ensureWarmupFirst(deterministic.segments, activityId, t0);
+    const reps = workCount(deterministic.segments);
+    if (declaredReps !== undefined && reps !== declaredReps) {
+      log.info(
+        { workCount: reps, declaredReps },
+        "deterministic work count contradicts declared shape — falling through to LLM",
+      );
+    } else {
+      log.info(
+        {
+          segments: deterministic.segments.length,
+          confidence: deterministic.confidence,
+          mode: deterministic.mode,
+        },
+        "deterministic segments",
+      );
+      return ensureWarmupFirst(deterministic.segments, activityId, t0);
+    }
   }
   if (deterministic) {
     log.info(
@@ -128,7 +155,7 @@ export async function produceSegments(params: {
   const segmentPlan = await invokeWithRateLimitRetry(() =>
     invokeCompleteActivityAnalysisAgent(
       streams,
-      params.userNotes,
+      userNotes,
       params.trainingType,
       laps,
       initialResult,

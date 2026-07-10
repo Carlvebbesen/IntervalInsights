@@ -8,6 +8,7 @@ import type { StreamSet } from "../types/strava/IStream";
 import { buildLapEvidenceBlock } from "./lap_evidence";
 import { gptMiniModel, invokeStructured } from "./model";
 import { venuePromptBlock } from "./running_venues";
+import { STRUCTURE_EXTRACTION_RULES } from "./structure_prompt_rules";
 export type WorkoutAnalysisOutput = z.infer<typeof workoutAnalysisOutput>;
 
 export const workoutStep = z.object({
@@ -129,13 +130,10 @@ function formatIntervalsIcuBlock(prediction: IntervalsIcuPrediction | null | und
       return `| ${idx + 1} | ${i.type} | ${i.distance}m | ${i.moving_time}s | ${pace} | ${hr} | ${load} |`;
     })
     .join("\n");
-  const typeHint = prediction.trainingType
-    ? `intervals.icu suggests training type: **${prediction.trainingType}**${prediction.subType ? ` (sub: ${prediction.subType})` : ""}.`
-    : "";
   const tableBlock = rows
     ? `\n| # | Type | Distance | Time | Avg pace | Avg HR | Load |\n|---|------|----------|------|----------|--------|------|\n${rows}`
     : "";
-  return `\n  ### INTERVALS.ICU PREDICTION (treat as a strong hint, not ground truth)\n  ${typeHint}${tableBlock}\n`;
+  return `\n  ### INTERVALS.ICU PREDICTION (treat as a strong hint, not ground truth)\n  ${tableBlock}\n`;
 }
 
 /**
@@ -157,13 +155,12 @@ function formatIntervalsIcuBlock(prediction: IntervalsIcuPrediction | null | und
  * SHORT/LONG gate). Runs before reconcileIntervalSubtype so the gate sees the fixed
  * structure. A genuine sequence ("3,2,1 km") has reps:1 per step and is untouched.
  */
-export function reconcileStructureBlowup(
-  out: z.infer<typeof workoutAnalysisOutput>,
-): z.infer<typeof workoutAnalysisOutput> {
-  const structure = out.structure;
-  if (!structure || structure.length === 0) return out;
+export function reconcileSetsBlowup(
+  sets: z.infer<typeof workoutSet>[],
+): z.infer<typeof workoutSet>[] {
+  if (sets.length === 0) return sets;
   let changed = false;
-  const fixed = structure.map((set) => {
+  const fixed = sets.map((set) => {
     const steps = set.steps;
     if (steps.length < 3) return set;
     const r = steps[0].reps;
@@ -179,7 +176,16 @@ export function reconcileStructureBlowup(
       steps: [{ ...steps[0], reps: r, work_value: Math.round(median) }],
     };
   });
-  return changed ? { ...out, structure: fixed } : out;
+  return changed ? fixed : sets;
+}
+
+export function reconcileStructureBlowup(
+  out: z.infer<typeof workoutAnalysisOutput>,
+): z.infer<typeof workoutAnalysisOutput> {
+  const structure = out.structure;
+  if (!structure || structure.length === 0) return out;
+  const fixed = reconcileSetsBlowup(structure);
+  return fixed === structure ? out : { ...out, structure: fixed };
 }
 
 export function reconcileIntervalSubtype(
@@ -265,15 +271,8 @@ ${sportContextBlock(type)}
 ${intervalsIcuBlock}${lapEvidenceBlock}
   ### 4. STRUCTURE EXTRACTION RULES (Hierarchical)
   You must populate the 'structure' array (an array of Sets) using these rules:
-  
-  1. **Identify Repeating Series:** - For a simple workout like **10x1000m**: Create one Set with **set_reps: 1** and one Step with **reps: 10**.
-     - For a complex workout like **3x (3km + 2km + 1km)**: Create one Set with **set_reps: 3**. Inside that set, create three Steps (3000m, 2000m, 1000m) each with **reps: 1**.
-  2. **Handle Set Recovery:** If there is a distinct longer break between large sets (e.g., 5 mins between blocks of intervals), put that in **set_recovery**.
-  3. **Ignore Warmup/Cooldown:** Only capture the "work" segments.
-  4. **Units:** Always convert distance to METERS and time to SECONDS.
-  5. **Comma-separated values are a STEP LIST, not decimals (Norwegian list notation):** "3,2,1 km" = three Steps of 3 km, 2 km, 1 km (→ 3000m, 2000m, 1000m); "2 x 3,2,2 km" = one Set with **set_reps: 2** and three Steps (3000m, 2000m, 2000m). A comma between numbers in such a list is a SEPARATOR, never a decimal point.
-  6. **"N x (a, b, c)" = N SETS of the sequence a→b→c.** Set **set_reps: N** and create ONE Step per item (reps: 1 each), so the sequence repeats a,b,c / a,b,c / … — e.g. **"5 x (3,2,1 min)"** = set_reps: 5, Steps [180s, 120s, 60s] each reps: 1; **"3x (3km + 2km + 1km)"** = set_reps: 3, Steps [3000m, 2000m, 1000m]. **Do NOT** create 3 Steps with reps: N (that wrongly groups all the a's, then all the b's, then all the c's).
-  7. **Compound / sequential workouts = ONE Set PER BLOCK — capture EVERY block.** When the title chains distinct interval blocks, emit a SEPARATE Set for each block in order, and never drop the trailing block(s). Triggers include English "X followed by Y", "X then Y", and Norwegian "X etterfulgt av Y", "X deretter Y", "X så Y", or a top-level "X + Y" joining two different rep schemes. E.g. **"4x1000m etterfulgt av 20x45/15"** = TWO Sets: Set 1 (set_reps: 1, one Step reps: 4, DISTANCE 1000m) and Set 2 (set_reps: 1, one Step reps: 20, TIME 45s work / 15s recovery). (Distinguish from rule 6's "N x (a,b,c)", which is ONE block repeated.)
+
+  ${STRUCTURE_EXTRACTION_RULES}
 
   ${venuePromptBlock()}
 

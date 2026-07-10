@@ -7,7 +7,7 @@ import { generateCompleteIntervalSet, needCompleteAnalysis } from "../../service
 import type { ExpandedIntervalSet } from "../../types/ExpandedIntervalSet";
 import type { StreamSet } from "../../types/strava/IStream";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";
-import { produceSegments } from "../segment_production";
+import { countStructureReps, produceSegments } from "../segment_production";
 
 export async function proposeSegments(
   state: AnalysisState,
@@ -58,9 +58,12 @@ export async function proposeSegments(
     isIndoor: state.isIndoor,
     userSets: draftSets,
     initialResult: state.initialResult,
-    userNotes: "",
     trainingType,
     intervalsIcuIntervals: state.intervalsIcuPrediction?.intervals ?? null,
+    declaredReps:
+      state.structureSource !== "model"
+        ? countStructureReps(state.initialResult?.structure)
+        : undefined,
     log,
     tag: `[proposeSegments activity=${state.activityId}]`,
   });

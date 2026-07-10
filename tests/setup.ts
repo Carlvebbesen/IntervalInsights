@@ -102,7 +102,6 @@ mock.module("../src/services/analysis_service.ts", () => {
     ResumeValidationError,
     startAnalysis: async () => {},
     resumeAnalysis: async () => {},
-    startAnalysisByStravaId: async () => {},
     triggerAnalysisByStravaId: async () => {},
   };
 });
