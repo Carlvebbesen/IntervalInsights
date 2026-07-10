@@ -1,31 +1,57 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte, isNotNull, isNull, lte } from "drizzle-orm";
 import { logger } from "../logger";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import * as gearRepo from "../repositories/gear_repository";
-import { activities, gears, users } from "../schema";
+import { activities, gears, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
+import { distanceBand, TIME_TOLERANCE_MS } from "./activity_match";
 import { triggerAnalysisByStravaId } from "./analysis_service";
 import { linkActivityGearOnIngest, relinkActivityGearFromStrava } from "./gear_strava_service";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
+import { classifyUserActivity, INACTIVITY_DROP_DAYS, INACTIVITY_SKIP_DAYS } from "./ingest_gating";
 import { deleteProviderToken } from "./oauth_token_store";
 import { progressService } from "./progress_service";
 import { stravaApiService } from "./strava_api_service";
 import { getDbInsertActivity } from "./strava_mappers";
 import { shouldAnalyze } from "./utils";
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const INACTIVITY_SKIP_DAYS = 60;
-const INACTIVITY_DROP_DAYS = 90;
+/**
+ * Find the intervals-sourced twin (`stravaActivityId IS NULL`,
+ * `intervalsIcuId NOT NULL`) for a Strava activity that isn't linked by exact
+ * `intervalsStravaId`. Fuzzy fallback for the device-dual-sync case where
+ * intervals.icu never learned this activity's Strava id: exactly one candidate
+ * within ±5 min / ±3 % distance merges; zero or ambiguous → no merge (insert).
+ */
+async function findFuzzyIntervalsTwin(
+  context: IGlobalBindings,
+  userId: string,
+  activity: InsertActivity,
+): Promise<{ id: number } | null> {
+  if (activity.startDateLocal == null || !activity.distance || activity.distance <= 0) return null;
 
-function classifyUserActivity(lastSeenAt: Date | null): "active" | "skip" | "drop" {
-  if (lastSeenAt == null) {
-    return "active";
-  }
-  const daysSince = (Date.now() - lastSeenAt.getTime()) / MS_PER_DAY;
-  if (daysSince > INACTIVITY_DROP_DAYS) return "drop";
-  if (daysSince > INACTIVITY_SKIP_DAYS) return "skip";
-  return "active";
+  const startMs = activity.startDateLocal.getTime();
+  const minTime = new Date(startMs - TIME_TOLERANCE_MS);
+  const maxTime = new Date(startMs + TIME_TOLERANCE_MS);
+  const { min, max } = distanceBand(activity.distance);
+
+  const candidates = await context.db
+    .select({ id: activities.id })
+    .from(activities)
+    .where(
+      and(
+        eq(activities.userId, userId),
+        isNull(activities.stravaActivityId),
+        isNotNull(activities.intervalsIcuId),
+        gte(activities.startDateLocal, minTime),
+        lte(activities.startDateLocal, maxTime),
+        gte(activities.distance, min),
+        lte(activities.distance, max),
+      ),
+    );
+
+  if (candidates.length !== 1) return null;
+  return candidates[0];
 }
 
 export async function processStravaWebhook(body: IStravaWebhookEvent, context: IGlobalBindings) {
@@ -133,11 +159,13 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
     }
 
     // Converge with an existing intervals.icu-sourced row for the same workout
-    // (intervals.icu reported this Strava id, but the row isn't Strava-linked
-    // yet) instead of inserting a duplicate. Merge the Strava metadata onto it,
+    // instead of inserting a duplicate. Merge the Strava metadata onto it,
     // attach the Strava id, and re-arm analysis — intervals enrichment fields
-    // are left untouched (not in the payload).
-    const twin = await context.db.query.activities.findFirst({
+    // are left untouched (not in the payload). Exact `intervalsStravaId` join
+    // first (intervals.icu reported this Strava id); fall back to a fuzzy
+    // time/distance match for the device-dual-sync case where intervals.icu
+    // never learned the Strava id.
+    const exactTwin = await context.db.query.activities.findFirst({
       where: (a, { and, eq, isNull }) =>
         and(
           eq(a.userId, user.id),
@@ -146,6 +174,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
         ),
       columns: { id: true },
     });
+    const twin = exactTwin ?? (await findFuzzyIntervalsTwin(context, user.id, activity));
 
     if (twin) {
       await context.db
@@ -161,7 +190,12 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
         });
       }
       logger.info(
-        { stravaActivityId, userId: user.id, mergedInto: twin.id },
+        {
+          stravaActivityId,
+          userId: user.id,
+          mergedInto: twin.id,
+          via: exactTwin ? "exact" : "fuzzy",
+        },
         "Strava create merged into existing intervals.icu row (dedup)",
       );
       if (activityClass === "active") {

@@ -24,7 +24,7 @@ export type ProgressEvent =
       type: "progress";
       data: {
         id: number;
-        kind: "strava_ingest" | "intervals_sync" | "analysis";
+        kind: "strava_ingest" | "intervals_ingest" | "intervals_sync" | "analysis";
         phase: "received" | "processing" | "ready_for_review";
         analysisStatus?: AnalysisStatus;
         title?: string;

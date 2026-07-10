@@ -313,4 +313,48 @@ describe("processStravaWebhook (real implementation)", () => {
       await deleteTestUser(user.id);
     }
   });
+
+  it("fuzzy-merges a Strava create into an intervals-sourced twin lacking a strava id (one row)", async () => {
+    // Device dual-sync: the workout landed from intervals.icu first (no
+    // strava_id known, so intervalsStravaId is null → the exact join can't
+    // fire), then Strava delivers a create for the same session. Time+distance
+    // must converge them onto one row instead of inserting a duplicate.
+    const user = await createStravaUser();
+    try {
+      const stravaActivityId = nextAthleteId() * 1000;
+      const [intervalsRow] = await db
+        .insert(activities)
+        .values({
+          userId: user.id,
+          stravaActivityId: null,
+          intervalsStravaId: null,
+          intervalsIcuId: `i-${stravaActivityId}`,
+          title: "Intervals import",
+          sportType: "Run",
+          distance: 8000,
+          movingTime: 2400,
+          startDateLocal: new Date("2026-07-01T10:00:00Z"),
+          indoor: false,
+          analysisStatus: "completed",
+        })
+        .returning();
+
+      getActivityResult = stravaActivity(stravaActivityId, user.athleteId, {
+        distance: 8000,
+        start_date_local: "2026-07-01T10:00:00Z",
+      });
+      await processStravaWebhook(
+        createEvent(stravaActivityId, user.athleteId, "create"),
+        context,
+      );
+
+      const rows = await activitiesFor(user.id);
+      expect(rows).toHaveLength(1); // merged, not duplicated
+      expect(rows[0].id).toBe(intervalsRow.id);
+      expect(rows[0].stravaActivityId).toBe(stravaActivityId);
+      expect(rows[0].intervalsIcuId).toBe(`i-${stravaActivityId}`);
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
 });

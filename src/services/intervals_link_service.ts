@@ -1,16 +1,24 @@
 import { sleep } from "bun";
-import { and, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { IntervalsError } from "../error";
 import { logger } from "../logger";
 import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import { activities, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsActivity } from "../types/intervals/IIntervalsActivity";
+import { distanceBand, TIME_TOLERANCE_MS, withinMatchTolerance } from "./activity_match";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
+import { classifyUserActivity } from "./ingest_gating";
 import { intervalsApiService } from "./intervals_api_service";
 import { mapIntervalsActivityToInsert } from "./intervals_mappers";
 import { deleteProviderToken } from "./oauth_token_store";
 import { publishSync } from "./progress_service";
+import { shouldAnalyze } from "./utils";
+
+type Db = IGlobalBindings["db"];
+// Accepts either the base connection or a transaction handle, so the dedup
+// helpers can run inside the advisory-locked transaction below.
+type Executor = Db | Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 type EnrichmentFields = Partial<
   Pick<
@@ -65,8 +73,6 @@ function buildEnrichment(
   };
 }
 
-const TIME_TOLERANCE_MS = 5 * 60 * 1000;
-const DISTANCE_TOLERANCE_RATIO = 0.03;
 const LIST_WINDOW_MS = 60 * 60 * 1000;
 
 // intervals.icu returns start_date_local as naïve local time (no `Z`).
@@ -82,23 +88,8 @@ export interface LinkResult {
   intervalsActivityId: string;
 }
 
-function matchesByDistanceAndTime(
-  intervalsStartMs: number,
-  intervalsDistance: number | null,
-  localStartMs: number,
-  localDistance: number,
-): boolean {
-  const timeDelta = Math.abs(intervalsStartMs - localStartMs);
-  if (timeDelta > TIME_TOLERANCE_MS) return false;
-  if (intervalsDistance == null) return false;
-
-  const minDistance = intervalsDistance * (1 - DISTANCE_TOLERANCE_RATIO);
-  const maxDistance = intervalsDistance * (1 + DISTANCE_TOLERANCE_RATIO);
-  return localDistance >= minDistance && localDistance <= maxDistance;
-}
-
 async function findLocalByFuzzyMatch(
-  context: IGlobalBindings,
+  db: Executor,
   userId: string,
   intervalsActivity: IIntervalsActivity,
 ): Promise<{ id: number } | null> {
@@ -108,11 +99,9 @@ async function findLocalByFuzzyMatch(
 
   const minTime = new Date(startMs - TIME_TOLERANCE_MS);
   const maxTime = new Date(startMs + TIME_TOLERANCE_MS);
+  const { min: minDistance, max: maxDistance } = distanceBand(intervalsActivity.distance);
 
-  const minDistance = intervalsActivity.distance * (1 - DISTANCE_TOLERANCE_RATIO);
-  const maxDistance = intervalsActivity.distance * (1 + DISTANCE_TOLERANCE_RATIO);
-
-  const candidates = await context.db
+  const candidates = await db
     .select({ id: activities.id })
     .from(activities)
     .where(
@@ -131,12 +120,12 @@ async function findLocalByFuzzyMatch(
 }
 
 async function commitLink(
-  context: IGlobalBindings,
+  db: Executor,
   localActivityId: number,
   intervalsActivity: IIntervalsActivity,
   processHeartRate: boolean,
 ): Promise<void> {
-  await context.db
+  await db
     .update(activities)
     .set({
       intervalsIcuId: intervalsActivity.id,
@@ -161,12 +150,198 @@ export async function linkFromIntervalsActivity(
 
   const intervalsActivity = await intervalsApiService.getActivity(accessToken, intervalsActivityId);
 
-  const match = await findLocalByFuzzyMatch(context, user.id, intervalsActivity);
+  const match = await findLocalByFuzzyMatch(context.db, user.id, intervalsActivity);
   if (!match) return null;
 
   const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
-  await commitLink(context, match.id, intervalsActivity, processHeartRate);
+  await commitLink(context.db, match.id, intervalsActivity, processHeartRate);
   return { localActivityId: match.id, intervalsActivityId };
+}
+
+export type IntervalsIngestOutcome =
+  | "already_linked"
+  | "linked_exact"
+  | "linked_fuzzy"
+  | "created"
+  | "skipped_sport"
+  | "skipped_inactive"
+  | "dropped"
+  | "no_token"
+  | "no_activity";
+
+export interface IntervalsIngestResult {
+  outcome: IntervalsIngestOutcome;
+  localActivityId?: number;
+  intervalsActivityId: string;
+}
+
+/**
+ * Ingest an intervals.icu activity event (ACTIVITY_UPLOADED / _CREATED): link to
+ * an existing local row if one is the same workout, else create a new one — the
+ * intervals-webhook analog of the Strava-webhook create merge. Idempotent under
+ * webhook retries. Order of decisions:
+ *   (a) a row already carries this `intervalsIcuId` → `already_linked`.
+ *   (b) an unlinked Strava row matches `strava_id` exactly → link → `linked_exact`.
+ *   (c) an unlinked local row matches fuzzily (±5 min / ±3 %) → link → `linked_fuzzy`.
+ *   (d) create a fresh intervals-sourced row, gated by sport + inactivity like
+ *       the Strava create → `created` / `skipped_inactive` / `skipped_sport` /
+ *       `dropped`.
+ * The re-fetch (network) happens outside the transaction; the dedup+insert runs
+ * inside a `pg_advisory_xact_lock(hashtext(userId))` so a concurrent Strava or
+ * intervals create for the same user can't pass this one's checks in the same
+ * instant and double-insert.
+ */
+export async function linkOrCreateFromIntervalsActivity(
+  context: IGlobalBindings,
+  user: { id: string; lastSeenAt: Date | null },
+  intervalsActivityId: string,
+): Promise<IntervalsIngestResult> {
+  let accessToken: string;
+  try {
+    accessToken = await getIntervalsAccessToken(user.id);
+  } catch {
+    return { outcome: "no_token", intervalsActivityId };
+  }
+
+  const activity = await intervalsApiService.getActivity(accessToken, intervalsActivityId);
+  if (!activity) return { outcome: "no_activity", intervalsActivityId };
+
+  const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
+
+  return context.db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${user.id}))`);
+
+    // (a) idempotency: this intervals activity already has a local row.
+    const existing = await tx.query.activities.findFirst({
+      where: (a, { and, eq }) => and(eq(a.userId, user.id), eq(a.intervalsIcuId, activity.id)),
+      columns: { id: true },
+    });
+    if (existing) {
+      return { outcome: "already_linked", localActivityId: existing.id, intervalsActivityId };
+    }
+
+    // (b) exact Strava-id join onto an unlinked local row.
+    if (activity.strava_id != null) {
+      const exact = await tx.query.activities.findFirst({
+        where: (a, { and, eq, isNull }) =>
+          and(
+            eq(a.userId, user.id),
+            eq(a.stravaActivityId, activity.strava_id as number),
+            isNull(a.intervalsIcuId),
+          ),
+        columns: { id: true },
+      });
+      if (exact) {
+        await commitLink(tx, exact.id, activity, processHeartRate);
+        return { outcome: "linked_exact", localActivityId: exact.id, intervalsActivityId };
+      }
+    }
+
+    // (c) fuzzy time/distance match onto an unlinked local row.
+    const fuzzy = await findLocalByFuzzyMatch(tx, user.id, activity);
+    if (fuzzy) {
+      await commitLink(tx, fuzzy.id, activity, processHeartRate);
+      return { outcome: "linked_fuzzy", localActivityId: fuzzy.id, intervalsActivityId };
+    }
+
+    // (d) create — gated by sport + inactivity, mirroring the Strava create.
+    if (!shouldAnalyze(activity.type)) {
+      return { outcome: "skipped_sport", intervalsActivityId };
+    }
+    const activityClass = classifyUserActivity(user.lastSeenAt);
+    if (activityClass === "drop") {
+      return { outcome: "dropped", intervalsActivityId };
+    }
+
+    const payload: InsertActivity = {
+      ...mapIntervalsActivityToInsert(activity, user.id, processHeartRate),
+      intervalsAnalyzed: true,
+      intervalsIcuEnrichedAt: new Date(),
+      analysisStatus: activityClass === "skip" ? "skipped_inactive" : "pending",
+      ...buildEnrichment(activity, processHeartRate),
+    };
+    const [inserted] = await tx
+      .insert(activities)
+      .values(payload)
+      .onConflictDoNothing()
+      .returning({ id: activities.id });
+    if (!inserted) {
+      // Lost the race on the partial unique index — the row now exists.
+      const raced = await tx.query.activities.findFirst({
+        where: (a, { and, eq }) => and(eq(a.userId, user.id), eq(a.intervalsIcuId, activity.id)),
+        columns: { id: true },
+      });
+      return { outcome: "already_linked", localActivityId: raced?.id, intervalsActivityId };
+    }
+    return {
+      outcome: activityClass === "skip" ? "skipped_inactive" : "created",
+      localActivityId: inserted.id,
+      intervalsActivityId,
+    };
+  });
+}
+
+/**
+ * Re-fetch an already-linked intervals.icu activity and refresh its enrichment
+ * (fitness fields) + numeric metadata on the local row. User-authored fields
+ * (title / description / notes) are deliberately left untouched — the DB row is
+ * the classification authority (see fetch_activity_context). Used by the
+ * ACTIVITY_ANALYZED (post-analysis fitness fields land) and ACTIVITY_UPDATED
+ * (edited on intervals.icu) branches.
+ */
+export async function refreshLinkedIntervalsActivity(
+  context: IGlobalBindings,
+  user: { id: string },
+  localActivityId: number,
+): Promise<"refreshed" | "no_token" | "no_source" | "no_match"> {
+  const row = await context.db.query.activities.findFirst({
+    where: (a, { eq, and }) => and(eq(a.id, localActivityId), eq(a.userId, user.id)),
+    columns: { id: true, intervalsIcuId: true },
+  });
+  if (!row) return "no_match";
+  if (!row.intervalsIcuId) return "no_source";
+
+  let accessToken: string;
+  try {
+    accessToken = await getIntervalsAccessToken(user.id);
+  } catch {
+    return "no_token";
+  }
+
+  let full: IIntervalsActivity;
+  try {
+    full = await intervalsApiService.getActivity(accessToken, row.intervalsIcuId);
+  } catch (err) {
+    logger.error(
+      { err, intervalsActivityId: row.intervalsIcuId },
+      "intervals.icu getActivity failed during refresh",
+    );
+    return "no_match";
+  }
+  if (!full) return "no_match";
+
+  const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
+  // Consent gate: omit averageHeartRate entirely when HR processing is off (not
+  // null) so we don't clobber HR another source stored under consent — mirrors
+  // buildEnrichment's treatment of the other HR fields.
+  const hrFields = processHeartRate ? { averageHeartRate: full.average_heartrate ?? null } : {};
+
+  await context.db
+    .update(activities)
+    .set({
+      intervalsAnalyzed: true,
+      intervalsIcuEnrichedAt: new Date(),
+      distance: full.distance ?? 0,
+      movingTime: full.moving_time ?? 0,
+      totalElevationGain: full.total_elevation_gain ?? null,
+      sportType: full.type || "Workout",
+      indoor: full.trainer ?? false,
+      ...hrFields,
+      ...buildEnrichment(full, processHeartRate),
+    })
+    .where(eq(activities.id, row.id));
+
+  return "refreshed";
 }
 
 export async function linkFromLocalActivity(
@@ -225,7 +400,7 @@ export async function linkFromLocalActivity(
         logger.error({ err, intervalsActivityId: exact[0].id }, "intervals.icu getActivity failed");
         full = exact[0];
       }
-      await commitLink(context, activity.id, full, processHeartRate);
+      await commitLink(context.db, activity.id, full, processHeartRate);
       return { localActivityId: activity.id, intervalsActivityId: full.id };
     }
   }
@@ -233,7 +408,7 @@ export async function linkFromLocalActivity(
   const fuzzy = candidates.filter((candidate) => {
     const candidateStart = parseIntervalsLocalStartMs(candidate.start_date_local);
     if (Number.isNaN(candidateStart)) return false;
-    return matchesByDistanceAndTime(
+    return withinMatchTolerance(
       candidateStart,
       candidate.distance,
       localStartMs,
@@ -253,7 +428,7 @@ export async function linkFromLocalActivity(
     full = fuzzy[0];
   }
 
-  await commitLink(context, activity.id, full, processHeartRate);
+  await commitLink(context.db, activity.id, full, processHeartRate);
   return { localActivityId: activity.id, intervalsActivityId: full.id };
 }
 
@@ -363,9 +538,7 @@ function findUniqueInMemoryMatch(
 
   let found: FuzzyLocal | null = null;
   for (const local of locals) {
-    if (
-      matchesByDistanceAndTime(startMs, intervalsActivity.distance, local.startMs, local.distance)
-    ) {
+    if (withinMatchTolerance(startMs, intervalsActivity.distance, local.startMs, local.distance)) {
       if (found) return null;
       found = local;
     }
@@ -500,7 +673,7 @@ export async function syncAllFromIntervals(
                 "intervals.icu getActivity failed during master sync — using list payload",
               );
             }
-            await commitLink(context, localMatch.id, full, processHeartRate);
+            await commitLink(context.db, localMatch.id, full, processHeartRate);
             knownIntervalsIds.add(intervalsActivity.id);
             const idx = unlinkedLocals.indexOf(localMatch);
             if (idx >= 0) unlinkedLocals.splice(idx, 1);
