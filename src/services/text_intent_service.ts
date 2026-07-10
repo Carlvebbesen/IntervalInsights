@@ -129,20 +129,25 @@ export function reconcileStructureTowardDeclared(
     modelStructure.length === declared.length &&
     declared.every((set, i) => set.steps.length === modelStructure[i].steps.length);
 
+  // The parse agent emits recovery_value 0 / set_recovery 0 (not null) when the
+  // text says nothing about recovery, so 0 means "unspecified" — keep the model's
+  // measured recovery in that case, and take the pair together so a declared
+  // value never merges with a model type (or vice versa).
   const newStructure: WorkoutSet[] = aligned
     ? declared.map((set, i) => {
         const modelSet = modelStructure[i];
         return {
           set_reps: set.set_reps,
-          set_recovery: set.set_recovery ?? modelSet.set_recovery,
+          set_recovery: set.set_recovery || modelSet.set_recovery,
           steps: set.steps.map((step, j) => {
             const modelStep = modelSet.steps[j];
+            const declaredRecovery = (step.recovery_value ?? 0) > 0;
             return {
               reps: step.reps,
               work_type: step.work_type,
               work_value: step.work_value,
-              recovery_type: step.recovery_type ?? modelStep.recovery_type,
-              recovery_value: step.recovery_value ?? modelStep.recovery_value,
+              recovery_type: declaredRecovery ? step.recovery_type : modelStep.recovery_type,
+              recovery_value: declaredRecovery ? step.recovery_value : modelStep.recovery_value,
             };
           }),
         };

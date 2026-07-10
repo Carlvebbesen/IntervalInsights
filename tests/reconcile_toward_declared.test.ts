@@ -67,6 +67,32 @@ describe("reconcileStructureTowardDeclared", () => {
     expect(changed).toBe(true);
   });
 
+  it("treats declared recovery_value 0 / set_recovery 0 as unspecified (real gpt-4o-mini shape)", () => {
+    const model = mk("LONG_INTERVALS", [
+      { ...dist(8, 1000, { recovery_type: "TIME", recovery_value: 90 }), set_recovery: 300 },
+    ]);
+    const { result } = reconcileStructureTowardDeclared(model, [
+      { ...dist(10, 1000, { recovery_type: null, recovery_value: 0 }), set_recovery: 0 },
+    ]);
+    const set = (result.structure ?? [])[0];
+    expect(set.steps[0].reps).toBe(10);
+    expect(set.steps[0].recovery_value).toBe(90); // 0 = unspecified → model recovery kept
+    expect(set.steps[0].recovery_type).toBe("TIME"); // type follows value as a pair
+    expect(set.set_recovery).toBe(300);
+  });
+
+  it("declared non-zero recovery wins as a pair over the model's", () => {
+    const model = mk("LONG_INTERVALS", [
+      dist(10, 1000, { recovery_type: "TIME", recovery_value: 90 }),
+    ]);
+    const { result } = reconcileStructureTowardDeclared(model, [
+      dist(10, 1000, { recovery_type: "DISTANCE", recovery_value: 200 }),
+    ]);
+    const step = (result.structure ?? [])[0].steps[0];
+    expect(step.recovery_type).toBe("DISTANCE");
+    expect(step.recovery_value).toBe(200);
+  });
+
   it("uses declared sets verbatim when shapes don't align", () => {
     const model = mk("LONG_INTERVALS", [
       {
