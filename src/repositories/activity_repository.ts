@@ -8,6 +8,7 @@ import {
   ilike,
   inArray,
   isNotNull,
+  isNull,
   lte,
   or,
   type SQL,
@@ -216,6 +217,61 @@ export async function listForHrAnalysis(
     .select(hrAnalysisColumns)
     .from(activities)
     .where(and(...filters))
+    .orderBy(desc(activities.startDateLocal));
+}
+
+/**
+ * Repair intervals.icu-sourced rows that stored an average HR but never set the
+ * `hasHeartrate` flag. Purely local — no external API. Returns the row count.
+ */
+export async function repairHasHeartrateFlag(db: Db, userId: string): Promise<number> {
+  const rows = await db
+    .update(activities)
+    .set({ hasHeartrate: true })
+    .where(
+      and(
+        eq(activities.userId, userId),
+        eq(activities.hasHeartrate, false),
+        isNotNull(activities.averageHeartRate),
+      ),
+    )
+    .returning({ id: activities.id });
+  return rows.length;
+}
+
+/**
+ * Write summary HR (avg/max + flag) onto an activity and clear
+ * `hrStatsComputedAt` so Phase B recomputes its stream-derived stats.
+ */
+export async function updateSummaryHr(
+  db: Db,
+  activityId: number,
+  hr: { averageHeartRate: number | null; maxHeartRate: number | null; hasHeartrate: boolean },
+): Promise<void> {
+  await db
+    .update(activities)
+    .set({
+      averageHeartRate: hr.averageHeartRate,
+      maxHeartRate: hr.maxHeartRate,
+      hasHeartrate: hr.hasHeartrate,
+      hrStatsComputedAt: null,
+    })
+    .where(eq(activities.id, activityId));
+}
+
+/** Completed HR-bearing activities whose stream stats have never been computed. */
+export function listHrStatsBackfillCandidates(db: Db, userId: string): Promise<HrAnalysisRow[]> {
+  return db
+    .select(hrAnalysisColumns)
+    .from(activities)
+    .where(
+      and(
+        eq(activities.userId, userId),
+        eq(activities.analysisStatus, "completed"),
+        isNull(activities.hrStatsComputedAt),
+        eq(activities.hasHeartrate, true),
+      ),
+    )
     .orderBy(desc(activities.startDateLocal));
 }
 

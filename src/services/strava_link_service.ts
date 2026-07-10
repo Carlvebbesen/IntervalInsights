@@ -91,13 +91,13 @@ function stravaCompletedMessage(
   return { messageKey: "sync_completed_strava", messageArgs: args };
 }
 
-function overBudget(rateLimit: StravaRateLimit | null): boolean {
+export function overBudget(rateLimit: StravaRateLimit | null): boolean {
   if (!rateLimit) return false;
   return rateLimit.shortTermUsage >= rateLimit.shortTermLimit - SHORT_TERM_SAFETY_MARGIN;
 }
 
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
-function nextStravaWindowMs(): number {
+export function nextStravaWindowMs(): number {
   return (Math.floor(Date.now() / FIFTEEN_MIN_MS) + 1) * FIFTEEN_MIN_MS;
 }
 
