@@ -26,6 +26,8 @@ export function selectMcpTools(availability: McpAvailability): CoachTool[] {
     if (tool.llmBacked) return false;
     if (tool.requires === "strava") return availability.stravaLinked;
     if (tool.requires === "intervals") return availability.intervalsConnected;
+    if (tool.requires === "activity-source")
+      return availability.stravaLinked || availability.intervalsConnected;
     return true;
   });
 }
@@ -41,6 +43,7 @@ export function buildMcpContext(c: Context<TMcpEnv>): { ctx: CoachCtx; tools: Co
     userId: c.get("userId"),
     stravaAccessToken: "",
     intervalsConnected: availability.intervalsConnected,
+    stravaLinked: availability.stravaLinked,
     userTime: new Date().toISOString(),
     logger: c.var.logger,
   };

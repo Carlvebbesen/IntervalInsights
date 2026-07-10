@@ -7,12 +7,13 @@ export interface CoachCtx {
   userId: string;
   stravaAccessToken: string;
   intervalsConnected: boolean;
+  stravaLinked: boolean;
   userTime: string;
   weather?: unknown;
   logger: Logger;
 }
 
-export type ToolRequirement = "db" | "strava" | "intervals";
+export type ToolRequirement = "db" | "strava" | "intervals" | "activity-source";
 
 export interface CoachTool {
   name: string;
@@ -46,5 +47,7 @@ export function defineTool<S extends z.ZodRawShape>(spec: {
 }
 
 export function isToolAvailable(tool: CoachTool, ctx: CoachCtx): boolean {
-  return tool.requires === "intervals" ? ctx.intervalsConnected : true;
+  if (tool.requires === "intervals") return ctx.intervalsConnected;
+  if (tool.requires === "activity-source") return ctx.intervalsConnected || ctx.stravaLinked;
+  return true;
 }

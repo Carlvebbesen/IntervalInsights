@@ -127,6 +127,7 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
         userId,
         stravaAccessToken,
         intervalsConnected: !!user?.intervalsAthleteId,
+        stravaLinked: !!user?.stravaId,
         userTime: body.userTime,
         weather: body.weather,
         logger: log,

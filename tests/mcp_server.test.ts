@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { runTool } from "../src/agent/training/tool_registry";
-import type { CoachCtx } from "../src/agent/training/tool_types";
+import { registry, runTool } from "../src/agent/training/tool_registry";
+import { type CoachCtx, isToolAvailable } from "../src/agent/training/tool_types";
 import { logger } from "../src/logger";
 import { buildMcpServer, selectMcpTools } from "../src/mcp/server";
 import { closePool, createTestUser, deleteTestUser, getDb } from "./helpers/db";
@@ -47,6 +47,32 @@ describe("selectMcpTools", () => {
     const tools = selectMcpTools({ stravaLinked: true, intervalsConnected: true });
     expect(tools.some((t) => t.name === "parse_workout")).toBe(false);
     expect(tools.some((t) => t.name === "propose_paces")).toBe(true);
+  });
+
+  it("exposes activity-source tools for an intervals-only user", () => {
+    const tools = selectMcpTools({ stravaLinked: false, intervalsConnected: true });
+    expect(tools.some((t) => t.name === "get_activity_streams_summary")).toBe(true);
+  });
+
+  it("exposes activity-source tools for a strava-only user", () => {
+    const tools = selectMcpTools({ stravaLinked: true, intervalsConnected: false });
+    expect(tools.some((t) => t.name === "get_activity_streams_summary")).toBe(true);
+  });
+});
+
+describe("isToolAvailable", () => {
+  const streamsTool = registry.find((t) => t.name === "get_activity_streams_summary");
+
+  it("exposes get_activity_streams_summary for an intervals-only user", () => {
+    expect(streamsTool?.requires).toBe("activity-source");
+    expect(isToolAvailable(streamsTool!, ctxFor({ intervalsConnected: true, stravaLinked: false })))
+      .toBe(true);
+  });
+
+  it("hides get_activity_streams_summary when neither source is linked", () => {
+    expect(
+      isToolAvailable(streamsTool!, ctxFor({ intervalsConnected: false, stravaLinked: false })),
+    ).toBe(false);
   });
 });
 
