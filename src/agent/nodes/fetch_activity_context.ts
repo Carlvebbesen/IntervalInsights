@@ -4,26 +4,25 @@ import { AppError } from "../../error";
 import { logger } from "../../logger";
 import { getIntervalsAccessToken } from "../../middlewares/intervals_middleware";
 import { activities } from "../../schema";
-import { userHasHeartRateConsent } from "../../services/heart_rate_consent_service";
+import { getStreamsAndLaps } from "../../services/activity_source_service";
 import { intervalsApiService } from "../../services/intervals_api_service";
-import {
-  mapIntervalsRawToLaps,
-  mapIntervalsStreamsToStreamSet,
-} from "../../services/intervals_mappers";
 import { stravaApiService } from "../../services/strava_api_service";
 import type { Lap } from "../../types/strava/IDetailedActivity";
 import type { StreamSet } from "../../types/strava/IStream";
 import type { AnalysisState, GraphConfigurable } from "../graph_state";
 
-type ActivityContext = {
-  streams: StreamSet;
-  laps: Lap[];
+type ActivityMeta = {
   isIndoor: boolean;
   activityTitle: string;
   activityDescription: string;
   activityStartDateLocal: Date;
   activityType: string;
   totalElevationGain: number;
+};
+
+type ActivityContext = ActivityMeta & {
+  streams: StreamSet;
+  laps: Lap[];
 };
 
 export async function fetchActivityContext(
@@ -33,7 +32,7 @@ export async function fetchActivityContext(
   const { db, stravaAccessToken } = config.configurable as GraphConfigurable;
   const log = logger.child({ node: "fetchActivityContext", activityId: state.activityId });
 
-  const [_, row, processHeartRate] = await Promise.all([
+  const [_, row] = await Promise.all([
     db
       .update(activities)
       .set({ analysisStatus: "ongoing_init", analysisStartedAt: new Date() })
@@ -47,20 +46,35 @@ export async function fetchActivityContext(
         description: true,
       },
     }),
-    userHasHeartRateConsent(db, state.userId),
   ]);
 
   const intervalsIcuId = row?.intervalsIcuId ?? null;
-  const stravaActivityId = row?.stravaActivityId ?? state.stravaActivityId;
+  const stravaActivityId = row?.stravaActivityId ?? null;
 
-  let context: ActivityContext;
+  let meta: ActivityMeta;
   if (intervalsIcuId) {
-    context = await fetchFromIntervals(state.userId, intervalsIcuId, processHeartRate);
+    meta = await fetchIntervalsMeta(state.userId, intervalsIcuId);
   } else if (stravaActivityId != null) {
-    context = await fetchFromStrava(stravaAccessToken, stravaActivityId, processHeartRate);
+    meta = await fetchStravaMeta(stravaAccessToken, stravaActivityId);
   } else {
     throw new AppError(400, "Activity has no intervals.icu or Strava source to fetch from");
   }
+
+  // latlng is fetched for venue detection (confirms a distance→venue snap in
+  // the signature). Outdoor only in practice — indoor activities have no GPS.
+  // heartrate is consent-gated inside getStreamsAndLaps. Indoor laps are kept:
+  // treadmill sessions often lap warmup/work/cooldown, which the deterministic
+  // segmenter uses for boundaries. See [[deterministic-interval-segmentation]].
+  const { streams, laps } = await getStreamsAndLaps(db, state.userId, state.activityId, [
+    "time",
+    "velocity_smooth",
+    "heartrate",
+    "distance",
+    "moving",
+    "latlng",
+  ]);
+
+  const context: ActivityContext = { ...meta, streams, laps };
 
   // The user's stored title/description (set at import, editable in-app) is the
   // authority for classification intent. The re-fetched source name can be a
@@ -87,31 +101,13 @@ export async function fetchActivityContext(
   return context;
 }
 
-async function fetchFromStrava(
+async function fetchStravaMeta(
   stravaAccessToken: string,
   stravaActivityId: number,
-  processHeartRate: boolean,
-): Promise<ActivityContext> {
+): Promise<ActivityMeta> {
   const activity = await stravaApiService.getActivity(stravaAccessToken, stravaActivityId);
-  const isIndoor = activity.trainer ?? false;
-  // latlng is fetched for venue detection (confirms a distance→venue snap in
-  // the signature). Outdoor only in practice — indoor activities have no GPS.
-  const streamKeys = processHeartRate
-    ? (["time", "velocity_smooth", "heartrate", "distance", "moving", "latlng"] as const)
-    : (["time", "velocity_smooth", "distance", "moving", "latlng"] as const);
-
-  // Indoor laps are kept: treadmill sessions often lap warmup/work/cooldown,
-  // which the deterministic segmenter uses for boundaries. See
-  // [[deterministic-interval-segmentation]].
-  const [streams, laps] = await Promise.all([
-    stravaApiService.getActivityStreams(stravaAccessToken, stravaActivityId, [...streamKeys]),
-    stravaApiService.getActivityLaps(stravaAccessToken, stravaActivityId),
-  ]);
-
   return {
-    streams,
-    laps,
-    isIndoor,
+    isIndoor: activity.trainer ?? false,
     activityTitle: activity.name ?? "",
     activityDescription: activity.description ?? "",
     activityStartDateLocal: new Date(activity.start_date_local),
@@ -120,28 +116,11 @@ async function fetchFromStrava(
   };
 }
 
-async function fetchFromIntervals(
-  userId: string,
-  intervalsIcuId: string,
-  processHeartRate: boolean,
-): Promise<ActivityContext> {
+async function fetchIntervalsMeta(userId: string, intervalsIcuId: string): Promise<ActivityMeta> {
   const accessToken = await getIntervalsAccessToken(userId);
   const activity = await intervalsApiService.getActivity(accessToken, intervalsIcuId);
-  const isIndoor = activity.trainer ?? false;
-
-  const [rawStreams, rawIntervals] = await Promise.all([
-    intervalsApiService.getActivityStreams(accessToken, intervalsIcuId),
-    intervalsApiService.getActivityIntervals(accessToken, intervalsIcuId),
-  ]);
-
-  const streams = mapIntervalsStreamsToStreamSet(rawStreams);
-  if (!processHeartRate) delete streams.heartrate;
-  const laps = mapIntervalsRawToLaps(rawIntervals);
-
   return {
-    streams,
-    laps,
-    isIndoor,
+    isIndoor: activity.trainer ?? false,
     activityTitle: activity.name ?? "",
     activityDescription: activity.description ?? "",
     activityStartDateLocal: new Date(activity.start_date_local),

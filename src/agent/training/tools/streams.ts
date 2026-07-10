@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { stravaApiService } from "../../../services/strava_api_service";
+import { getStreamSet } from "../../../services/activity_source_service";
 import { normalizeActivityStreams, prepareDataForLLM } from "../../../services/utils";
 import { defineTool } from "../tool_types";
 import { resolveOwnedActivity } from "./_shared";
@@ -19,7 +19,7 @@ const getActivityStreamsSummary = defineTool({
     "decoupling",
     "buckets",
   ],
-  requires: "strava",
+  requires: "activity-source",
   params: z.object({
     activityId: z.number().int(),
     bucketSeconds: z
@@ -32,14 +32,19 @@ const getActivityStreamsSummary = defineTool({
   }),
   handler: async (ctx, args) => {
     const activity = await resolveOwnedActivity(ctx, args.activityId);
-    if (activity.stravaActivityId == null) {
-      return { error: "This activity has no Strava id, so time-series streams are unavailable." };
+    if (activity.intervalsIcuId == null && activity.stravaActivityId == null) {
+      return {
+        error:
+          "This activity has no linked intervals.icu or Strava source, so time-series streams are unavailable.",
+      };
     }
-    const streams = await stravaApiService.getActivityStreams(
-      ctx.stravaAccessToken,
-      activity.stravaActivityId,
-      ["time", "distance", "velocity_smooth", "heartrate", "moving"],
-    );
+    const streams = await getStreamSet(ctx.db, ctx.userId, args.activityId, [
+      "time",
+      "distance",
+      "velocity_smooth",
+      "heartrate",
+      "moving",
+    ]);
     if (!streams?.time?.data?.length) {
       return { error: "No time-series stream data available for this activity." };
     }

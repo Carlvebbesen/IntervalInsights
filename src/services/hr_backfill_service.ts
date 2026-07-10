@@ -2,7 +2,6 @@ import { sleep } from "bun";
 import { and, eq, isNull } from "drizzle-orm";
 import { StravaError } from "../error";
 import type { Logger } from "../logger";
-import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import * as activityRepo from "../repositories/activity_repository";
 import { activities } from "../schema";
@@ -83,13 +82,6 @@ export async function runHrBackfill(
       log.warn({ err }, "no Strava token for HR backfill");
     }
 
-    let intervalsToken: string | null = null;
-    try {
-      intervalsToken = await getIntervalsAccessToken(userId);
-    } catch (err) {
-      log.warn({ err }, "no intervals.icu token for HR backfill");
-    }
-
     // Phase A1: repair intervals.icu-sourced rows that stored HR but never set the flag.
     result.summaryUpdated += await activityRepo.repairHasHeartrateFlag(context.db, userId);
 
@@ -157,7 +149,7 @@ export async function runHrBackfill(
     for (; i < candidates.length && i < MAX_STREAM_FETCHES_PER_RUN; i++) {
       const row = candidates[i];
       try {
-        await computeAndPersistRow(context.db, intervalsToken, stravaToken, row);
+        await computeAndPersistRow(context.db, userId, row);
         result.statsComputed++;
       } catch (err) {
         if (err instanceof StravaError && err.status === 429) {

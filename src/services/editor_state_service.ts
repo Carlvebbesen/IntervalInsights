@@ -10,11 +10,9 @@ import type { ProposedSegmentDraft, TrainingType } from "../schema";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
-import { getLaps, getStreamSet } from "./activity_source_service";
-import { userHasHeartRateConsent } from "./heart_rate_consent_service";
+import { getStreamSet, getStreamsAndLaps } from "./activity_source_service";
 import { intervalsApiService } from "./intervals_api_service";
 import { extractIntervalsList } from "./intervals_mappers";
-import { stravaApiService } from "./strava_api_service";
 
 type Db = IGlobalBindings["db"];
 
@@ -40,15 +38,20 @@ export async function previewSegments(
 
   const activity = await activityRepo.requireOwnedActivity(db, userId, activityId);
 
-  const streamSet = await getStreamSet(db, userId, activityId);
+  const { streams: streamSet, laps } = await getStreamsAndLaps(db, userId, activityId, [
+    "time",
+    "distance",
+    "altitude",
+    "cadence",
+    "velocity_smooth",
+    "heartrate",
+  ]);
   const time = streamSet.time;
   const distance = streamSet.distance;
   if (!time?.data?.length || !distance?.data?.length) {
     throw new AppError(400, "Activity streams missing time/distance");
   }
   const statsStreams = { time, distance, heartrate: streamSet.heartrate };
-
-  const laps = await getLaps(db, userId, activityId);
 
   let intervalsIcuIntervals: IIntervalsInterval[] | null = null;
   if (activity.intervalsIcuId) {
@@ -119,18 +122,17 @@ type EditorStreams = { time: number[]; heartrate: number[] | null; velocity: num
 async function loadEditorStreams(
   db: Db,
   userId: string,
-  accessToken: string,
-  stravaActivityId: number,
+  activityId: number,
 ): Promise<EditorStreams> {
-  const consent = await userHasHeartRateConsent(db, userId);
-  const keys = ["time", "velocity_smooth", "distance"] as const;
-  const streamKeys = consent ? ([...keys, "heartrate"] as const) : keys;
-  const streams = await stravaApiService.getActivityStreams(accessToken, stravaActivityId, [
-    ...streamKeys,
+  const streams = await getStreamSet(db, userId, activityId, [
+    "time",
+    "velocity_smooth",
+    "distance",
+    "heartrate",
   ]);
   return {
     time: streams?.time?.data ?? [],
-    heartrate: consent ? (streams?.heartrate?.data ?? null) : null,
+    heartrate: streams?.heartrate?.data ?? null,
     velocity: streams?.velocity_smooth?.data ?? [],
   };
 }
@@ -171,11 +173,8 @@ export async function getEditorState(
   const segments = await previewSegments(db, userId, activityId, sets, input.trainingType, log);
 
   let streams: EditorStreams | null = null;
-  if (input.includeStreams !== false && accessToken) {
-    const activity = await activityRepo.findByIdForUser(db, userId, activityId);
-    if (activity?.stravaActivityId != null) {
-      streams = await loadEditorStreams(db, userId, accessToken, activity.stravaActivityId);
-    }
+  if (input.includeStreams !== false) {
+    streams = await loadEditorStreams(db, userId, activityId);
   }
 
   return { sets, segments, streams };

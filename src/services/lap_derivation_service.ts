@@ -2,18 +2,14 @@ import { asc, eq } from "drizzle-orm";
 import type z from "zod";
 import type { workoutSet } from "../agent/initial_analysis_agent";
 import { logger } from "../logger";
-import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
-import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import { activities, intervalSegments } from "../schema";
 import type { InsertIntervalSegment } from "../schema/interval_segments";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { Lap } from "../types/strava/IDetailedActivity";
 import type { StreamSet } from "../types/strava/IStream";
-import { intervalsApiService } from "./intervals_api_service";
-import { mapIntervalsRawToLaps, mapIntervalsStreamsToStreamSet } from "./intervals_mappers";
+import { getStreamsAndLaps } from "./activity_source_service";
 import { expandRestSegments } from "./segment_fold_service";
-import { stravaApiService } from "./strava_api_service";
 import { calculateSegmentStats, generateCompleteIntervalSet } from "./utils";
 
 const STREAM_KEYS = ["time", "distance", "heartrate"] as const;
@@ -352,9 +348,7 @@ export async function getSegmentsForActivity(
     ? [...STREAM_KEYS]
     : STREAM_KEYS.filter((k) => k !== "heartrate");
   try {
-    const { laps, streams } = activity.intervalsIcuId
-      ? await fetchIntervalsLapsAndStreams(userId, activity.intervalsIcuId, streamKeys)
-      : await fetchStravaLapsAndStreams(userId, activity.stravaActivityId as number, streamKeys);
+    const { streams, laps } = await getStreamsAndLaps(db, userId, activityId, streamKeys);
     if (!streams?.time || !streams?.distance) {
       log.info("re-derivation skipped: streams missing time/distance");
       return [];
@@ -375,33 +369,4 @@ export async function getSegmentsForActivity(
     log.error({ err }, "re-derivation failed");
     return [];
   }
-}
-
-async function fetchStravaLapsAndStreams(
-  userId: string,
-  stravaActivityId: number,
-  streamKeys: StreamKey[],
-): Promise<{ laps: Lap[]; streams: StreamSet }> {
-  const tokens = await getStravaAccessTokens(userId);
-  const [laps, streams] = await Promise.all([
-    stravaApiService.getActivityLaps(tokens.access_token, stravaActivityId),
-    stravaApiService.getActivityStreams(tokens.access_token, stravaActivityId, streamKeys),
-  ]);
-  return { laps, streams };
-}
-
-async function fetchIntervalsLapsAndStreams(
-  userId: string,
-  intervalsIcuId: string,
-  streamKeys: StreamKey[],
-): Promise<{ laps: Lap[]; streams: StreamSet }> {
-  const accessToken = await getIntervalsAccessToken(userId);
-  const [rawStreams, rawIntervals] = await Promise.all([
-    intervalsApiService.getActivityStreams(accessToken, intervalsIcuId, streamKeys),
-    intervalsApiService.getActivityIntervals(accessToken, intervalsIcuId),
-  ]);
-  return {
-    laps: mapIntervalsRawToLaps(rawIntervals),
-    streams: mapIntervalsStreamsToStreamSet(rawStreams),
-  };
 }
