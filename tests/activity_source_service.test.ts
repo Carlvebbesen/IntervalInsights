@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { AppError } from "../src/error";
 import { activities } from "../src/schema";
-import { getLaps, getStreamSet } from "../src/services/activity_source_service";
+import { getLaps, getStreamSet, getStreamsAndLaps } from "../src/services/activity_source_service";
 import { intervalsApiService } from "../src/services/intervals_api_service";
 import { stravaApiService } from "../src/services/strava_api_service";
 import { closePool, createTestUser, deleteTestUser, getDb } from "./helpers/db";
@@ -226,5 +226,83 @@ describe("getLaps dispatch mirrors getStreamSet", () => {
     await getLaps(getDb(), consentUser.id, id);
 
     expect(stravaLapsCalled).toBe(true);
+  });
+});
+
+describe("getStreamsAndLaps same-source guarantee", () => {
+  it("returns both streams and laps from intervals.icu when it succeeds", async () => {
+    let stravaStreamsCalled = false;
+    let stravaLapsCalled = false;
+    patch(intervalsApiService, "getActivityStreams", (async () =>
+      intervalsRaw) as typeof intervalsApiService.getActivityStreams);
+    patch(intervalsApiService, "getActivityIntervals", (async () => ({
+      icu_intervals: [{ id: 1, distance: 100, moving_time: 30, start_index: 0, end_index: 2 }],
+    })) as typeof intervalsApiService.getActivityIntervals);
+    patch(stravaApiService, "getActivityStreams", (async () => {
+      stravaStreamsCalled = true;
+      return stravaStreamSet;
+    }) as typeof stravaApiService.getActivityStreams);
+    patch(stravaApiService, "getActivityLaps", (async () => {
+      stravaLapsCalled = true;
+      return [];
+    }) as typeof stravaApiService.getActivityLaps);
+
+    const id = await seedActivity(consentUser.id, { intervalsIcuId: "icu-both-1" });
+    const { streams, laps } = await getStreamsAndLaps(getDb(), consentUser.id, id, [
+      ...STREAM_KEYS,
+    ]);
+
+    expect(stravaStreamsCalled).toBe(false);
+    expect(stravaLapsCalled).toBe(false);
+    expect(streams.time?.data).toEqual([0, 1, 2]);
+    expect(laps).toHaveLength(1);
+    expect(laps[0].distance).toBe(100);
+  });
+
+  it("falls the WHOLE pair back to Strava when only the intervals laps call throws", async () => {
+    let intervalsStreamsCalled = false;
+    patch(intervalsApiService, "getActivityStreams", (async () => {
+      intervalsStreamsCalled = true;
+      return intervalsRaw;
+    }) as typeof intervalsApiService.getActivityStreams);
+    patch(intervalsApiService, "getActivityIntervals", (async () => {
+      throw new Error("intervals laps 500");
+    }) as typeof intervalsApiService.getActivityIntervals);
+    patch(stravaApiService, "getActivityStreams", (async () =>
+      stravaStreamSet) as typeof stravaApiService.getActivityStreams);
+    patch(stravaApiService, "getActivityLaps", (async () =>
+      [{ id: 9, distance: 400, moving_time: 90 } as never]) as typeof stravaApiService.getActivityLaps);
+
+    const id = await seedActivity(consentUser.id, {
+      intervalsIcuId: "icu-both-2",
+      stravaActivityId: 999,
+    });
+    const { streams, laps } = await getStreamsAndLaps(getDb(), consentUser.id, id, [
+      ...STREAM_KEYS,
+    ]);
+
+    // intervals streams succeeded but must be discarded — Strava's shorter
+    // arrays prove both halves came from the fallback provider.
+    expect(intervalsStreamsCalled).toBe(true);
+    expect(streams.time?.data).toEqual([0, 1]);
+    expect(laps).toHaveLength(1);
+    expect(laps[0].distance).toBe(400);
+  });
+
+  it("strips heartrate from the fetch and result when the user has no consent", async () => {
+    let seenKeys: readonly unknown[] = [];
+    patch(intervalsApiService, "getActivityStreams", (async (_t, _id, keys) => {
+      seenKeys = keys;
+      return intervalsRaw;
+    }) as typeof intervalsApiService.getActivityStreams);
+    patch(intervalsApiService, "getActivityIntervals", (async () => ({
+      icu_intervals: [],
+    })) as typeof intervalsApiService.getActivityIntervals);
+
+    const id = await seedActivity(noConsentUser.id, { intervalsIcuId: "icu-both-3" });
+    const { streams } = await getStreamsAndLaps(getDb(), noConsentUser.id, id, [...STREAM_KEYS]);
+
+    expect(seenKeys).not.toContain("heartrate");
+    expect(streams.heartrate).toBeUndefined();
   });
 });
