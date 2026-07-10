@@ -40,7 +40,14 @@ export async function previewSegments(
 
   const activity = await activityRepo.requireOwnedActivity(db, userId, activityId);
 
-  const streamSet = await getStreamSet(db, userId, activityId);
+  const streamSet = await getStreamSet(db, userId, activityId, [
+    "time",
+    "distance",
+    "altitude",
+    "cadence",
+    "velocity_smooth",
+    "heartrate",
+  ]);
   const time = streamSet.time;
   const distance = streamSet.distance;
   if (!time?.data?.length || !distance?.data?.length) {
