@@ -3,7 +3,6 @@ import type { z } from "zod";
 import { runInBackground } from "../background";
 import { AppError } from "../error";
 import type { Logger } from "../logger";
-import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import type { HrAnalysisFilters, HrAnalysisRow } from "../repositories/activity_repository";
 import * as activityRepo from "../repositories/activity_repository";
 import { intervalSegments } from "../schema";
@@ -17,6 +16,7 @@ import type {
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsAthlete } from "../types/intervals/IIntervalsActivity";
 import type { StreamSet } from "../types/strava/IStream";
+import { getStreamSet } from "./activity_source_service";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import {
   computeActivityHrStats,
@@ -26,7 +26,6 @@ import {
 import { intervalsApiService } from "./intervals_api_service";
 import { mapIntervalsStreamsToStreamSet } from "./intervals_mappers";
 import { withIntervalsToken } from "./intervals_token_helper";
-import { stravaApiService } from "./strava_api_service";
 
 type Db = IGlobalBindings["db"];
 type Result = z.infer<typeof HeartRateAnalysisResponseSchema>;
@@ -87,7 +86,7 @@ async function analyzeWithToken(
   // missing for activities that predate the pipeline change. Compute a bounded
   // number synchronously and background-fill the rest (their median/mode are
   // null this time and fill in for the next request).
-  await fillMissingStats(db, userId, intervalsToken, rows, log);
+  await fillMissingStats(db, userId, rows, log);
 
   // 5. Build one point per activity, choosing whole-activity vs work metrics.
   const intervalsOnly = filters.intervalsOnly === true;
@@ -127,28 +126,18 @@ export function toPoint(row: HrAnalysisRow, intervalsOnly: boolean): Point {
 async function fillMissingStats(
   db: Db,
   userId: string,
-  intervalsToken: string,
   rows: HrAnalysisRow[],
   log: Logger,
 ): Promise<void> {
   const missing = rows.filter((r) => r.hrStatsComputedAt == null && r.hasHeartrate === true);
   if (missing.length === 0) return;
 
-  // intervals.icu is the preferred stream source (the user is connected to it);
-  // Strava is the fallback for activities not linked to an intervals.icu record.
-  let stravaToken: string | null = null;
-  try {
-    stravaToken = (await getStravaAccessTokens(userId)).access_token;
-  } catch (err) {
-    log.warn({ err }, "no Strava token — relying on intervals.icu streams only");
-  }
-
   const sync = missing.slice(0, MAX_SYNC_LAZY_COMPUTES);
   const deferred = missing.slice(MAX_SYNC_LAZY_COMPUTES);
 
   for (const row of sync) {
     try {
-      await computeAndPersistRow(db, intervalsToken, stravaToken, row);
+      await computeAndPersistRow(db, userId, row);
     } catch (err) {
       log.warn({ err, activityId: row.id }, "lazy HR-stat computation failed");
     }
@@ -161,7 +150,7 @@ async function fillMissingStats(
       async () => {
         for (const row of deferred) {
           try {
-            await computeAndPersistRow(db, intervalsToken, stravaToken, row);
+            await computeAndPersistRow(db, userId, row);
           } catch (err) {
             log.warn({ err, activityId: row.id }, "background HR-stat computation failed");
           }
@@ -172,38 +161,6 @@ async function fillMissingStats(
   }
 }
 
-/**
- * Resolve the activity's HR/time streams, preferring intervals.icu when the
- * activity is linked there and falling back to Strava. Returns null only when
- * no usable source exists.
- */
-async function resolveStreams(
-  intervalsToken: string | null,
-  stravaToken: string | null,
-  row: HrAnalysisRow,
-): Promise<Pick<StreamSet, "time" | "heartrate"> | null> {
-  if (intervalsToken && row.intervalsIcuId) {
-    try {
-      const normalized = normalizeIntervalsStreams(
-        await intervalsApiService.getActivityStreams(intervalsToken, row.intervalsIcuId, [
-          "heartrate",
-          "time",
-        ]),
-      );
-      if (normalized.heartrate) return normalized;
-    } catch {
-      // fall through to Strava
-    }
-  }
-  if (stravaToken && row.stravaActivityId != null) {
-    return stravaApiService.getActivityStreams(stravaToken, row.stravaActivityId, [
-      "heartrate",
-      "time",
-    ]);
-  }
-  return null;
-}
-
 // Exported for unit testing.
 export function normalizeIntervalsStreams(raw: unknown): Pick<StreamSet, "time" | "heartrate"> {
   const { time, heartrate } = mapIntervalsStreamsToStreamSet(raw);
@@ -211,19 +168,25 @@ export function normalizeIntervalsStreams(raw: unknown): Pick<StreamSet, "time" 
 }
 
 /**
- * Fetch the activity's HR/time streams (intervals.icu preferred, Strava
- * fallback), compute whole-activity and work-interval stats, persist them, and
- * mutate `row` in place so the response reflects the freshly computed values.
+ * Fetch the activity's HR/time streams via the unified source service
+ * (intervals.icu preferred, Strava fallback, HR consent gated internally),
+ * compute whole-activity and work-interval stats, persist them, and mutate `row`
+ * in place so the response reflects the freshly computed values.
  */
 export async function computeAndPersistRow(
   db: Db,
-  intervalsToken: string | null,
-  stravaToken: string | null,
+  userId: string,
   row: HrAnalysisRow,
 ): Promise<void> {
-  const streams = await resolveStreams(intervalsToken, stravaToken, row);
-  if (!streams) {
-    // No source available — mark attempted so we don't retry every request.
+  let streams: Pick<StreamSet, "time" | "heartrate">;
+  try {
+    streams = await getStreamSet(db, userId, row.id, ["time", "heartrate"]);
+  } catch (err) {
+    // With no Strava fallback (incl. the no-source AppError(400) case), a failure
+    // here is terminal for this row — mark it attempted so it isn't retried every
+    // request. When a Strava id exists, failures (incl. rate limits) propagate to
+    // the caller's per-row handling.
+    if (row.stravaActivityId != null) throw err;
     await activityRepo.updateHrStats(db, row.id, { full: null, work: null });
     row.hrStatsComputedAt = new Date();
     return;
