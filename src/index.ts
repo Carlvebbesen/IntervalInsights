@@ -7,7 +7,6 @@ import { structuredLogger } from "@hono/structured-logger";
 import { swaggerUI } from "@hono/swagger-ui";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { requestId } from "hono/request-id";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { openAPIRouteHandler } from "hono-openapi";
@@ -119,16 +118,11 @@ app.use(
   }),
 );
 app.use("/api/*", httpInstrumentationMiddleware({ captureRequestHeaders: ["user-agent"] }));
-app.use(
-  "*",
-  cors({
-    origin: "*",
-    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization", "x-client-key"],
-    exposeHeaders: ["Content-Length", "X-Request-Id"],
-    maxAge: 3600,
-  }),
-);
+// No CORS middleware on purpose: every client is non-browser (Flutter app, MCP
+// servers, webhooks, store crawlers), and serving no Access-Control-* headers
+// means browsers block all cross-origin JS access — including any custom header
+// (Authorization, x-client-key, expo-origin) via failed preflight. If a browser
+// frontend ever appears, add hono/cors scoped to its origin only.
 app.use("/api/*", async (c, next) => {
   c.env.db = db;
   await next();
