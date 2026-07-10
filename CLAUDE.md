@@ -132,11 +132,12 @@ The SDK only starts when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so local dev is s
 
 Layered deterrence against non-app clients using the backend as a free API. MCP (`/mcp`, OAuth tokens, outside `/api/*`) is the sanctioned external door and is exempt from all of this.
 
-**Tier 1a — Better Auth's built-in IP rate limiter.** We rely on the defaults (no `rateLimit` block in `src/auth.ts`). Verified against `better-auth@1.6.23` (`dist/context/create-context.mjs`, `dist/api/rate-limiter/index.mjs`):
+**Tier 1a — Better Auth's built-in IP rate limiter.** Defaults plus generous `rateLimit.customRules` overrides in `src/auth.ts` — the built-in auth-path rules (3/10s) locked a real user out mid-flow (observed 2026-07-10: a retried OTP + resend spiralled into ~25 429s and no successful sign-in). The limiter is an anti-spam backstop only; OTP brute-force protection is the plugin's `allowedAttempts: 5`. Verified against `better-auth@1.6.23` (`dist/context/create-context.mjs`, `dist/api/rate-limiter/index.mjs`; `customRules` match the normalized path relative to `/api/auth` and take precedence over the built-in special rules):
 - **Enabled in production only** (`enabled ?? isProduction`) — silent in dev/`test`. In-memory `memory` store (fine on single-instance Railway; if it ever goes multi-instance, set `rateLimit.storage: "database"`).
-- Global default **100 requests / 10 s per IP** (window `10`, max `100`).
-- Special rule for `/sign-in*`, `/sign-up*`, `/change-password*`, `/change-email*`: **3 / 10 s**.
-- emailOTP `/email-otp/send-verification-otp` (and other OTP send/reset paths): **3 / 60 s**. The app's resend cooldown is 20 s, so a real user never trips it.
+- Global default **100 requests / 10 s per IP** (window `10`, max `100`) — untouched.
+- `/sign-in/email-otp` and `/sign-up/email-otp`: **30 / 60 s** (override; built-in `/sign-in*` `/sign-up*` rule is 3/10s).
+- `/email-otp/send-verification-otp`: **10 / 60 s** (override; built-in is 3/60s) — still caps mail-bombing while never touching the app's 20 s resend cooldown.
+- Remaining built-in special rules (`/change-password*`, `/change-email*`, password-reset sends) keep their tight defaults — those flows are unused.
 
 **Tier 1b — per-user daily quotas on LLM-backed endpoints** (`src/middlewares/quota_middleware.ts`, always on, in-memory per UTC day). Generous by design — a real user never hits them; the analysis cap is a circuit breaker against scripted model spend:
 - `POST /api/v1/agents/suggest-session` — 100/user/day (429 over cap)
