@@ -28,8 +28,9 @@ const isReviewAccount = (email: string) =>
  * authorization-proxy endpoint and redirect hooks we don't use.
  *
  * Not a CSRF hole: a browser cannot send `expo-origin` cross-site — it's a
- * non-simple header, so it triggers a CORS preflight, and our CORS
- * `allowHeaders` (src/index.ts) does not list it.
+ * non-simple header, so it triggers a CORS preflight, and the server serves no
+ * Access-Control-* headers at all (no CORS middleware — see src/index.ts), so
+ * the preflight always fails.
  */
 const expoOriginBridge = {
   id: "expo-origin-bridge",
