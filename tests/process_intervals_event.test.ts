@@ -13,9 +13,12 @@ import { eq } from "drizzle-orm";
 import { activities, users } from "../src/schema";
 import { intervalsApiService } from "../src/services/intervals_api_service";
 import { progressService, type StreamHandle } from "../src/services/progress_service";
+import { deleteProviderToken } from "../src/services/oauth_token_store";
 import { closePool, createTestUser, deleteTestUser, getDb } from "./helpers/db";
 import { insertActivity } from "./helpers/fixtures";
 import { synthIntervalsActivity } from "./helpers/intervals_fixtures";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const realModuleSpecifier = "../src/services/process_intervals_event.ts?real=1";
 const { processIntervalsWebhook } = (await import(
@@ -27,10 +30,15 @@ const context = { db } as never;
 
 let athleteSeq = 90_000 + Math.floor(Math.random() * 10_000);
 
-async function createIntervalsUser() {
+async function createIntervalsUser(opts?: { lastSeenDaysAgo?: number }) {
   const user = await createTestUser({ role: "premium" });
   const athleteId = `i-ath-${++athleteSeq}`;
-  await db.update(users).set({ intervalsAthleteId: athleteId }).where(eq(users.id, user.id));
+  const lastSeenAt =
+    opts?.lastSeenDaysAgo != null ? new Date(Date.now() - opts.lastSeenDaysAgo * DAY_MS) : null;
+  await db
+    .update(users)
+    .set({ intervalsAthleteId: athleteId, lastSeenAt })
+    .where(eq(users.id, user.id));
   return { ...user, athleteId };
 }
 
@@ -239,6 +247,74 @@ describe("processIntervalsWebhook (real implementation)", () => {
       const rows = await activitiesFor(user.id);
       expect(rows).toHaveLength(1);
       expect(rows[0].intervalsIcuId).toBe(act.id);
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  it("stores skipped_inactive (no SSE) when the user was last seen ~70 days ago", async () => {
+    const user = await createIntervalsUser({ lastSeenDaysAgo: 70 });
+    try {
+      const act = synthIntervalsActivity({ distance: 6400 });
+      getActivityResult = act;
+
+      const frames: { event: string; data: string }[] = [];
+      const unregister = progressService.register(user.id, {
+        writeSSE: async (m) => {
+          frames.push(m);
+        },
+      });
+
+      await processIntervalsWebhook(
+        activityEvent("ACTIVITY_UPLOADED", user.athleteId, act.id),
+        context,
+      );
+      unregister();
+
+      const rows = await activitiesFor(user.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].analysisStatus).toBe("skipped_inactive");
+      // no "received" card for an inactivity-skipped create
+      const ingest = frames
+        .filter((f) => f.event === "progress")
+        .map((f) => JSON.parse(f.data) as { kind: string })
+        .find((d) => d.kind === "intervals_ingest");
+      expect(ingest).toBeUndefined();
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  it("drops the activity entirely when the user was last seen >90 days ago", async () => {
+    const user = await createIntervalsUser({ lastSeenDaysAgo: 100 });
+    try {
+      const act = synthIntervalsActivity({ distance: 6400 });
+      getActivityResult = act;
+
+      await processIntervalsWebhook(
+        activityEvent("ACTIVITY_UPLOADED", user.athleteId, act.id),
+        context,
+      );
+
+      expect(await activitiesFor(user.id)).toHaveLength(0);
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  it("creates nothing when the user has no usable intervals.icu token", async () => {
+    const user = await createIntervalsUser();
+    try {
+      await deleteProviderToken(db, user.id, "intervals");
+      const act = synthIntervalsActivity({ distance: 6400 });
+      getActivityResult = act;
+
+      await processIntervalsWebhook(
+        activityEvent("ACTIVITY_UPLOADED", user.athleteId, act.id),
+        context,
+      );
+
+      expect(await activitiesFor(user.id)).toHaveLength(0);
     } finally {
       await deleteTestUser(user.id);
     }
