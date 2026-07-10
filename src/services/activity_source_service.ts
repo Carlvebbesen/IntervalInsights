@@ -56,6 +56,7 @@ async function fetchIntervalsPreferred<T>(
       return { result: await ops.fromIntervals(token, row.intervalsIcuId), source: "intervals" };
     } catch (err) {
       if (row.stravaActivityId == null) throw err;
+      logger.warn({ err, activityId }, "intervals fetch failed, falling back to strava");
       const tokens = await getStravaAccessTokens(userId);
       return {
         result: await ops.fromStrava(tokens.access_token, row.stravaActivityId),
@@ -125,17 +126,26 @@ export async function getSplits(db: Db, userId: string, activityId: number) {
   return activity.splits_metric ?? [];
 }
 
+async function resolveHeartRateGate<K extends keyof StreamTypeMap>(
+  db: Db,
+  userId: string,
+  keys: readonly K[],
+): Promise<{ gateHeartRate: boolean; providerKeys: (keyof StreamTypeMap)[] }> {
+  const gateHeartRate =
+    keys.includes("heartrate" as K) && !(await userHasHeartRateConsent(db, userId));
+  const providerKeys = (
+    gateHeartRate ? keys.filter((k) => k !== ("heartrate" as K)) : [...keys]
+  ) as (keyof StreamTypeMap)[];
+  return { gateHeartRate, providerKeys };
+}
+
 export async function getStreamSet<K extends keyof StreamTypeMap>(
   db: Db,
   userId: string,
   activityId: number,
   keys: readonly K[],
 ): Promise<Pick<StreamSet, K>> {
-  const gateHeartRate =
-    keys.includes("heartrate" as K) && !(await userHasHeartRateConsent(db, userId));
-  const providerKeys = (
-    gateHeartRate ? keys.filter((k) => k !== ("heartrate" as K)) : [...keys]
-  ) as (keyof StreamTypeMap)[];
+  const { gateHeartRate, providerKeys } = await resolveHeartRateGate(db, userId, keys);
 
   const { result, source } = await fetchIntervalsPreferred<StreamSet>(db, userId, activityId, {
     fromIntervals: async (token, externalId) =>
@@ -150,6 +160,52 @@ export async function getStreamSet<K extends keyof StreamTypeMap>(
 
   logger.info({ source, keys: providerKeys, activityId }, "stream_fetch");
   return result as Pick<StreamSet, K>;
+}
+
+/**
+ * Streams and laps in ONE source decision: if either intervals call fails, the
+ * whole pair falls back to Strava together. Lap start/end indices are
+ * provider-relative (intervals.icu's index space is not comparable to Strava's
+ * stream arrays — see intervals_icu_segments.ts), so consumers that pair laps
+ * with streams must never mix sources.
+ */
+export async function getStreamsAndLaps<K extends keyof StreamTypeMap>(
+  db: Db,
+  userId: string,
+  activityId: number,
+  keys: readonly K[],
+): Promise<{ streams: Pick<StreamSet, K>; laps: Lap[] }> {
+  const { gateHeartRate, providerKeys } = await resolveHeartRateGate(db, userId, keys);
+
+  const { result, source } = await fetchIntervalsPreferred<{ streams: StreamSet; laps: Lap[] }>(
+    db,
+    userId,
+    activityId,
+    {
+      fromIntervals: async (token, externalId) => {
+        const [rawStreams, rawIntervals] = await Promise.all([
+          intervalsApiService.getActivityStreams(token, externalId, providerKeys),
+          intervalsApiService.getActivityIntervals(token, externalId),
+        ]);
+        return {
+          streams: mapIntervalsStreamsToStreamSet(rawStreams),
+          laps: mapIntervalsRawToLaps(rawIntervals),
+        };
+      },
+      fromStrava: async (token, externalId) => {
+        const [streams, laps] = await Promise.all([
+          stravaApiService.getActivityStreams(token, externalId, providerKeys),
+          stravaApiService.getActivityLaps(token, externalId),
+        ]);
+        return { streams, laps };
+      },
+    },
+  );
+
+  if (gateHeartRate) delete result.streams.heartrate;
+
+  logger.info({ source, keys: providerKeys, activityId }, "streams_laps_fetch");
+  return { streams: result.streams as Pick<StreamSet, K>, laps: result.laps };
 }
 
 const DEFAULT_STREAM_KEYS = [
