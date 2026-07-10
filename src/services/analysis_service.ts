@@ -14,7 +14,7 @@ import {
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import { progressService } from "./progress_service";
-import { needCompleteAnalysis } from "./utils";
+import { needCompleteAnalysis, resolveResumeTrainingType } from "./utils";
 
 // Thrown for user-input validation problems in the resume flow. Distinct from
 // a server-side error so the router can map it to 400.
@@ -187,8 +187,11 @@ export const resumeAnalysis = async (
   }
   const draftType = (current.draftAnalysisResult as { training_type?: TrainingType } | null)
     ?.training_type;
-  const finalTrainingType: TrainingType | null =
-    trainingType ?? current.trainingType ?? draftType ?? null;
+  const finalTrainingType = resolveResumeTrainingType(
+    trainingType,
+    draftType ?? null,
+    current.trainingType ?? null,
+  );
 
   if (!finalTrainingType) {
     throw new Error(`Cannot resume activity ${activityId} — no training type resolved`);

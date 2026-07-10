@@ -69,6 +69,42 @@ export async function extractDeclaredStructure(
   }
 }
 
+// Partial-completion phrasing with capture groups: "8 av 10" (Norwegian), "8 of
+// 10" (English). Deliberately NOT a bare slash ("8/10") — that collides with
+// work/rest notation like "45/15".
+const N_OF_M_COMPLETION = /(\d+)\s+(?:av|of)\s+(\d+)/i;
+
+/**
+ * Deterministic "did N of M" handler — zero LLM cost. When resume-time notes say
+ * the athlete completed only the first N of M declared work steps ("klarte bare 8
+ * av 10"), truncate `userSets` to those N steps. Applies ONLY when M equals the
+ * current total work-step count and N < M (anything else is ambiguous or a no-op
+ * → null). Walks sets in order, truncating step lists and dropping sets that
+ * become empty, preserving each kept step's fields (incl. target_pace).
+ */
+export function applyPartialCompletion(
+  notes: string | null | undefined,
+  userSets: ExpandedIntervalSet[],
+): ExpandedIntervalSet[] | null {
+  if (!notes) return null;
+  const match = notes.match(N_OF_M_COMPLETION);
+  if (!match) return null;
+  const n = Number(match[1]);
+  const m = Number(match[2]);
+  const totalSteps = userSets.reduce((acc, s) => acc + s.steps.length, 0);
+  if (n <= 0 || m !== totalSteps || n >= m) return null;
+
+  const result: ExpandedIntervalSet[] = [];
+  let remaining = n;
+  for (const set of userSets) {
+    if (remaining <= 0) break;
+    const kept = set.steps.slice(0, remaining);
+    remaining -= kept.length;
+    if (kept.length > 0) result.push({ ...set, steps: kept });
+  }
+  return result;
+}
+
 function stepsEqual(a: WorkoutSet["steps"][number], b: WorkoutSet["steps"][number]): boolean {
   return (
     a.reps === b.reps &&

@@ -160,10 +160,10 @@ describe("analysis graph — text as structure authority (end-to-end)", () => {
       } as never),
     );
 
-    // ─── Parse agent: title-like → 10, notes with "8 av 10" → 8 ─────────────
+    // ─── Parse agent: title-like → 10; "8 av 10" notes name no distances, so the
+    // real agent returns empty (the 8 is carried by applyPartialCompletion) ─────
     spies.push(
       spyOn(parseAgent, "invokeParseIntervalsAgent").mockImplementation(async (text: string) => {
-        if (/\b8\s*av\s*10\b|\bav\s+10\b|bare\s*8/i.test(text)) return { sets: [declaredSet(8)] };
         if (/\d\s*[x×]\s*1000|1000\s*m/i.test(text)) return { sets: [declaredSet(10)] };
         return { sets: [] };
       }),

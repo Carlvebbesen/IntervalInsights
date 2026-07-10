@@ -4,6 +4,7 @@ import { logger } from "../../logger";
 import { trainingTypeEnum } from "../../schema/enums";
 import { EditedSegmentSchema, ExpandedIntervalSetSchema } from "../../schemas/api_schemas";
 import {
+  applyPartialCompletion,
   extractDeclaredStructure,
   rebuildSetsWithDeclaredPaces,
 } from "../../services/text_intent_service";
@@ -54,19 +55,35 @@ export async function awaitUserInput(state: AnalysisState): Promise<Partial<Anal
   // failure keeps the user's original sets.
   let structureSource: "model" | "text" | "notes" = state.structureSource ?? "model";
   try {
-    const notesDeclared = await extractDeclaredStructure(
-      [userInput.notes],
-      confirmedTrainingType ?? state.initialResult?.training_type,
-    );
-    if (notesDeclared) {
+    // Try the deterministic "N of M" completion first (free, no LLM): the notes
+    // name no distances/durations, so the parse agent correctly returns nothing —
+    // "8 av 10" refers to the EXISTING structure. Only fall through to the parse
+    // path when the notes declare a NEW structure.
+    const partial = applyPartialCompletion(userInput.notes, userSets);
+    if (partial) {
       const prevWorkSteps = userSets.reduce((n, s) => n + s.steps.length, 0);
-      userSets = rebuildSetsWithDeclaredPaces(notesDeclared, userSets);
+      userSets = partial;
       const newWorkSteps = userSets.reduce((n, s) => n + s.steps.length, 0);
       structureSource = "notes";
       log.info(
         { prevWorkSteps, newWorkSteps },
-        "notes declared a structure — userSets rebuilt toward notes",
+        "notes reported partial completion — userSets truncated to completed steps",
       );
+    } else {
+      const notesDeclared = await extractDeclaredStructure(
+        [userInput.notes],
+        confirmedTrainingType ?? state.initialResult?.training_type,
+      );
+      if (notesDeclared) {
+        const prevWorkSteps = userSets.reduce((n, s) => n + s.steps.length, 0);
+        userSets = rebuildSetsWithDeclaredPaces(notesDeclared, userSets);
+        const newWorkSteps = userSets.reduce((n, s) => n + s.steps.length, 0);
+        structureSource = "notes";
+        log.info(
+          { prevWorkSteps, newWorkSteps },
+          "notes declared a structure — userSets rebuilt toward notes",
+        );
+      }
     }
   } catch (err) {
     log.warn({ err }, "notes reconciliation failed — keeping user sets");

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { WorkoutAnalysisOutput, workoutSet } from "../src/agent/initial_analysis_agent";
 import {
+  applyPartialCompletion,
   rebuildSetsWithDeclaredPaces,
   reconcileStructureTowardDeclared,
 } from "../src/services/text_intent_service";
@@ -155,5 +156,61 @@ describe("rebuildSetsWithDeclaredPaces", () => {
     expect(paces).toHaveLength(12);
     expect(paces.slice(0, 10)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(paces.slice(10)).toEqual([null, null]);
+  });
+});
+
+describe("applyPartialCompletion", () => {
+  const step = (target_pace: number | null) => ({
+    work_type: "DISTANCE" as const,
+    work_value: 1000,
+    recovery_type: null,
+    recovery_value: null,
+    target_pace,
+  });
+  // One set with n distinct-paced work steps (1..n).
+  const oneSet = (n: number): ExpandedIntervalSet[] => [
+    { set_recovery: null, steps: Array.from({ length: n }, (_, i) => step(i + 1)) },
+  ];
+  const flatPaces = (sets: ExpandedIntervalSet[]): (number | null)[] =>
+    sets.flatMap((s) => s.steps.map((st) => st.target_pace ?? null));
+
+  it("truncates to N steps for Norwegian 'klarte bare 8 av 10', preserving paces", () => {
+    const out = applyPartialCompletion("klarte bare 8 av 10", oneSet(10));
+    expect(out).not.toBeNull();
+    expect(flatPaces(out ?? [])).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("handles the English 'did 8 of 10' form", () => {
+    const out = applyPartialCompletion("did 8 of 10", oneSet(10));
+    expect(flatPaces(out ?? [])).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("returns null when M does not match the total work-step count ('8 av 12', 10 steps)", () => {
+    expect(applyPartialCompletion("8 av 12", oneSet(10))).toBeNull();
+  });
+
+  it("returns null when N >= M (nothing was skipped)", () => {
+    expect(applyPartialCompletion("10 av 10", oneSet(10))).toBeNull();
+  });
+
+  it("returns null when no completion pattern is present", () => {
+    expect(applyPartialCompletion("felt sterk hele veien", oneSet(10))).toBeNull();
+  });
+
+  it("does NOT treat work/rest '45/15' as a completion count", () => {
+    expect(applyPartialCompletion("45/15", oneSet(10))).toBeNull();
+  });
+
+  it("preserves set grouping across sets (2×5 steps, '8 av 10' → 5 + 3)", () => {
+    const grouped: ExpandedIntervalSet[] = [
+      { set_recovery: 300, steps: Array.from({ length: 5 }, (_, i) => step(i + 1)) },
+      { set_recovery: 300, steps: Array.from({ length: 5 }, (_, i) => step(i + 6)) },
+    ];
+    const out = applyPartialCompletion("8 av 10", grouped);
+    expect(out).not.toBeNull();
+    expect(out).toHaveLength(2);
+    expect(out?.[0].steps).toHaveLength(5);
+    expect(out?.[1].steps).toHaveLength(3);
+    expect(flatPaces(out ?? [])).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 });

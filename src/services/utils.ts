@@ -26,6 +26,18 @@ export const ANALYZED_SPORT_TYPES = new Set<string>([
 export function shouldAnalyze(sportType: string): boolean {
   return ANALYZED_SPORT_TYPES.has(sportType);
 }
+// Precedence on resume: an explicit user choice always wins; otherwise the FRESH
+// draft's type (written this run) beats the activities column, which only holds
+// the PREVIOUS completed run's type and would silently shadow a force
+// re-analysis. The column is the legacy fallback for rows without a draft.
+export function resolveResumeTrainingType(
+  userType: TrainingType | null,
+  draftType: TrainingType | null,
+  columnType: TrainingType | null,
+): TrainingType | null {
+  return userType ?? draftType ?? columnType ?? null;
+}
+
 export function needCompleteAnalysis(trainingType: TrainingType): boolean {
   const trainingTypes: TrainingType[] = [
     "SHORT_INTERVALS",
