@@ -7,6 +7,7 @@ import { activities, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsActivity } from "../types/intervals/IIntervalsActivity";
 import { distanceBand, TIME_TOLERANCE_MS, withinMatchTolerance } from "./activity_match";
+import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { classifyUserActivity } from "./ingest_gating";
 import { intervalsApiService } from "./intervals_api_service";
 import { mapIntervalsActivityToInsert } from "./intervals_mappers";
@@ -24,6 +25,7 @@ type EnrichmentFields = Partial<
     InsertActivity,
     | "elapsedTime"
     | "maxHeartRate"
+    | "hasHeartrate"
     | "averagePower"
     | "weightedAveragePower"
     | "calories"
@@ -38,10 +40,12 @@ type EnrichmentFields = Partial<
   >
 >;
 
-function buildEnrichment(activity: IIntervalsActivity): EnrichmentFields {
-  return {
+function buildEnrichment(
+  activity: IIntervalsActivity,
+  processHeartRate: boolean,
+): EnrichmentFields {
+  const base: EnrichmentFields = {
     elapsedTime: activity.elapsed_time ?? null,
-    maxHeartRate: activity.max_heartrate ?? null,
     averagePower: activity.icu_average_watts ?? null,
     weightedAveragePower: activity.icu_weighted_avg_watts ?? null,
     calories: activity.calories ?? null,
@@ -53,6 +57,19 @@ function buildEnrichment(activity: IIntervalsActivity): EnrichmentFields {
     icuFtp: activity.icu_ftp ?? null,
     icuCtl: activity.icu_ctl ?? null,
     icuAtl: activity.icu_atl ?? null,
+  };
+  // GDPR consent gate: when HR processing is off, never persist HR from
+  // intervals.icu. Omit the HR fields entirely (rather than writing null) so an
+  // enrich pass over an existing row can't clobber HR another source legitimately
+  // stored under consent. Setting hasHeartrate only when true also repairs the
+  // flag intervals ingest historically never set.
+  if (!processHeartRate) return base;
+  return {
+    ...base,
+    maxHeartRate: activity.max_heartrate ?? null,
+    ...(activity.average_heartrate != null || activity.max_heartrate != null
+      ? { hasHeartrate: true }
+      : {}),
   };
 }
 
@@ -106,6 +123,7 @@ async function commitLink(
   db: Executor,
   localActivityId: number,
   intervalsActivity: IIntervalsActivity,
+  processHeartRate: boolean,
 ): Promise<void> {
   await db
     .update(activities)
@@ -113,7 +131,7 @@ async function commitLink(
       intervalsIcuId: intervalsActivity.id,
       intervalsAnalyzed: true,
       intervalsIcuEnrichedAt: new Date(),
-      ...buildEnrichment(intervalsActivity),
+      ...buildEnrichment(intervalsActivity, processHeartRate),
     })
     .where(and(eq(activities.id, localActivityId), isNull(activities.intervalsIcuId)));
 }
@@ -135,7 +153,8 @@ export async function linkFromIntervalsActivity(
   const match = await findLocalByFuzzyMatch(context.db, user.id, intervalsActivity);
   if (!match) return null;
 
-  await commitLink(context.db, match.id, intervalsActivity);
+  const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
+  await commitLink(context.db, match.id, intervalsActivity, processHeartRate);
   return { localActivityId: match.id, intervalsActivityId };
 }
 
@@ -187,6 +206,8 @@ export async function linkOrCreateFromIntervalsActivity(
   const activity = await intervalsApiService.getActivity(accessToken, intervalsActivityId);
   if (!activity) return { outcome: "no_activity", intervalsActivityId };
 
+  const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
+
   return context.db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${user.id}))`);
 
@@ -211,7 +232,7 @@ export async function linkOrCreateFromIntervalsActivity(
         columns: { id: true },
       });
       if (exact) {
-        await commitLink(tx, exact.id, activity);
+        await commitLink(tx, exact.id, activity, processHeartRate);
         return { outcome: "linked_exact", localActivityId: exact.id, intervalsActivityId };
       }
     }
@@ -219,7 +240,7 @@ export async function linkOrCreateFromIntervalsActivity(
     // (c) fuzzy time/distance match onto an unlinked local row.
     const fuzzy = await findLocalByFuzzyMatch(tx, user.id, activity);
     if (fuzzy) {
-      await commitLink(tx, fuzzy.id, activity);
+      await commitLink(tx, fuzzy.id, activity, processHeartRate);
       return { outcome: "linked_fuzzy", localActivityId: fuzzy.id, intervalsActivityId };
     }
 
@@ -233,11 +254,11 @@ export async function linkOrCreateFromIntervalsActivity(
     }
 
     const payload: InsertActivity = {
-      ...mapIntervalsActivityToInsert(activity, user.id),
+      ...mapIntervalsActivityToInsert(activity, user.id, processHeartRate),
       intervalsAnalyzed: true,
       intervalsIcuEnrichedAt: new Date(),
       analysisStatus: activityClass === "skip" ? "skipped_inactive" : "pending",
-      ...buildEnrichment(activity),
+      ...buildEnrichment(activity, processHeartRate),
     };
     const [inserted] = await tx
       .insert(activities)
@@ -299,6 +320,12 @@ export async function refreshLinkedIntervalsActivity(
   }
   if (!full) return "no_match";
 
+  const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
+  // Consent gate: omit averageHeartRate entirely when HR processing is off (not
+  // null) so we don't clobber HR another source stored under consent — mirrors
+  // buildEnrichment's treatment of the other HR fields.
+  const hrFields = processHeartRate ? { averageHeartRate: full.average_heartrate ?? null } : {};
+
   await context.db
     .update(activities)
     .set({
@@ -307,10 +334,10 @@ export async function refreshLinkedIntervalsActivity(
       distance: full.distance ?? 0,
       movingTime: full.moving_time ?? 0,
       totalElevationGain: full.total_elevation_gain ?? null,
-      averageHeartRate: full.average_heartrate ?? null,
       sportType: full.type || "Workout",
       indoor: full.trainer ?? false,
-      ...buildEnrichment(full),
+      ...hrFields,
+      ...buildEnrichment(full, processHeartRate),
     })
     .where(eq(activities.id, row.id));
 
@@ -333,6 +360,8 @@ export async function linkFromLocalActivity(
     },
   });
   if (!activity || activity.intervalsIcuId) return null;
+
+  const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
 
   let accessToken: string;
   try {
@@ -371,7 +400,7 @@ export async function linkFromLocalActivity(
         logger.error({ err, intervalsActivityId: exact[0].id }, "intervals.icu getActivity failed");
         full = exact[0];
       }
-      await commitLink(context.db, activity.id, full);
+      await commitLink(context.db, activity.id, full, processHeartRate);
       return { localActivityId: activity.id, intervalsActivityId: full.id };
     }
   }
@@ -399,7 +428,7 @@ export async function linkFromLocalActivity(
     full = fuzzy[0];
   }
 
-  await commitLink(context.db, activity.id, full);
+  await commitLink(context.db, activity.id, full, processHeartRate);
   return { localActivityId: activity.id, intervalsActivityId: full.id };
 }
 
@@ -445,11 +474,12 @@ export async function enrichActivityFromIntervalsIcu(
     return "no_match";
   }
 
+  const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
   await context.db
     .update(activities)
     .set({
       intervalsIcuEnrichedAt: new Date(),
-      ...buildEnrichment(full),
+      ...buildEnrichment(full, processHeartRate),
     })
     .where(eq(activities.id, activity.id));
 
@@ -558,6 +588,7 @@ export async function syncAllFromIntervals(
 
   try {
     const accessToken = await getIntervalsAccessToken(user.id);
+    const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
 
     const localRows = await context.db
       .select({
@@ -642,18 +673,18 @@ export async function syncAllFromIntervals(
                 "intervals.icu getActivity failed during master sync — using list payload",
               );
             }
-            await commitLink(context.db, localMatch.id, full);
+            await commitLink(context.db, localMatch.id, full, processHeartRate);
             knownIntervalsIds.add(intervalsActivity.id);
             const idx = unlinkedLocals.indexOf(localMatch);
             if (idx >= 0) unlinkedLocals.splice(idx, 1);
             result.linked++;
           } else {
             const payload: InsertActivity = {
-              ...mapIntervalsActivityToInsert(intervalsActivity, user.id),
+              ...mapIntervalsActivityToInsert(intervalsActivity, user.id, processHeartRate),
               intervalsAnalyzed: true,
               intervalsIcuEnrichedAt: new Date(),
               analysisStatus: AUTO_ANALYZE_ON_IMPORT ? "pending" : "completed",
-              ...buildEnrichment(intervalsActivity),
+              ...buildEnrichment(intervalsActivity, processHeartRate),
             };
             await context.db.insert(activities).values(payload).onConflictDoNothing();
             knownIntervalsIds.add(intervalsActivity.id);

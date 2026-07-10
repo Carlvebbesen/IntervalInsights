@@ -10,7 +10,7 @@ import { synthIntervalsActivity } from "./helpers/intervals_fixtures";
 describe("mapIntervalsActivityToInsert", () => {
   it("produces a null-Strava insert carrying the intervals.icu id", () => {
     const a = synthIntervalsActivity({ distance: 7200, name: "Tempo" });
-    const insert = mapIntervalsActivityToInsert(a, "user-1");
+    const insert = mapIntervalsActivityToInsert(a, "user-1", true);
 
     expect(insert.stravaActivityId).toBeNull();
     expect(insert.intervalsIcuId).toBe(a.id);
@@ -23,7 +23,7 @@ describe("mapIntervalsActivityToInsert", () => {
 
   it("parses intervals.icu's naive local time as a UTC instant", () => {
     const a = synthIntervalsActivity({ start_date_local: "2026-05-01T08:00:00" });
-    const insert = mapIntervalsActivityToInsert(a, "u");
+    const insert = mapIntervalsActivityToInsert(a, "u", true);
     expect(insert.startDateLocal.toISOString()).toBe("2026-05-01T08:00:00.000Z");
   });
 
@@ -36,11 +36,25 @@ describe("mapIntervalsActivityToInsert", () => {
       name: null,
       type: "Elliptical",
     });
-    const insert = mapIntervalsActivityToInsert(a, "u");
+    const insert = mapIntervalsActivityToInsert(a, "u", true);
     expect(insert.distance).toBe(0);
     expect(insert.movingTime).toBe(0);
     expect(insert.title).toBe("Untitled activity");
     expect(insert.sportType).toBe("Elliptical");
+  });
+
+  it("carries HR and sets hasHeartrate when consent is granted", () => {
+    const a = synthIntervalsActivity({ average_heartrate: 150 });
+    const insert = mapIntervalsActivityToInsert(a, "u", true);
+    expect(insert.averageHeartRate).toBe(150);
+    expect(insert.hasHeartrate).toBe(true);
+  });
+
+  it("nulls HR and clears hasHeartrate when consent is withheld (GDPR gate)", () => {
+    const a = synthIntervalsActivity({ average_heartrate: 150, max_heartrate: 175 });
+    const insert = mapIntervalsActivityToInsert(a, "u", false);
+    expect(insert.averageHeartRate).toBeNull();
+    expect(insert.hasHeartrate).toBe(false);
   });
 });
 
