@@ -61,8 +61,8 @@ function createEvent(objectId: number, ownerId: number, aspect: "create" | "upda
   };
 }
 
-async function createStravaUser(opts?: { lastSeenDaysAgo?: number }) {
-  const user = await createTestUser({ role: "premium" });
+async function createStravaUser(opts?: { lastSeenDaysAgo?: number; processHeartRate?: boolean }) {
+  const user = await createTestUser({ role: "premium", processHeartRate: opts?.processHeartRate });
   const athleteId = nextAthleteId();
   const lastSeenAt =
     opts?.lastSeenDaysAgo != null ? new Date(Date.now() - opts.lastSeenDaysAgo * DAY_MS) : null;
@@ -353,6 +353,47 @@ describe("processStravaWebhook (real implementation)", () => {
       expect(rows[0].id).toBe(intervalsRow.id);
       expect(rows[0].stravaActivityId).toBe(stravaActivityId);
       expect(rows[0].intervalsIcuId).toBe(`i-${stravaActivityId}`);
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  // Reader migration (analysis-settings wave 2): userHasHeartRateConsent now
+  // reads user_settings instead of users.processHeartRate directly — the
+  // ingest gate's ON/OFF behavior must be unchanged.
+  it("nulls HR on ingest when the user has not consented to HR processing", async () => {
+    const user = await createStravaUser({ processHeartRate: false });
+    try {
+      const stravaActivityId = nextAthleteId() * 1000;
+      getActivityResult = stravaActivity(stravaActivityId, user.athleteId, {
+        has_heartrate: true,
+        average_heartrate: 150,
+      });
+
+      await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "create"), context);
+
+      const [row] = await activitiesFor(user.id);
+      expect(row.hasHeartrate).toBe(false);
+      expect(row.averageHeartRate).toBeNull();
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  it("stores HR on ingest when the user has consented to HR processing", async () => {
+    const user = await createStravaUser({ processHeartRate: true });
+    try {
+      const stravaActivityId = nextAthleteId() * 1000;
+      getActivityResult = stravaActivity(stravaActivityId, user.athleteId, {
+        has_heartrate: true,
+        average_heartrate: 150,
+      });
+
+      await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "create"), context);
+
+      const [row] = await activitiesFor(user.id);
+      expect(row.hasHeartrate).toBe(true);
+      expect(row.averageHeartRate).toBe(150);
     } finally {
       await deleteTestUser(user.id);
     }
