@@ -104,10 +104,11 @@ async function main() {
       id: schema.users.id,
       clerkId: schema.users.clerkId,
       email: schema.users.email,
-      maxHeartRate: schema.users.maxHeartRate,
-      processHeartRate: schema.users.processHeartRate,
+      maxHeartRate: schema.userSettings.maxHeartRate,
+      processHeartRate: schema.userSettings.processHeartRate,
     })
-    .from(schema.users);
+    .from(schema.users)
+    .leftJoin(schema.userSettings, eq(schema.userSettings.userId, schema.users.id));
   const userById = new Map(userRows.map((u) => [u.id, u]));
 
   let acts = await db
@@ -276,8 +277,8 @@ async function main() {
       user: user
         ? {
             clerkId: user.clerkId,
-            maxHeartRate: (user as any).maxHeartRate ?? null,
-            processHeartRate: (user as any).processHeartRate ?? null,
+            maxHeartRate: user.maxHeartRate ?? null,
+            processHeartRate: user.processHeartRate ?? null,
           }
         : null,
       db: {
