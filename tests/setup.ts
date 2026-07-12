@@ -107,8 +107,15 @@ mock.module("../src/services/analysis_service.ts", () => {
       this.name = "ResumeValidationError";
     }
   }
+  class NoPendingInterruptError extends ResumeValidationError {
+    constructor(message: string) {
+      super(message);
+      this.name = "NoPendingInterruptError";
+    }
+  }
   return {
     ResumeValidationError,
+    NoPendingInterruptError,
     startAnalysis: async () => {},
     resumeAnalysis: async () => {},
     triggerAnalysisByStravaId: (...args: unknown[]) =>
