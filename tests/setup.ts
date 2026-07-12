@@ -91,6 +91,15 @@ mock.module("../src/services/intervals_wellness_service.ts", () => ({
   fetchWeekWellnessStats: async () => null,
 }));
 
+// Mutable delegate: a test file may swap this (e.g. to count/assert calls)
+// and MUST call reset() when done — the mock is global across files.
+export const analysisServiceMock = {
+  triggerAnalysisByStravaId: async (..._args: unknown[]) => {},
+  reset() {
+    this.triggerAnalysisByStravaId = async (..._args: unknown[]) => {};
+  },
+};
+
 mock.module("../src/services/analysis_service.ts", () => {
   class ResumeValidationError extends Error {
     constructor(message: string) {
@@ -102,7 +111,8 @@ mock.module("../src/services/analysis_service.ts", () => {
     ResumeValidationError,
     startAnalysis: async () => {},
     resumeAnalysis: async () => {},
-    triggerAnalysisByStravaId: async () => {},
+    triggerAnalysisByStravaId: (...args: unknown[]) =>
+      analysisServiceMock.triggerAnalysisByStravaId(...args),
   };
 });
 

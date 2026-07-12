@@ -2,6 +2,7 @@ import { and, eq, gte, isNotNull, isNull, lte } from "drizzle-orm";
 import { logger } from "../logger";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import * as gearRepo from "../repositories/gear_repository";
+import { findOrCreateUserSettings } from "../repositories/user_settings_repository";
 import { activities, gears, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
@@ -52,6 +53,29 @@ async function findFuzzyIntervalsTwin(
 
   if (candidates.length !== 1) return null;
   return candidates[0];
+}
+
+/**
+ * D3: when the user opted out of waiting for the intervals.icu-side update
+ * (`waitForStravaUpdate === false`), kick analysis off right away instead of
+ * leaving it for the intervals `update` webhook. Null settings (users row
+ * gone mid-race) fall through to the default (wait) — no start.
+ */
+async function maybeStartImmediateAnalysis(
+  context: IGlobalBindings,
+  accessToken: string,
+  stravaActivityId: number,
+  userId: string,
+  activityId: number,
+) {
+  const settings = await findOrCreateUserSettings(context.db, userId);
+  if (settings?.waitForStravaUpdate === false) {
+    logger.info(
+      { userId, activityId, stravaActivityId },
+      "Immediate analysis start (waitForStravaUpdate=false)",
+    );
+    await triggerAnalysisByStravaId(context.db, accessToken, stravaActivityId, userId);
+  }
 }
 
 export async function processStravaWebhook(body: IStravaWebhookEvent, context: IGlobalBindings) {
@@ -210,6 +234,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
             startDateLocal: activity.startDateLocal?.toISOString(),
           },
         });
+        await maybeStartImmediateAnalysis(context, accessToken, stravaActivityId, user.id, twin.id);
       }
       return;
     }
@@ -239,6 +264,13 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
           startDateLocal: activity.startDateLocal?.toISOString(),
         },
       });
+      await maybeStartImmediateAnalysis(
+        context,
+        accessToken,
+        stravaActivityId,
+        user.id,
+        inserted.id,
+      );
     }
     return;
   }
