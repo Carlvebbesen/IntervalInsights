@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { userHasHeartRateConsent } from "../src/services/heart_rate_consent_service";
 import { closePool, createTestUser, deleteTestUser, getDb } from "./helpers/db";
 
@@ -49,5 +50,9 @@ describe("userHasHeartRateConsent", () => {
     } finally {
       await deleteTestUser(user.id);
     }
+  });
+
+  it("returns false and does not throw for a non-existent userId (webhook racing account deletion)", async () => {
+    await expect(userHasHeartRateConsent(db, randomUUID())).resolves.toBe(false);
   });
 });

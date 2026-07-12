@@ -1,6 +1,6 @@
 import { z } from "zod";
 import * as userRepo from "../../../repositories/user_repository";
-import { getOrCreateUserSettings } from "../../../repositories/user_settings_repository";
+import { findOrCreateUserSettings } from "../../../repositories/user_settings_repository";
 import { defineTool } from "../tool_types";
 
 const getAthleteProfile = defineTool({
@@ -13,11 +13,11 @@ const getAthleteProfile = defineTool({
   handler: async (ctx) => {
     const [user, settings] = await Promise.all([
       userRepo.findById(ctx.db, ctx.userId),
-      getOrCreateUserSettings(ctx.db, ctx.userId),
+      findOrCreateUserSettings(ctx.db, ctx.userId),
     ]);
     return {
-      maxHeartRate: settings.maxHeartRate,
-      processHeartRate: settings.processHeartRate,
+      maxHeartRate: settings?.maxHeartRate ?? null,
+      processHeartRate: settings?.processHeartRate ?? false,
       stravaConnected: !!user?.stravaId,
       intervalsConnected: ctx.intervalsConnected,
     };

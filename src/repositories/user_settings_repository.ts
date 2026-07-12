@@ -7,25 +7,45 @@ type Db = IGlobalBindings["db"];
 export type UserSettingsDao = SelectUserSettings;
 
 /**
- * Returns the user's settings row, creating it on first access. Lazy creation
- * seeds `maxHeartRate`/`processHeartRate` from the legacy `users` columns —
- * pure defaults would permanently drop an existing user's HR settings, since
- * the backfill is onConflictDoNothing and never repairs an existing row.
- * Race-safe: concurrent first calls insert identical seeded values, so the
- * losing onConflictDoNothing changes nothing.
+ * Returns the user's settings row, creating it on first access. Steady state
+ * is a single SELECT; the seed path (read `users` HR columns → seeded insert
+ * → re-select) only runs on a miss. Seeding backfills `maxHeartRate`/
+ * `processHeartRate` from the legacy `users` columns — pure defaults would
+ * permanently drop an existing user's HR settings, since the backfill is
+ * onConflictDoNothing and never repairs an existing row. Race-safe: concurrent
+ * misses insert identical seeded values, so the losing onConflictDoNothing
+ * changes nothing.
+ * Returns null (never throws) when the `users` row itself is missing — e.g. a
+ * webhook racing an account deletion. Callers that need the missing-row case
+ * to be a hard invariant break should use `getOrCreateUserSettings` instead.
  */
-export async function getOrCreateUserSettings(db: Db, userId: string): Promise<UserSettingsDao> {
+export async function findOrCreateUserSettings(
+  db: Db,
+  userId: string,
+): Promise<UserSettingsDao | null> {
+  const existing = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+  });
+  if (existing) return existing;
+
   const user = await db.query.users.findFirst({
     columns: { maxHeartRate: true, processHeartRate: true },
     where: eq(users.id, userId),
   });
-  if (!user) throw new Error(`user ${userId} not found in getOrCreateUserSettings`);
+  if (!user) return null;
   await db
     .insert(userSettings)
     .values({ userId, maxHeartRate: user.maxHeartRate, processHeartRate: user.processHeartRate })
     .onConflictDoNothing();
   const row = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, userId) });
-  if (!row) throw new Error(`user_settings row missing for ${userId} after getOrCreate`);
+  return row ?? null;
+}
+
+/** Throwing wrapper around `findOrCreateUserSettings` for authenticated paths
+ * where a missing `users` row is a real invariant break, not a valid state. */
+export async function getOrCreateUserSettings(db: Db, userId: string): Promise<UserSettingsDao> {
+  const row = await findOrCreateUserSettings(db, userId);
+  if (!row) throw new Error(`user ${userId} not found in getOrCreateUserSettings`);
   return row;
 }
 
