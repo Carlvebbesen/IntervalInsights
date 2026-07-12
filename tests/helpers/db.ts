@@ -46,6 +46,7 @@ export async function closePool() {
 export async function createTestUser(opts?: {
   role?: "guest" | "premium" | "admin";
   processHeartRate?: boolean;
+  maxHeartRate?: number;
   /** Seed encrypted Strava tokens so strava-guarded routes resolve (default true). */
   strava?: boolean;
   /** Seed encrypted intervals.icu tokens so intervals-guarded routes resolve (default true). */
@@ -59,6 +60,7 @@ export async function createTestUser(opts?: {
       clerkId,
       role: opts?.role ?? "premium",
       processHeartRate: opts?.processHeartRate ?? false,
+      maxHeartRate: opts?.maxHeartRate,
     })
     .returning();
 

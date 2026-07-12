@@ -121,4 +121,43 @@ describe("/api/v1/user settings", () => {
       const rows = await db.select().from(userSettings).where(eq(userSettings.userId, user.id));
       expect(rows).toHaveLength(1);
     }));
+
+  it("GET /api/v1/user seeds a fresh settings row from legacy users HR columns", async () => {
+    const user = await createTestUser({ role: "premium", maxHeartRate: 185, processHeartRate: true });
+    try {
+      await withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+        const res = await app.fetch(new Request("http://test/api/v1/user"));
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body.maxHeartRate).toBe(185);
+        expect(body.processHeartRate).toBe(true);
+        expect(body.settings.maxHeartRate).toBe(185);
+        expect(body.settings.processHeartRate).toBe(true);
+      });
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  it("first-ever PATCH /api/v1/user/settings preserves legacy HR columns seeded into the new row", async () => {
+    const user = await createTestUser({ role: "premium", maxHeartRate: 185, processHeartRate: true });
+    try {
+      await withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+        const res = await app.fetch(
+          new Request("http://test/api/v1/user/settings", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ waitForStravaUpdate: false }),
+          }),
+        );
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body.maxHeartRate).toBe(185);
+        expect(body.processHeartRate).toBe(true);
+        expect(body.waitForStravaUpdate).toBe(false);
+      });
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
 });
