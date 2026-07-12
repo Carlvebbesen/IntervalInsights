@@ -107,13 +107,6 @@ export const auth = betterAuth({
     disableOriginCheck: false,
   },
   trustedOrigins: [new URL(config.APP_BASE_URL).origin, "intervalinsights://"],
-  // Override Better Auth's built-in per-IP rules (sign-in/sign-up 3/10s, OTP
-  // send 3/60s) — tight enough that a real user retrying a mistyped code plus
-  // a resend gets locked out mid-flow (observed in prod 2026-07-10). These are
-  // anti-spam backstops only: generous enough that no legitimate user ever
-  // trips them. Brute-force protection on the code itself is `allowedAttempts`
-  // below, not the limiter. Global default (100/10s) and prod-only enablement
-  // stay untouched.
   rateLimit: {
     customRules: {
       "/sign-in/email-otp": { window: 60, max: 30 },
