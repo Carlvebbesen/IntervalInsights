@@ -4,11 +4,15 @@ import {
   type WorkoutAnalysisOutput,
   type workoutSet,
 } from "../agent/initial_analysis_agent";
-import { invokeParseIntervalsAgent } from "../agent/parse_intervals_agent";
+import { invokeParseIntervalsAgent, type ParseWorkoutSet } from "../agent/parse_intervals_agent";
 import { logger } from "../logger";
 import type { TrainingType } from "../schema/enums";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
-import { generateCompleteIntervalSet, needCompleteAnalysis } from "./utils";
+import {
+  generateCompleteIntervalSet,
+  needCompleteAnalysis,
+  parsePaceStringToMetersPerSecond,
+} from "./utils";
 
 type WorkoutSet = z.infer<typeof workoutSet>;
 
@@ -46,27 +50,75 @@ export function looksStructured(text: string | null | undefined): boolean {
 }
 
 /**
- * Gate the LLM parse behind the deterministic prefilter: keep only the texts that
- * individually look structured, and if none do, return null WITHOUT any LLM call
- * (generic titles cost zero model spend). Otherwise join the survivors and run the
- * parse agent (which already applies the blowup guardrail to its own output).
- * Never throws into the caller — the analyze pipeline must not fail because the
- * text gate hiccuped.
+ * Flat, expanded list of declared work-step paces (m/s), one entry per expanded
+ * WORK step in the exact order `generateCompleteIntervalSet` produces them — so it
+ * lines up positionally with the expanded sets. A step with no explicitly-stated
+ * pace maps to null (never inferred). Text-declared paces ONLY; converted via the
+ * shared `parsePaceStringToMetersPerSecond` (garbage/ambiguous strings → null).
  */
-export async function extractDeclaredStructure(
+export function expandDeclaredPaces(sets: ParseWorkoutSet[]): (number | null)[] {
+  const paces: (number | null)[] = [];
+  for (const set of sets) {
+    for (let i = 0; i < set.set_reps; i++) {
+      for (const step of set.steps) {
+        const mps = parsePaceStringToMetersPerSecond(step.target_pace_string ?? null);
+        for (let r = 0; r < step.reps; r++) paces.push(mps);
+      }
+    }
+  }
+  return paces;
+}
+
+/**
+ * Override a proposed rep-list's paces with declared ones positionally: where a
+ * declared pace exists for a work step, it wins; where it's null (no explicit
+ * declaration for that step), the existing pace is left untouched. Expanding from
+ * an all-null set therefore yields declared-only paces; expanding from a
+ * lap/history proposal overrides only the declared positions.
+ */
+export function applyDeclaredPacesPositionally(
+  sets: ExpandedIntervalSet[],
+  declaredPaces: (number | null)[],
+): ExpandedIntervalSet[] {
+  let idx = 0;
+  return sets.map((set) => ({
+    ...set,
+    steps: set.steps.map((step) => {
+      const pace = idx < declaredPaces.length ? declaredPaces[idx] : null;
+      idx++;
+      return pace != null ? { ...step, target_pace: pace } : step;
+    }),
+  }));
+}
+
+/**
+ * Text gate that ALSO surfaces explicitly-declared paces: returns the parsed sets
+ * plus `declaredPaces` (flat, expanded, positional — see `expandDeclaredPaces`).
+ * `declaredPaces` is all-null when the text stated no pace. Never throws.
+ */
+export async function extractDeclaredStructureWithPaces(
   texts: (string | null | undefined)[],
   trainingType: TrainingType | null | undefined,
-): Promise<WorkoutSet[] | null> {
+): Promise<{ sets: ParseWorkoutSet[]; declaredPaces: (number | null)[] } | null> {
   const structured = texts.filter((t): t is string => looksStructured(t));
   if (structured.length === 0) return null;
   try {
     const result = await invokeParseIntervalsAgent(structured.join("\n"), trainingType ?? null);
     const sets = result?.sets ?? [];
-    return sets.length > 0 ? sets : null;
+    if (sets.length === 0) return null;
+    return { sets, declaredPaces: expandDeclaredPaces(sets) };
   } catch (err) {
     logger.warn({ err }, "extractDeclaredStructure: parse failed — ignoring text gate");
     return null;
   }
+}
+
+export async function extractDeclaredStructure(
+  texts: (string | null | undefined)[],
+  trainingType: TrainingType | null | undefined,
+): Promise<WorkoutSet[] | null> {
+  const result = await extractDeclaredStructureWithPaces(texts, trainingType);
+  return result?.sets ?? null;
 }
 
 // Partial-completion phrasing with capture groups: "8 av 10" (Norwegian), "8 of

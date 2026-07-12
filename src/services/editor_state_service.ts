@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import type { z } from "zod";
 import type { WorkoutAnalysisOutput, workoutSet } from "../agent/initial_analysis_agent";
 import { produceSegments } from "../agent/segment_production";
@@ -6,13 +7,14 @@ import { AppError } from "../error";
 import type { Logger } from "../logger";
 import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import * as activityRepo from "../repositories/activity_repository";
-import type { ProposedSegmentDraft, TrainingType } from "../schema";
+import { activities, type ProposedSegmentDraft, type TrainingType } from "../schema";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsInterval } from "../types/intervals/IIntervalsActivity";
 import { getStreamSet, getStreamsAndLaps } from "./activity_source_service";
 import { intervalsApiService } from "./intervals_api_service";
 import { extractIntervalsList } from "./intervals_mappers";
+import { applyDeclaredPacesPositionally } from "./text_intent_service";
 
 type Db = IGlobalBindings["db"];
 
@@ -117,6 +119,26 @@ export async function previewSegments(
   }));
 }
 
+/**
+ * Override the proposed rep-list paces with the draft's explicitly text-declared
+ * paces where present (`structureSource === "text"`). No declared paces (or a
+ * model-derived structure) → the proposed paces are returned unchanged.
+ */
+async function applyDraftDeclaredPaces(
+  db: Db,
+  activityId: number,
+  sets: ExpandedIntervalSet[],
+): Promise<ExpandedIntervalSet[]> {
+  const row = await db.query.activities.findFirst({
+    where: eq(activities.id, activityId),
+    columns: { draftAnalysisResult: true },
+  });
+  const draft = row?.draftAnalysisResult;
+  const declaredPaces = draft?.structureSource === "text" ? draft.declaredPaces : null;
+  if (!declaredPaces || !declaredPaces.some((p) => p != null)) return sets;
+  return applyDeclaredPacesPositionally(sets, declaredPaces);
+}
+
 type EditorStreams = { time: number[]; heartrate: number[] | null; velocity: number[] };
 
 async function loadEditorStreams(
@@ -166,9 +188,17 @@ export async function getEditorState(
 }> {
   const log = logger.child({ fn: "getEditorState", activityId });
 
-  const sets =
+  let sets =
     input.sets ??
     (await getProposedPace(db, userId, accessToken, input.structure ?? [], activityId, log));
+
+  // D6 pre-fill: on initial load (paces proposed from laps/history), let explicit
+  // text-declared paces win positionally on work steps so the manual reviewer sees
+  // them before confirming. A re-derive after a structural edit (`input.sets`) keeps
+  // the user's paces verbatim and is left untouched.
+  if (!input.sets) {
+    sets = await applyDraftDeclaredPaces(db, activityId, sets);
+  }
 
   const segments = await previewSegments(db, userId, activityId, sets, input.trainingType, log);
 

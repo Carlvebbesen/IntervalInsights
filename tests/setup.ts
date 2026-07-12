@@ -154,6 +154,8 @@ mock.module("../src/services/lap_derivation_service.ts", () => ({
 }));
 
 mock.module("../src/agent/parse_intervals_agent.ts", () => ({
+  parseWorkoutStep: z.object({ target_pace_string: z.string().nullable().optional() }),
+  parseWorkoutSet: z.object({ steps: z.array(z.unknown()) }),
   parseIntervalsOutput: z.object({ sets: z.array(z.unknown()) }),
   invokeParseIntervalsAgent: async () => ({ sets: [] }),
 }));

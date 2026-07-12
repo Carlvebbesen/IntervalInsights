@@ -57,6 +57,11 @@ export type DraftAnalysisResult = WorkoutAnalysisOutput & {
   // text gate parsed, kept for observability.
   structureSource?: "text" | "model";
   declaredStructure?: WorkoutAnalysisOutput["structure"] | null;
+  // Explicitly text-declared paces (m/s), flat and positional — one entry per
+  // expanded WORK step (`generateCompleteIntervalSet` order). null entries = no
+  // pace stated for that step. Only meaningful when `structureSource === "text"`.
+  // Absent on drafts written before D6 — treated as "no declared paces".
+  declaredPaces?: (number | null)[] | null;
 };
 
 export const activities = pgTable(

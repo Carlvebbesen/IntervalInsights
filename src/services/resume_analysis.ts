@@ -11,7 +11,12 @@ import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import { createGearSuggester } from "./gear_suggestion_service";
 import { progressService } from "./progress_service";
-import { needCompleteAnalysis, resolveResumeTrainingType } from "./utils";
+import { applyDeclaredPacesPositionally } from "./text_intent_service";
+import {
+  generateCompleteIntervalSet,
+  needCompleteAnalysis,
+  resolveResumeTrainingType,
+} from "./utils";
 
 // Thrown for user-input validation problems in the resume flow. Distinct from
 // a server-side error so the router can map it to 400.
@@ -312,8 +317,20 @@ export async function maybeAutoResumeAnalysis(
 
   await maybeAutoAssignGear(db, userId, activityId, activity, draftType, log);
 
+  // D6: carry text-declared paces into the auto-resumed analysis. Only when the
+  // draft's structure came from the title/description (`structureSource === "text"`)
+  // and at least one work step had an explicitly-stated pace — otherwise resume
+  // with empty sets exactly as before (the draft structure hydrates with null paces).
+  const draft = activity.draftAnalysisResult;
+  const declaredPaces = draft?.structureSource === "text" ? draft.declaredPaces : null;
+  const draftStructure = draft?.structure;
+  const autoSets: ExpandedIntervalSet[] =
+    declaredPaces && draftStructure?.length && declaredPaces.some((p) => p != null)
+      ? applyDeclaredPacesPositionally(generateCompleteIntervalSet(draftStructure), declaredPaces)
+      : [];
+
   try {
-    await resumeAnalysis(db, stravaAccessToken, activityId, "", [], null, null, []);
+    await resumeAnalysis(db, stravaAccessToken, activityId, "", autoSets, null, null, []);
     log.info({ activityId, mode: settings.analysisReviewMode }, "auto-resume completed analysis");
   } catch (err) {
     if (err instanceof NoPendingInterruptError) {

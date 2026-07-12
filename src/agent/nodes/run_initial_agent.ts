@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { logger } from "../../logger";
 import { activities, type DraftAnalysisResult } from "../../schema";
 import {
-  extractDeclaredStructure,
+  extractDeclaredStructureWithPaces,
   reconcileStructureTowardDeclared,
 } from "../../services/text_intent_service";
 import { lapsMatchIntervals, needCompleteAnalysis } from "../../services/utils";
@@ -44,10 +44,11 @@ export async function runInitialAgent(
   // Text authority: when the title/description explicitly declares a structure,
   // it wins on SHAPE over the model's stream-derived reading. Generic titles pass
   // the deterministic prefilter and cost zero extra LLM calls.
-  const declaredStructure = await extractDeclaredStructure(
+  const declared = await extractDeclaredStructureWithPaces(
     [state.activityTitle, state.activityDescription],
     initialResult.training_type,
   );
+  const declaredStructure = declared?.sets ?? null;
   let finalResult = initialResult;
   let structureSource: "text" | "model" = "model";
   if (declaredStructure) {
@@ -79,6 +80,7 @@ export async function runInitialAgent(
     intervalsIcuPrediction: state.intervalsIcuPrediction,
     structureSource,
     declaredStructure: declaredStructure ?? null,
+    declaredPaces: structureSource === "text" ? (declared?.declaredPaces ?? null) : null,
   };
 
   await db
