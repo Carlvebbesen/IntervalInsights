@@ -9,3 +9,4 @@ export * from "./interval_structure";
 export * from "./oauth_provider_tokens";
 export * from "./script_runs";
 export * from "./users";
+export * from "./user_settings";
