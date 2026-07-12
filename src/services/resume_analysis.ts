@@ -273,9 +273,13 @@ async function maybeAutoAssignGear(
  * already succeeded. Failure modes:
  *  - user submitted their own resume first (NoPendingInterruptError) → success,
  *    their input stands.
- *  - any other failure (incl. a structureless interval draft) → leave the row at
- *    `initial` for manual review; if resumeAnalysis flipped it to `error`,
- *    restore `initial` so the pending sheet still surfaces it.
+ *  - a pre-mutation validation failure (e.g. a structureless interval draft,
+ *    thrown before resumeAnalysis touches the status) → the row naturally stays
+ *    `initial`, so it still surfaces for manual review.
+ *  - a genuine mid-graph resume failure → the thread has already consumed its
+ *    interrupt, so the row is left at `error` and follows the existing
+ *    bounded-retry requeue path instead of a fresh `initial` that would let a
+ *    later manual resume silently ignore the user's submitted input.
  */
 export async function maybeAutoResumeAnalysis(
   db: IGlobalBindings["db"],
@@ -316,12 +320,9 @@ export async function maybeAutoResumeAnalysis(
       log.info({ activityId }, "auto-resume no-op — user resume already claimed the interrupt");
       return;
     }
-    log.warn({ err, activityId }, "auto-resume failed — leaving at initial for manual review");
-    // resumeAnalysis flips the row to `error` only on a genuine graph failure;
-    // restore `initial` so the manual-review fallback still surfaces it.
-    await db
-      .update(activities)
-      .set({ analysisStatus: "initial" })
-      .where(and(eq(activities.id, activityId), eq(activities.analysisStatus, "error")));
+    log.warn(
+      { err, activityId },
+      "auto-resume failed — row stays at its current status (initial pre-mutation, error post-mutation) for the requeue/manual-review fallback",
+    );
   }
 }

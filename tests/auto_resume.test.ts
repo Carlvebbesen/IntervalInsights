@@ -14,6 +14,7 @@ import { intervalSegments } from "../src/schema/interval_segments";
 import * as deterministic from "../src/services/deterministic_segmenter";
 import * as paceService from "../src/services/pace_service";
 import { maybeAutoResumeAnalysis, resumeAnalysis } from "../src/services/resume_analysis";
+import * as segmentMapping from "../src/services/segment_mapping_service";
 import { stravaApiService } from "../src/services/strava_api_service";
 import { generateCompleteIntervalSet } from "../src/services/utils";
 import type { ExpandedIntervalSet } from "../src/types/ExpandedIntervalSet";
@@ -121,6 +122,9 @@ describe("auto-resume (review-mode bypass) — end-to-end on the real graph", ()
   let userId: string;
   let shoeId: number;
   const spies: { mockRestore: () => void }[] = [];
+  let completeAnalysisSpy: ReturnType<
+    typeof spyOn<typeof fullAnalysis, "invokeCompleteActivityAnalysisAgent">
+  >;
 
   const db = () => getDb();
 
@@ -214,18 +218,19 @@ describe("auto-resume (review-mode bypass) — end-to-end on the real graph", ()
           generateCompleteIntervalSet(structure) as never,
       ),
       spyOn(deterministic, "buildSegmentsDeterministic").mockReturnValue(null),
-      spyOn(fullAnalysis, "invokeCompleteActivityAnalysisAgent").mockImplementation(
-        async (
-          _streams: unknown,
-          _comment: unknown,
-          _tt: unknown,
-          _laps: unknown,
-          _init: unknown,
-          groups: ExpandedIntervalSet[],
-        ) => buildPlanFromGroups(groups) as never,
-      ),
       spyOn(eventAgent, "invokeEventDetectionAgent").mockResolvedValue({ events: [] } as never),
     );
+    completeAnalysisSpy = spyOn(fullAnalysis, "invokeCompleteActivityAnalysisAgent").mockImplementation(
+      async (
+        _streams: unknown,
+        _comment: unknown,
+        _tt: unknown,
+        _laps: unknown,
+        _init: unknown,
+        groups: ExpandedIntervalSet[],
+      ) => buildPlanFromGroups(groups) as never,
+    );
+    spies.push(completeAnalysisSpy);
   });
 
   afterAll(async () => {
@@ -304,6 +309,32 @@ describe("auto-resume (review-mode bypass) — end-to-end on the real graph", ()
     await runHook(id); // resumeAnalysis throws ResumeValidationError → swallowed
 
     expect(await statusOf(id)).toBe("initial");
+
+    await resetAnalysisThread(id);
+  });
+
+  it("none: a genuine mid-graph resume failure leaves the row at error, not initial", async () => {
+    await setMode("none");
+    const { id, strava } = await seedActivity("10x1000m boom");
+    await driveToInitial(id, strava);
+    expect(await statusOf(id)).toBe("initial");
+
+    // The interrupt is already consumed by the time this throws (runCompleteAnalysis
+    // has flipped the row to ongoing_completed) — a genuine mid-graph failure, not a
+    // pre-mutation validation error. The row must stay `error` for the bounded
+    // requeue retry, not bounce back to `initial` (which would let a later manual
+    // resume silently ignore the user's submitted input — see resume_analysis.ts).
+    // Forcing a boundary/user-shape mismatch routes runCompleteAnalysis through the
+    // deriveFromUserShape → full-analysis-LLM path (the deterministic-mapping path
+    // taken by every other happy-path test here never calls that LLM again).
+    spyOn(segmentMapping, "boundariesMatchUserShape").mockReturnValueOnce(false);
+    completeAnalysisSpy.mockImplementationOnce(async () => {
+      throw new Error("boom - full analysis crashed");
+    });
+
+    await runHook(id);
+
+    expect(await statusOf(id)).toBe("error");
 
     await resetAnalysisThread(id);
   });
