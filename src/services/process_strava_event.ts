@@ -56,9 +56,9 @@ async function findFuzzyIntervalsTwin(
 }
 
 /**
- * D3: when the user opted out of waiting for the intervals.icu-side update
- * (`waitForStravaUpdate === false`), kick analysis off right away instead of
- * leaving it for the intervals `update` webhook. Null settings (users row
+ * D3: when the user opted out of waiting for the Strava-side title/description
+ * edit (`waitForStravaUpdate === false`), kick analysis off right away instead
+ * of leaving it for the Strava `update` webhook. Null settings (users row
  * gone mid-race) fall through to the default (wait) — no start.
  */
 async function maybeStartImmediateAnalysis(
