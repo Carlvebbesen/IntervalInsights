@@ -21,8 +21,6 @@ export type SignatureCheck = {
   useExisting: boolean;
   structureId?: number;
   signature: string;
-  // Venue-aware name to stamp on a newly-created structure (so the name agrees
-  // with the venue-snapped signature). Unused when reusing an existing row.
   structureName: string;
 };
 
@@ -67,9 +65,6 @@ export async function findMatchingStructure(
     return { useExisting: true, structureId: exact[0].id, signature, structureName };
   }
 
-  // Fuzzy match only against shapes the user has run under the SAME training
-  // type. The type lives on the activity now (structures are pure shapes), so
-  // filter on activities.trainingType via the existing join.
   const signatureParts = signature.split("-").sort();
   const candidates = await db
     .selectDistinct({ id: intervalStructures.id, signature: intervalStructures.signature })
@@ -137,9 +132,6 @@ export async function persistSegmentsAndStructure(
     structureId = check.structureId;
     log.info({ structureId, signature: check.signature }, "reusing existing structureId");
   } else {
-    // Structures are global (no userId), so two concurrent first-time analyses of
-    // the same NEW signature race here. onConflictDoNothing + re-select turns the
-    // loser's would-be unique-violation into a reuse instead of erroring the graph.
     const [newStructure] = await db
       .insert(intervalStructures)
       .values({
@@ -197,7 +189,6 @@ export async function persistSegmentsAndStructure(
 
     await tx.delete(intervalSegments).where(eq(intervalSegments.activityId, activityId));
     if (persistSegments) {
-      // Option B: fold normal REST rows into the preceding work row before insert.
       const folded = foldRestSegments(segments);
       await tx.insert(intervalSegments).values(folded);
       log.info({ count: folded.length, expanded: segments.length }, "inserted segments");

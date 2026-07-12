@@ -73,8 +73,6 @@ export async function verifyNode(state: TrainingState): Promise<TrainingUpdate> 
   const question = textOf(lastHuman?.content);
 
   const artifacts = state.pendingArtifacts ?? [];
-  // Rate-limit throws from invokeStructured degrade to the null pass-through —
-  // a 429 must not fail the whole chat turn just because the verifier is busy.
   const verdict = await invokeStructured(
     verifySchema,
     buildVerifyPrompt(question, candidate, summarizeArtifacts(artifacts)),

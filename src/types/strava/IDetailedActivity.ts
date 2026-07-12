@@ -156,7 +156,6 @@ export interface Gear {
   resource_state: number;
   distance: number;
   retired?: boolean;
-  /** Bikes only. Strava frame types: 1=MTB, 2=cyclocross, 3=road, 4=TT, 5=gravel. */
   frame_type?: number;
 }
 export interface DetailedAthlete {

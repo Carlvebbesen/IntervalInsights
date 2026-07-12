@@ -1,23 +1,6 @@
 import { classifyLaps, isJunkLap } from "../services/deterministic_segmenter";
 import type { Lap } from "../types/strava/IDetailedActivity";
 
-/**
- * Deterministic lap-evidence hint for the classifier.
- *
- * The classifier otherwise sees only the title, a 30s-sampled stream table, and the
- * intervals.icu prediction block. None of those reliably surface a clean rep grid:
- * a colloquial title ("6x varme tusninger") can't be decoded into a per-rep size,
- * the 30s sampling smears reps, and intervals.icu frequently labels EVERY manual lap
- * `WORK` (recoveries included), so its block reads as noise. Yet the athlete's own
- * lap markers usually encode the structure exactly — `classifyLaps` already isolates
- * the fast WORK laps from warmup/cooldown/recovery by pace.
- *
- * This builds a small markdown block stating that deterministic work/rest split so
- * the LLM can classify the interval session it would otherwise collapse to EASY.
- * Returns "" unless the laps form a clear repeating grid (see the guards), so steady
- * runs with per-km auto-laps don't get a fake structure.
- */
-
 const MIN_WORK_REPS = 3;
 const MIN_WORK_REST_CONTRAST = 1.25;
 
@@ -40,7 +23,6 @@ export function buildLapEvidenceBlock(laps: Lap[] | undefined, time: number[]): 
   if (!laps || laps.length === 0 || time.length === 0) return "";
 
   const cls = classifyLaps(laps, time);
-  // Only the per-rep mode isolates individual reps; boundary/unusable can't.
   if (cls.mode !== "per-rep") return "";
 
   const work = cls.workLaps;
@@ -49,13 +31,10 @@ export function buildLapEvidenceBlock(laps: Lap[] | undefined, time: number[]): 
   const meaningful = laps.filter((l) => !isJunkLap(l));
   const workSet = new Set(work);
   const nonWork = meaningful.filter((l) => !workSet.has(l));
-  // No warmup / recovery / cooldown laps at all → laps are uniform (e.g. steady run
-  // auto-lapped every km), not a work/rest grid. Don't invent a structure.
   if (nonWork.length === 0) return "";
 
   const workSpeed = median(work.map((l) => l.average_speed ?? 0));
   const restSpeed = median(nonWork.map((l) => l.average_speed ?? 0));
-  // Work must be clearly faster than the rest of the laps, or it isn't an interval.
   if (workSpeed <= 0 || restSpeed <= 0 || workSpeed < restSpeed * MIN_WORK_REST_CONTRAST) {
     return "";
   }

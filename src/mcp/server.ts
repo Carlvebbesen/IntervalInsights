@@ -14,13 +14,6 @@ export interface McpAvailability {
   intervalsConnected: boolean;
 }
 
-/**
- * The coach registry, gated to what this athlete can actually serve. Every coach
- * tool is read-only, so the registry is safe to expose over MCP — we only drop
- * tools whose backing integration isn't connected, plus any `llmBacked` tool
- * (declared at the definition site): an external client (Claude/ChatGPT) must
- * not drive our OpenAI spend through us — it has its own LLM.
- */
 export function selectMcpTools(availability: McpAvailability): CoachTool[] {
   return registry.filter((tool) => {
     if (tool.llmBacked) return false;

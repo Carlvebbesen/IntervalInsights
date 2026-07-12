@@ -3,12 +3,7 @@ export type RunningVenue = {
   meters: number;
   aliases: string[];
   exact: boolean;
-  // Signature token for exact venues that participate in structure-signature
-  // snapping (see interval_structure_service canonicalization). Inexact venues
-  // have no token — their measured laps just quantize to a plain distance.
   token?: string;
-  // Geofence centre + radius for GPS venue confirmation (D4). Only exact venues
-  // carry coordinates; the check confirms a distance snap, never overrides it.
   lat?: number;
   lng?: number;
   radiusMeters?: number;
@@ -33,9 +28,6 @@ export const RUNNING_VENUES: RunningVenue[] = [
     token: "NG",
     lat: 59.938758,
     lng: 10.74794,
-    // Wider than Bislett: the NG loop is ~1.5 km, so points sit further from the
-    // centre. Generous so a real NG session reliably confirms (avoids a false
-    // veto); the ±2.5% distance gate still bounds any false positive.
     radiusMeters: 400,
   },
   {
@@ -46,7 +38,6 @@ export const RUNNING_VENUES: RunningVenue[] = [
   },
 ];
 
-/** Exact venues that participate in signature snapping (have a token). */
 export const SIGNATURE_VENUES = RUNNING_VENUES.filter(
   (v): v is RunningVenue & { token: string } => v.exact && v.token != null,
 );

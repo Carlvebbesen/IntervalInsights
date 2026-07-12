@@ -11,19 +11,8 @@ import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
 
-/**
- * DAO returned by this repository — the database shape of an event minus the
- * internal `userId`. Controllers map this to a DTO before returning it.
- */
 export type EventDao = Omit<SelectEvent, "userId">;
 
-/**
- * Repository for the event aggregate — `events` plus its `activity_events` links
- * (and, in future, `event_attributes`). All DB access for these tables goes
- * through here; controllers never touch the tables directly.
- */
-
-// Columns returned to callers — never leaks internal-only fields.
 export const eventColumns = {
   id: events.id,
   eventType: events.eventType,
@@ -37,7 +26,6 @@ export const eventColumns = {
   updatedAt: events.updatedAt,
 } as const;
 
-// Projection for events shown inline on an activity (no created/updated timestamps).
 const activityEventColumns = {
   id: events.id,
   eventType: events.eventType,
@@ -61,7 +49,6 @@ export type ActivityEventDao = Pick<
   | "resolvedAt"
 >;
 
-/** Events linked to a given activity, for inline display on the activity detail. */
 export function listForActivity(db: Db, activityId: number): Promise<ActivityEventDao[]> {
   return db
     .select(activityEventColumns)
@@ -86,7 +73,6 @@ export async function listForUser(
     .orderBy(desc(events.lastOccurrence));
 }
 
-/** Insert an event and link it to an activity, atomically. Returns the new row. */
 export async function createLinkedToActivity(db: Db, values: InsertEvent, activityId: number) {
   return db.transaction(async (tx) => {
     const [row] = await tx.insert(events).values(values).returning(eventColumns);
@@ -95,7 +81,6 @@ export async function createLinkedToActivity(db: Db, values: InsertEvent, activi
   });
 }
 
-/** Update an event the user owns. Returns the updated row, or `undefined` if not found. */
 export async function updateForUser(
   db: Db,
   userId: string,
@@ -110,10 +95,6 @@ export async function updateForUser(
   return updated;
 }
 
-/**
- * Unlink an event from one activity. If that was the event's last link, the event
- * itself is deleted. Returns `found: false` when the event doesn't belong to the user.
- */
 export async function unlinkFromActivity(db: Db, userId: string, id: number, activityId: number) {
   return db.transaction(async (tx) => {
     const [event] = await tx

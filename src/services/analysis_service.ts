@@ -16,8 +16,6 @@ import type { IGlobalBindings } from "../types/IRouters";
 import { progressService } from "./progress_service";
 import { needCompleteAnalysis, resolveResumeTrainingType } from "./utils";
 
-// Thrown for user-input validation problems in the resume flow. Distinct from
-// a server-side error so the router can map it to 400.
 export class ResumeValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -32,10 +30,6 @@ function toDoneStatus(status: AnalysisStatus | null | undefined, fallback: DoneS
   return fallback;
 }
 
-// Flip to `error` only while the run is still in an in-flight status: a late
-// failure (e.g. after persistResults wrote `completed`, or a duplicate resume
-// on a finished thread) must not clobber a terminal status and trigger the
-// requeue's auto-rerun.
 async function markErrorIfStatusIn(
   db: IGlobalBindings["db"],
   activityId: number,
@@ -73,12 +67,6 @@ export const startAnalysis = async (
   force = false,
 ): Promise<void> => {
   const log = logger.child({ fn: "startAnalysis", activityId, force });
-  // Atomic claim: flip to ongoing_init only if no other starter got there first.
-  // A read-then-invoke check leaves a window where two starters (webhook +
-  // manual + requeue) both pass, then each resetAnalysisThread deletes the
-  // other's checkpoints mid-run. `force` is the user-driven re-analyze path
-  // (details view): it may re-run a completed/paused activity, but never one
-  // whose graph is actively running.
   const blockedStatuses: AnalysisStatus[] = force
     ? [...ACTIVE_RUN_STATUSES]
     : [...SKIP_START_STATUSES];
@@ -107,11 +95,6 @@ export const startAnalysis = async (
     return;
   }
 
-  // Always start from a clean checkpoint. Without this, an invoke layered on
-  // top of a stale thread (e.g. from a prior dev session or a different state
-  // schema) silently corrupts the run and resume crashes later with empty
-  // state.streams / state.activityId. resetAnalysisThread is a no-op when no
-  // thread exists, so this is safe to call unconditionally here.
   await resetAnalysisThread(activityId);
 
   await progressService.publish(userId, {
@@ -197,10 +180,6 @@ export const resumeAnalysis = async (
     throw new Error(`Cannot resume activity ${activityId} — no training type resolved`);
   }
 
-  // Interval-type sessions need a structure for the complete-analysis LLM to
-  // anchor on. If the user submitted no sets and the initial agent also
-  // produced none, fail fast with a user-facing message instead of either
-  // hanging the LLM call or marking the activity as a server error.
   if (needCompleteAnalysis(finalTrainingType)) {
     const draftStructureLen =
       (current.draftAnalysisResult as { structure?: unknown[] } | null)?.structure?.length ?? 0;
@@ -227,10 +206,6 @@ export const resumeAnalysis = async (
     },
   };
 
-  // Pre-check OUTSIDE the try: a duplicate/late resume (double-tap, client
-  // retry after completion) is a request problem, not a run failure — it must
-  // map to 400 and never flip a `completed` activity to `error` (which would
-  // trigger the requeue's full auto-rerun).
   const before = await graph.getState(graphConfig);
   const beforeInterrupts = before.tasks.reduce((sum, t) => sum + t.interrupts.length, 0);
   const hasPendingWork = before.next.length > 0;
@@ -271,8 +246,6 @@ export const resumeAnalysis = async (
     columns: { analysisStatus: true },
   });
   if (afterInterrupts > 0) {
-    // Still parked at an interrupt: the resume didn't progress, but nothing
-    // failed server-side — leave the status alone so the user can resubmit.
     await progressService.publish(current.userId, {
       type: "done",
       data: { id: activityId, analysisStatus: toDoneStatus(final?.analysisStatus, "initial") },
@@ -311,6 +284,5 @@ export const triggerAnalysisByStravaId = async (
     return;
   }
 
-  // startAnalysis resets the thread itself, no need to do it twice.
   await startAnalysis(db, stravaAccessToken, result.id, stravaActivityId, userId);
 };

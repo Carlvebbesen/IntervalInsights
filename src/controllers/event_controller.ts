@@ -7,12 +7,6 @@ import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
 
-/**
- * Business logic for events. Orchestrates the event + activity repositories and
- * enforces the domain rules (occurrence-date defaulting, resolvedAt syncing,
- * ownership). Throws AppError for expected failures; the router stays thin.
- */
-
 export async function listEvents(
   db: Db,
   userId: string,
@@ -27,7 +21,6 @@ export interface CreateEventInput {
   eventType: EventType;
   bodyLocation?: string | null;
   description: string;
-  /** ISO-8601 timestamp; defaults to the activity's start date when omitted. */
   startTime?: string;
   status?: EventStatus;
 }

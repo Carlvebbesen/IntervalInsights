@@ -32,7 +32,6 @@ async function applySegmentEdit(
   }
   const tag = `[applySegmentEdit activity=${activity.id}]`;
 
-  // latlng is fetched for venue detection (confirms a distance→venue snap).
   const streams = await getStreamSet(db, userId, activity.id, [
     "time",
     "distance",
@@ -75,7 +74,6 @@ async function applySegmentEdit(
     trainingType: activity.trainingType,
   });
 
-  // Option B: expand folded recovery back into REST rows for the response shape.
   return { intervalSegments: expandRestSegments(await loadStoredSegments(db, activity.id)) };
 }
 

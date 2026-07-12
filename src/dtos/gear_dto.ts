@@ -6,7 +6,6 @@ import type { GearSchema, GearSummarySchema } from "../schemas/api_schemas";
 export type GearDto = z.infer<typeof GearSchema>;
 export type GearSummaryDto = z.infer<typeof GearSummarySchema>;
 
-/** nickname → "brand model" → model. The label shown on badges and lists. */
 export function gearDisplayName(g: {
   nickname: string | null;
   brand: string | null;
@@ -30,7 +29,6 @@ export function toGearSummaryDto(dao: GearSummaryDao): GearSummaryDto {
 }
 
 export interface GearDtoExtras {
-  /** Buckets this gear is the default for (on its own surface). */
   defaultBuckets?: Set<TrainingBucket>;
   trainingTypeCounts?: Record<string, number>;
 }

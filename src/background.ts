@@ -8,10 +8,6 @@ type BackgroundOptions = {
   logger?: typeof rootLogger;
 };
 
-// Schedules a fire-and-forget async task as a child of the current span so that
-// log records emitted inside the task carry the originating trace_id/span_id and
-// the work shows up under the request trace in Tempo/Grafana. Errors are
-// recorded on the span and logged once — callers no longer need .catch().
 export function runInBackground(
   name: string,
   fn: () => Promise<unknown>,

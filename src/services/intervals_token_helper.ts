@@ -3,11 +3,6 @@ import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 
 export type IntervalsTokenResult<T> = { status: "ok"; data: T } | { status: "not_linked" };
 
-/**
- * Runs `fn` with a fresh intervals.icu access token; a 401/403 from token
- * resolution (account not linked / session dead) becomes `not_linked` instead
- * of throwing. Errors from `fn` itself propagate untouched.
- */
 export async function withIntervalsToken<T>(
   userId: string,
   fn: (accessToken: string) => Promise<T>,

@@ -12,10 +12,8 @@ import type { TStravaEnv } from "../../types/IRouters";
 
 const stravaWebhookRouter = new Hono<TStravaEnv>();
 
-// App-wide push subscription — only admins may create/list/delete it.
 stravaWebhookRouter.use("*", requireRole("admin"));
 
-// Strava returns various error/success shapes; document what we surface.
 const StravaWebhookCreateSubscriptionResponseSchema = z
   .object({
     id: z.number().optional(),

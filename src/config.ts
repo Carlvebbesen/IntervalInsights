@@ -1,51 +1,27 @@
 import { z } from "zod";
 
-/**
- * Central, validated environment configuration. Parsed once at startup — the
- * first import of `config` fails fast with an aggregated error listing every
- * missing/invalid variable, instead of surfacing `undefined` deep in a request.
- *
- * Optional telemetry vars are intentionally left optional so local dev stays
- * silent (see `instrumentation.ts`, which reads OTel vars directly off
- * `process.env` because it is preloaded before this module).
- */
 const envSchema = z
   .object({
-    // Core
     DATABASE_URL: z.string().min(1),
     CLERK_SECRET_KEY: z.string().min(1),
     CLERK_PUBLISHABLE_KEY: z.string().min(1),
     OPENAI_API_KEY: z.string().min(1),
 
-    // Symmetric key for encrypting provider OAuth tokens at rest
-    // (better-auth/crypto). Railway secret; keep stable — rotating it makes every
-    // stored Strava/intervals.icu token undecryptable (users re-link).
     TOKEN_ENC_KEY: z.string().min(32),
 
-    // Better Auth (dual-auth window; CLERK_* stay required until the Phase 6 cutover)
     BETTER_AUTH_SECRET: z.string().min(32),
     BETTER_AUTH_URL: z.string().url(),
-    // OTP emails only send in production (dev/test log the code — see
-    // auth_email.ts), so the key is required only there.
     RESEND_API_KEY: z.string().min(1).optional(),
 
-    // Store-review demo account: a fixed sign-in OTP for app-store reviewers who
-    // can't read our email inbox. Both-or-neither; the feature is disabled when
-    // unset (today's prod). See src/auth.ts for the override.
     REVIEW_ACCOUNT_EMAIL: z.string().email().toLowerCase().optional(),
     REVIEW_ACCOUNT_OTP: z
       .string()
       .regex(/^\d{6}$/)
       .optional(),
 
-    // App client key (deterrence-only, Clerk-publishable-key pattern): the app
-    // sends it as `x-client-key` on every `/api/*` call. Unset = feature fully
-    // off (dev/tests unaffected). `log` warns on mismatch and lets the request
-    // through; `enforce` 401s. See src/middlewares/client_key_middleware.ts.
     APP_CLIENT_KEY: z.string().min(16).optional(),
     APP_CLIENT_KEY_MODE: z.enum(["log", "enforce"]).default("log"),
 
-    // App
     APP_BASE_URL: z.string().url(),
     PORT: z.coerce.number().default(3000),
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
@@ -57,18 +33,15 @@ const envSchema = z
       .optional()
       .transform((v) => v === "true"),
 
-    // Strava integration
     STRAVA_CLIENT_ID: z.string().min(1),
     STRAVA_CLIENT_SECRET: z.string().min(1),
     STRAVA_WEBHOOK_VERIFY_TOKEN: z.string().min(1),
     STRAVA_SUBSCRIPTION_ID: z.string().min(1),
 
-    // Intervals.icu integration
     INTERVALS_CLIENT_ID: z.string().min(1),
     INTERVALS_CLIENT_SECRET: z.string().min(1),
     INTERVALS_WEBHOOK_SECRET: z.string().min(1),
 
-    // OpenTelemetry / tracing (optional — only shipped when the endpoint is set)
     OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
     OTEL_EXPORTER_OTLP_HEADERS: z.string().optional(),
     OTEL_SERVICE_NAME: z.string().default("intervals-backend"),

@@ -30,8 +30,6 @@ export async function runCompleteAnalysis(
     return { computedSegments: [] };
   }
 
-  // Pace-only concern (D7): rides/skis carry no target_pace by design — their
-  // work is power/speed-based — so the missing-pace warning applies to runs.
   if (
     state.isIndoor &&
     !isPowerSport(state.activityType) &&
@@ -94,10 +92,6 @@ export async function runCompleteAnalysis(
     return { computedSegments: fallback };
   }
 
-  // D5: user's explicit boundary edits always win. But when boundaries come from
-  // the stale proposal and their work count disagrees with the (possibly
-  // notes-reconciled) userSets, mapping labels onto them would ship the wrong rep
-  // count — re-derive boundaries from the user shape instead.
   if (!hasEdits && !boundariesMatchUserShape(boundaries, state.userSets)) {
     const rederived = await deriveFromUserShape(
       "proposed boundaries disagree with user shape — re-deriving segments from user sets",

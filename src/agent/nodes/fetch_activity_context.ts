@@ -60,11 +60,6 @@ export async function fetchActivityContext(
     throw new AppError(400, "Activity has no intervals.icu or Strava source to fetch from");
   }
 
-  // latlng is fetched for venue detection (confirms a distance→venue snap in
-  // the signature). Outdoor only in practice — indoor activities have no GPS.
-  // heartrate is consent-gated inside getStreamsAndLaps. Indoor laps are kept:
-  // treadmill sessions often lap warmup/work/cooldown, which the deterministic
-  // segmenter uses for boundaries. See [[deterministic-interval-segmentation]].
   const { streams, laps } = await getStreamsAndLaps(db, state.userId, state.activityId, [
     "time",
     "velocity_smooth",
@@ -76,11 +71,6 @@ export async function fetchActivityContext(
 
   const context: ActivityContext = { ...meta, streams, laps };
 
-  // The user's stored title/description (set at import, editable in-app) is the
-  // authority for classification intent. The re-fetched source name can be a
-  // generic auto-name — intervals.icu labels treadmill runs "Treadmill Running",
-  // which hides an explicit workout title like "6x6 min" from the classifier and
-  // collapses it to EASY. Prefer the DB values; fall back to the fetched ones.
   if (row?.title) context.activityTitle = row.title;
   if (row?.description) context.activityDescription = row.description;
 

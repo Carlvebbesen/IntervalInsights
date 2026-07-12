@@ -50,33 +50,25 @@ export type UserRole = (typeof userRoleEnum.enumValues)[number];
 export type TrainingType = (typeof trainingTypeEnum.enumValues)[number];
 export type AnalysisStatus = (typeof analysisStatusEnum.enumValues)[number];
 
-/** Statuses where the LangGraph thread is mid-flight or finished — never restart. */
 export const IN_FLIGHT_STATUSES: readonly AnalysisStatus[] = [
   "ongoing_init",
   "ongoing_completed",
   "initial",
 ];
 
-/**
- * Statuses where the graph is actively EXECUTING (vs `initial`, which is parked
- * at an interrupt). Even a forced re-analyze must not reset a running thread.
- */
 export const ACTIVE_RUN_STATUSES: readonly AnalysisStatus[] = ["ongoing_init", "ongoing_completed"];
 
-/** Statuses where `startAnalysis` must early-return (in-flight + already-done). */
 export const SKIP_START_STATUSES: ReadonlySet<AnalysisStatus> = new Set<AnalysisStatus>([
   ...IN_FLIGHT_STATUSES,
   "completed",
 ]);
 
-/** Statuses where a Strava update webhook must NOT trigger a restart. */
 export const SKIP_RESTART_STATUSES: ReadonlySet<AnalysisStatus> = new Set<AnalysisStatus>([
   ...IN_FLIGHT_STATUSES,
   "skipped_inactive",
   "completed",
 ]);
 
-/** Training types that count as interval / quality sessions */
 export const INTERVAL_TRAINING_TYPES = [
   "TEMPO",
   "PROGRESSIVE_LONG",
@@ -130,24 +122,14 @@ export const attributeValueTypeEnum = pgEnum("attribute_value_type", [
 
 export type AttributeValueType = (typeof attributeValueTypeEnum.enumValues)[number];
 
-// ─── Sport Type Constants ─────────────────────────────────────────────────────
-
-/** All Strava sport types that count as "running" */
 export const RUNNING_SPORT_TYPES = ["Run", "VirtualRun", "TrailRun"] as const;
 
 export type RunningSportType = (typeof RUNNING_SPORT_TYPES)[number];
 
-/**
- * True for sports analysed on power/HR/speed rather than running pace (rides,
- * skis, everything non-run). The single in-analysis sport predicate — the same
- * notion `intervals_curve_service` uses to label the best-effort curve unit
- * (watts vs value) and what gates the pace-specific bits of the pipeline (D7).
- */
 export function isPowerSport(sportType: string): boolean {
   return !(RUNNING_SPORT_TYPES as readonly string[]).includes(sportType);
 }
 
-/** Sport types included in the "other activities" effort graph */
 export const OTHER_SPORT_TYPES = [
   "NordicSki",
   "BackcountrySki",
@@ -161,8 +143,6 @@ export const OTHER_SPORT_TYPES = [
 ] as const;
 
 export type OtherSportType = (typeof OTHER_SPORT_TYPES)[number];
-
-// ─── Gear ─────────────────────────────────────────────────────────────────────
 
 export const gearTypeEnum = pgEnum("gear_type", ["SHOES", "BICYCLE", "SKIS"]);
 export const gearSurfaceEnum = pgEnum("gear_surface", [
@@ -181,22 +161,16 @@ export type GearType = (typeof gearTypeEnum.enumValues)[number];
 export type GearSurface = (typeof gearSurfaceEnum.enumValues)[number];
 export type TrainingBucket = (typeof trainingBucketEnum.enumValues)[number];
 
-/**
- * Allowed surfaces per gear type (D2). Single source of truth for zod validation
- * on gear create/patch and the app-side surface pickers.
- */
 export const SURFACES_BY_GEAR_TYPE = {
   SHOES: ["ROAD", "TRAIL", "TREADMILL"],
   BICYCLE: ["ROAD", "GRAVEL", "MTB"],
   SKIS: ["CLASSIC", "SKATE", "ROLLERSKI"],
 } as const satisfies Record<GearType, readonly GearSurface[]>;
 
-/** True when `surface` is valid for `gearType`. */
 export function isSurfaceForGearType(gearType: GearType, surface: GearSurface): boolean {
   return (SURFACES_BY_GEAR_TYPE[gearType] as readonly GearSurface[]).includes(surface);
 }
 
-/** Coarse bucket a shoe default/suggestion is keyed on (together with surface). */
 export function trainingBucketFor(
   trainingType: TrainingType | null | undefined,
 ): TrainingBucket | null {
@@ -221,16 +195,8 @@ export function trainingBucketFor(
   }
 }
 
-/** The gear context an activity implies: which gear type it uses and, where
- * determinable, the surface. `surface` is null when the sport type has no
- * deterministic surface (on-snow skis — Strava can't distinguish classic/skate). */
 export type GearContext = { gearType: GearType; surface: GearSurface | null };
 
-/**
- * Maps a Strava sport type (+ indoor flag) to its gear context (D3). Returns
- * null for sport types that carry no gear (suggestions are skipped; manual
- * assignment stays allowed).
- */
 export function gearContextForActivity(sportType: string, indoor: boolean): GearContext | null {
   switch (sportType) {
     case "TrailRun":
@@ -259,8 +225,6 @@ export function gearContextForActivity(sportType: string, indoor: boolean): Gear
   }
 }
 
-/** Sport types whose gear lives in Strava (shoes + bikes); skis have no Strava
- * gear. Scopes the activity supplement + mileage linking in the gear sync. */
 export const STRAVA_GEAR_SPORT_TYPES = [
   "Run",
   "TrailRun",

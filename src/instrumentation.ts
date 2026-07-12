@@ -37,12 +37,7 @@ if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
         "@opentelemetry/instrumentation-fs": { enabled: false },
         "@opentelemetry/instrumentation-pg": { enhancedDatabaseReporting: true },
         "@opentelemetry/instrumentation-undici": { enabled: true },
-        // PinoInstrumentation relies on require-in-the-middle, which doesn't
-        // activate under Bun's loader — leave it off. Pino → OTel forwarding
-        // is wired manually in src/logger.ts via a custom destination.
         "@opentelemetry/instrumentation-pino": { enabled: false },
-        // Incoming HTTP spans are created by @hono/otel with Hono route paths.
-        // Keep outgoing-client spans only.
         "@opentelemetry/instrumentation-http": {
           ignoreIncomingRequestHook: () => true,
         },
@@ -52,12 +47,6 @@ if (!process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
 
   sdk.start();
 
-  // Wire LangSmith's OTel emitter into the global tracer provider that NodeSDK
-  // just registered. LangChain v1 + LangGraph runs will then emit GenAI semconv
-  // spans (gen_ai.system / .request.model / .usage.*_tokens, plus
-  // langsmith.span.kind for graph nodes) through the same OTLP exporter as
-  // everything else — visible in Grafana's GenAI view.
-  // Requires LANGSMITH_OTEL_ENABLED=true and LANGSMITH_TRACING=true at runtime.
   if (process.env.LANGSMITH_OTEL_ENABLED === "true") {
     initializeOTEL({ globalTracerProvider: trace.getTracerProvider() });
   }

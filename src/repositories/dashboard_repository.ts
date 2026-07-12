@@ -4,12 +4,6 @@ import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
 
-/**
- * Aggregation queries backing the dashboard. These are activity-table rollups
- * (the repo "aggregation exception"); the controller owns the date-window math
- * and assembles the response from these raw rows.
- */
-
 export interface DashboardWeekBoundaries {
   startOfThisWeek: Date;
   startOfPrevWeek: Date;
@@ -116,11 +110,6 @@ export function weeklyOtherSince(db: Db, userId: string, otherTypes: string[], s
     .orderBy(sql`DATE_TRUNC('week', ${activities.startDateLocal}) ASC`);
 }
 
-/**
- * Weekly training-load rollup across the given sports since a date: one row per
- * ISO week with session count, total load (athlete load, falling back to the
- * intervals.icu load), distance and moving time. Backs load-ramp analytics.
- */
 export function trainingLoadByWeek(db: Db, userId: string, sportTypes: string[], since: Date) {
   return db
     .select({
@@ -142,10 +131,6 @@ export function trainingLoadByWeek(db: Db, userId: string, sportTypes: string[],
     .orderBy(sql`DATE_TRUNC('week', ${activities.startDateLocal}) ASC`);
 }
 
-/**
- * Training-type breakdown over a date window: count, distance, load and moving
- * time per training type. Backs polarization / easy-hard balance analytics.
- */
 export function trainingTypeDistribution(db: Db, userId: string, from: Date, to: Date) {
   return db
     .select({

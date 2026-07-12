@@ -7,13 +7,6 @@ import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsWebhookPayload } from "../types/intervals/IIntervalsWebhookEvent";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
 
-/**
- * Webhook orchestration: verification/secret checks + fire-and-forget dispatch to
- * the `process_*_event` services. Routers stay thin (just map the result to a
- * status code).
- */
-
-/** Returns the challenge to echo when the Strava handshake verifies, else null. */
 export function verifyStravaHandshake(
   mode: string | undefined,
   token: string | undefined,
@@ -32,7 +25,6 @@ export function verifyStravaHandshake(
   return null;
 }
 
-/** Dispatches a Strava webhook for background processing. Returns false if unauthorized. */
 export function handleStravaWebhook(
   body: IStravaWebhookEvent,
   env: IGlobalBindings,
@@ -56,7 +48,6 @@ export function handleStravaWebhook(
   return true;
 }
 
-/** Dispatches each intervals.icu event for background processing. Returns false if unauthorized. */
 export function handleIntervalsWebhook(
   body: IIntervalsWebhookPayload,
   env: IGlobalBindings,

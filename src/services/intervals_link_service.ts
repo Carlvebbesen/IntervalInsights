@@ -16,8 +16,6 @@ import { publishSync } from "./progress_service";
 import { shouldAnalyze } from "./utils";
 
 type Db = IGlobalBindings["db"];
-// Accepts either the base connection or a transaction handle, so the dedup
-// helpers can run inside the advisory-locked transaction below.
 type Executor = Db | Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 type EnrichmentFields = Partial<
@@ -58,11 +56,6 @@ function buildEnrichment(
     icuCtl: activity.icu_ctl ?? null,
     icuAtl: activity.icu_atl ?? null,
   };
-  // GDPR consent gate: when HR processing is off, never persist HR from
-  // intervals.icu. Omit the HR fields entirely (rather than writing null) so an
-  // enrich pass over an existing row can't clobber HR another source legitimately
-  // stored under consent. Setting hasHeartrate only when true also repairs the
-  // flag intervals ingest historically never set.
   if (!processHeartRate) return base;
   return {
     ...base,
@@ -75,8 +68,6 @@ function buildEnrichment(
 
 const LIST_WINDOW_MS = 60 * 60 * 1000;
 
-// intervals.icu returns start_date_local as naïve local time (no `Z`).
-// We store local times as UTC instants, so parse the naïve string as UTC.
 function parseIntervalsLocalStartMs(value: string | undefined | null): number {
   if (!value) return NaN;
   const normalized = value.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`;
@@ -175,22 +166,6 @@ export interface IntervalsIngestResult {
   intervalsActivityId: string;
 }
 
-/**
- * Ingest an intervals.icu activity event (ACTIVITY_UPLOADED / _CREATED): link to
- * an existing local row if one is the same workout, else create a new one — the
- * intervals-webhook analog of the Strava-webhook create merge. Idempotent under
- * webhook retries. Order of decisions:
- *   (a) a row already carries this `intervalsIcuId` → `already_linked`.
- *   (b) an unlinked Strava row matches `strava_id` exactly → link → `linked_exact`.
- *   (c) an unlinked local row matches fuzzily (±5 min / ±3 %) → link → `linked_fuzzy`.
- *   (d) create a fresh intervals-sourced row, gated by sport + inactivity like
- *       the Strava create → `created` / `skipped_inactive` / `skipped_sport` /
- *       `dropped`.
- * The re-fetch (network) happens outside the transaction; the dedup+insert runs
- * inside a `pg_advisory_xact_lock(hashtext(userId))` so a concurrent Strava or
- * intervals create for the same user can't pass this one's checks in the same
- * instant and double-insert.
- */
 export async function linkOrCreateFromIntervalsActivity(
   context: IGlobalBindings,
   user: { id: string; lastSeenAt: Date | null },
@@ -211,7 +186,6 @@ export async function linkOrCreateFromIntervalsActivity(
   return context.db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${user.id}))`);
 
-    // (a) idempotency: this intervals activity already has a local row.
     const existing = await tx.query.activities.findFirst({
       where: (a, { and, eq }) => and(eq(a.userId, user.id), eq(a.intervalsIcuId, activity.id)),
       columns: { id: true },
@@ -220,7 +194,6 @@ export async function linkOrCreateFromIntervalsActivity(
       return { outcome: "already_linked", localActivityId: existing.id, intervalsActivityId };
     }
 
-    // (b) exact Strava-id join onto an unlinked local row.
     if (activity.strava_id != null) {
       const exact = await tx.query.activities.findFirst({
         where: (a, { and, eq, isNull }) =>
@@ -237,14 +210,12 @@ export async function linkOrCreateFromIntervalsActivity(
       }
     }
 
-    // (c) fuzzy time/distance match onto an unlinked local row.
     const fuzzy = await findLocalByFuzzyMatch(tx, user.id, activity);
     if (fuzzy) {
       await commitLink(tx, fuzzy.id, activity, processHeartRate);
       return { outcome: "linked_fuzzy", localActivityId: fuzzy.id, intervalsActivityId };
     }
 
-    // (d) create — gated by sport + inactivity, mirroring the Strava create.
     if (!shouldAnalyze(activity.type)) {
       return { outcome: "skipped_sport", intervalsActivityId };
     }
@@ -266,7 +237,6 @@ export async function linkOrCreateFromIntervalsActivity(
       .onConflictDoNothing()
       .returning({ id: activities.id });
     if (!inserted) {
-      // Lost the race on the partial unique index — the row now exists.
       const raced = await tx.query.activities.findFirst({
         where: (a, { and, eq }) => and(eq(a.userId, user.id), eq(a.intervalsIcuId, activity.id)),
         columns: { id: true },
@@ -281,14 +251,6 @@ export async function linkOrCreateFromIntervalsActivity(
   });
 }
 
-/**
- * Re-fetch an already-linked intervals.icu activity and refresh its enrichment
- * (fitness fields) + numeric metadata on the local row. User-authored fields
- * (title / description / notes) are deliberately left untouched — the DB row is
- * the classification authority (see fetch_activity_context). Used by the
- * ACTIVITY_ANALYZED (post-analysis fitness fields land) and ACTIVITY_UPDATED
- * (edited on intervals.icu) branches.
- */
 export async function refreshLinkedIntervalsActivity(
   context: IGlobalBindings,
   user: { id: string },
@@ -321,9 +283,6 @@ export async function refreshLinkedIntervalsActivity(
   if (!full) return "no_match";
 
   const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
-  // Consent gate: omit averageHeartRate entirely when HR processing is off (not
-  // null) so we don't clobber HR another source stored under consent — mirrors
-  // buildEnrichment's treatment of the other HR fields.
   const hrFields = processHeartRate ? { averageHeartRate: full.average_heartrate ?? null } : {};
 
   await context.db
@@ -367,9 +326,6 @@ export async function linkFromLocalActivity(
   try {
     accessToken = await getIntervalsAccessToken(user.id);
   } catch (err) {
-    // athleteId set on the user row but the stored token is missing/expired —
-    // surface it; otherwise this is indistinguishable from "no match" and the
-    // activity silently never links.
     logger.warn({ err, localActivityId }, "intervals.icu link skipped — no usable access token");
     return null;
   }
@@ -386,10 +342,6 @@ export async function linkFromLocalActivity(
     return null;
   }
 
-  // Exact join first: when both rows originate from the same Strava activity,
-  // intervals.icu carries its `strava_id`. That's an unambiguous key — use it
-  // before the fuzzy time/distance heuristic, which mis-fires on timezone-offset
-  // start times and >3% distance drift between the two sources.
   if (activity.stravaActivityId != null) {
     const exact = candidates.filter((c) => c.strava_id === activity.stravaActivityId);
     if (exact.length === 1) {
@@ -417,9 +369,6 @@ export async function linkFromLocalActivity(
   });
   if (fuzzy.length !== 1) return null;
 
-  // Re-fetch by id so we get the full activity payload (icu_ctl/icu_atl/icu_ftp
-  // and other fitness-state fields may only be populated post-analysis and
-  // missing from the list response).
   let full: IIntervalsActivity;
   try {
     full = await intervalsApiService.getActivity(accessToken, fuzzy[0].id);
@@ -487,10 +436,6 @@ export async function enrichActivityFromIntervalsIcu(
 }
 
 const SYNC_THROTTLE_MS = 100;
-// intervalsApiService paces every request under the 10 req/s IP cap and retries
-// transient 429s honouring Retry-After, so a 429 surfacing here means the limit
-// is persistent (retries exhausted or the wait exceeded the layer's ceiling).
-// We stop the backfill and report a resume point rather than hammering further.
 const INTERVALS_RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
 
 const SYNC_KIND = "intervals_master_sync";
@@ -503,8 +448,6 @@ export interface SyncIntervalsResult {
   failed: number;
 }
 
-// Cost safety: historical activities pulled by the master sync must never
-// trigger LLM analysis. Flip this to opt the import path back into analysis.
 const AUTO_ANALYZE_ON_IMPORT = false;
 
 const MASTER_WINDOW_MS = 6 * 30 * 24 * 60 * 60 * 1000;
@@ -526,8 +469,6 @@ function findUniqueInMemoryMatch(
   intervalsActivity: IIntervalsActivity,
   locals: FuzzyLocal[],
 ): FuzzyLocal | null {
-  // Exact Strava-id join first (see linkFromLocalActivity) — unambiguous when
-  // both rows came from the same Strava activity.
   if (intervalsActivity.strava_id != null) {
     const exact = locals.filter((l) => l.stravaActivityId === intervalsActivity.strava_id);
     if (exact.length === 1) return exact[0];

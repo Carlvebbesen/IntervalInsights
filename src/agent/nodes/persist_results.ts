@@ -8,12 +8,6 @@ import {
 } from "../../services/signature_service";
 import type { AnalysisState, GraphConfigurable, GraphDb } from "../graph_state";
 
-/**
- * Compute and persist HR-distribution stats from the already-fetched streams +
- * computed segments, so the heart-rate analysis endpoint can read them off the
- * activities row without re-fetching from Strava. Best-effort: a failure here
- * must not fail the analysis (the endpoint will lazily recompute later).
- */
 async function persistHrStats(db: GraphDb, state: AnalysisState): Promise<void> {
   if (!state.streams) return;
   try {

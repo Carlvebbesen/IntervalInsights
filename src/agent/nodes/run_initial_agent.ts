@@ -41,9 +41,6 @@ export async function runInitialAgent(
     throw new Error("Initial analysis agent returned null");
   }
 
-  // Text authority: when the title/description explicitly declares a structure,
-  // it wins on SHAPE over the model's stream-derived reading. Generic titles pass
-  // the deterministic prefilter and cost zero extra LLM calls.
   const declaredStructure = await extractDeclaredStructure(
     [state.activityTitle, state.activityDescription],
     initialResult.training_type,

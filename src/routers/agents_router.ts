@@ -22,8 +22,6 @@ import type { TStravaEnv } from "../types/IRouters";
 
 const agentsRouter = new Hono<TStravaEnv>();
 
-// /pending degrades without Strava (only requeue needs it); the analysis
-// mutations below require a live token, so they apply stravaMiddleware per-route.
 agentsRouter.get(
   "/pending",
   softStravaMiddleware,
@@ -48,11 +46,7 @@ agentsRouter.get(
 
 const startAnalysisSchema = z.object({
   activityId: z.number(),
-  // Deprecated: accepted for wire-compat but ignored — the Strava id is
-  // resolved from the owned activity row server-side.
   stravaActivityId: z.number().nullish(),
-  // Re-run an already-analysed / sync-imported activity (bypasses the
-  // already-in-progress/completed skip guard; overwrites the draft + segments).
   force: z.boolean().optional(),
 });
 
@@ -93,7 +87,6 @@ agentsRouter.post(
 
 const resumeAnalysisSchema = z.object({
   activityId: z.number(),
-  // Capped: notes are interpolated into the full-analysis + event prompts.
   notes: z.string().max(2000),
   sets: z.array(ExpandedIntervalSetSchema).optional(),
   trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),

@@ -121,10 +121,6 @@ ${venuePromptBlock()}
 Return the recommended session structure, a short title, the training type, and the coaching notes.
 `;
 
-  // Recommended mode is open-ended coaching *generation* — mini echoes the shown
-  // structure, and temp-0 strong repeats itself on re-ask. Use the creative tier
-  // (strong + temperature) so "give me another" genuinely varies. Signature mode
-  // (constrained reshaping) stays deterministic on the default mini.
   return invokeStructured(
     suggestSessionOutput,
     prompt,

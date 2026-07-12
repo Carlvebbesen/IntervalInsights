@@ -16,9 +16,6 @@ const ORPHAN_TIMEOUT_MINUTES = 10;
 const REQUEUE_MIN_INTERVAL_MS = 30_000;
 const THROTTLE_SWEEP_THRESHOLD = 1_000;
 
-// Throttle the requeue write per user: this runs on the (frequently polled)
-// pending GET, but stale-activity recovery is best-effort and not time-critical,
-// so at most once per REQUEUE_MIN_INTERVAL_MS keeps GETs from writing every call.
 const lastRequeueByUser = new Map<string, number>();
 
 export async function requeueStaleActivities(
@@ -37,10 +34,6 @@ export async function requeueStaleActivities(
   lastRequeueByUser.set(userId, now);
 
   const tag = `[requeueStaleActivities user=${userId}]`;
-  // Orphan detection keys on analysis_started_at (stamped on every ongoing_*
-  // transition). created_at is the INGEST time and analyzed_at the INITIAL
-  // phase time — using those here re-queued perfectly healthy in-flight runs
-  // whenever the row was older than the timeout, restarting them mid-flight.
   const requeued = await db
     .update(activities)
     .set({
@@ -75,11 +68,7 @@ export async function requeueStaleActivities(
   }
 
   for (const row of requeued) {
-    // Shares the analysis-start cap with manual/import starts (background
-    // circuit breaker, not a user-facing limit — skip silently once over).
     if (!tryConsumeQuota(ANALYSIS_START_QUOTA, ANALYSIS_START_DAILY_MAX, userId, logger)) break;
-    // Restart by internal id: intervals.icu-only rows (stravaActivityId null)
-    // are fetchable too — addressing by Strava id stranded them in `pending`.
     runInBackground(
       "analysis.restart",
       () => startAnalysis(db, stravaAccessToken, row.id, row.stravaActivityId, userId),

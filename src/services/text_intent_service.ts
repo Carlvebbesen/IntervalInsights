@@ -12,27 +12,12 @@ import { generateCompleteIntervalSet, needCompleteAnalysis } from "./utils";
 
 type WorkoutSet = z.infer<typeof workoutSet>;
 
-// A digit adjacent to x/× in either order ("10x1000m", "10 x 1000m", "6x6min"),
-// tolerating an opening paren after the x ("5 x (3,2,1 min)").
 const X_ADJACENT = /\d\s*[x×]\s*\(?\s*\d/i;
-// Work/rest notation ("45/15", "90/30s").
 const WORK_REST = /\d+\s*\/\s*\d+/;
-// A comma-separated number LIST followed by a unit (Norwegian list notation):
-// "3,2,1 km", "3,2,2 km" — a genuine rep sequence, not a lone distance.
 const COMMA_LIST_UNIT = /\d+\s*,\s*\d+(?:\s*,\s*\d+)*\s*(?:km|min|sek|sec|m|s)\b/i;
-// Partial-completion phrasing: "did 8 of 10", "8 av 10".
 const N_OF_M = /\d+\s+(?:of|av)\s+\d+/i;
-// Block-chain keywords that join distinct interval blocks. Only meaningful
-// alongside digits (a chained workout always carries numbers).
 const BLOCK_CHAIN = /(?:etterfulgt av|deretter|followed by|then\b)/i;
 
-/**
- * Deterministic prefilter: could this text DECLARE a workout structure? Errs
- * slightly toward true (a false positive costs one mini-LLM parse; a false
- * negative silently ships the wrong structure), but generic titles ("Morning
- * Run", "Marathon training week 12") — anything without a rep-like arrangement of
- * numbers — must return false so they never reach the parse agent.
- */
 export function looksStructured(text: string | null | undefined): boolean {
   if (!text) return false;
   const t = text.trim();
@@ -45,14 +30,6 @@ export function looksStructured(text: string | null | undefined): boolean {
   return false;
 }
 
-/**
- * Gate the LLM parse behind the deterministic prefilter: keep only the texts that
- * individually look structured, and if none do, return null WITHOUT any LLM call
- * (generic titles cost zero model spend). Otherwise join the survivors and run the
- * parse agent (which already applies the blowup guardrail to its own output).
- * Never throws into the caller — the analyze pipeline must not fail because the
- * text gate hiccuped.
- */
 export async function extractDeclaredStructure(
   texts: (string | null | undefined)[],
   trainingType: TrainingType | null | undefined,
@@ -69,19 +46,8 @@ export async function extractDeclaredStructure(
   }
 }
 
-// Partial-completion phrasing with capture groups: "8 av 10" (Norwegian), "8 of
-// 10" (English). Deliberately NOT a bare slash ("8/10") — that collides with
-// work/rest notation like "45/15".
 const N_OF_M_COMPLETION = /(\d+)\s+(?:av|of)\s+(\d+)/i;
 
-/**
- * Deterministic "did N of M" handler — zero LLM cost. When resume-time notes say
- * the athlete completed only the first N of M declared work steps ("klarte bare 8
- * av 10"), truncate `userSets` to those N steps. Applies ONLY when M equals the
- * current total work-step count and N < M (anything else is ambiguous or a no-op
- * → null). Walks sets in order, truncating step lists and dropping sets that
- * become empty, preserving each kept step's fields (incl. target_pace).
- */
 export function applyPartialCompletion(
   notes: string | null | undefined,
   userSets: ExpandedIntervalSet[],
@@ -133,7 +99,6 @@ function structuresEqual(
   return true;
 }
 
-/** Same hard gate as the classifier: any rep >= 120s or >= 800m ⇒ LONG. */
 function classifyFromDeclared(declared: WorkoutSet[]): "SHORT_INTERVALS" | "LONG_INTERVALS" {
   for (const set of declared) {
     for (const step of set.steps) {
@@ -145,17 +110,6 @@ function classifyFromDeclared(declared: WorkoutSet[]): "SHORT_INTERVALS" | "LONG
   return "SHORT_INTERVALS";
 }
 
-/**
- * Text wins on SHAPE. Adopt the declared structure over the model's: declared
- * set count, set_reps, per-step reps/work_type/work_value are authoritative. When
- * the model and declared align positionally (same set count and per-set step
- * count), carry the model's recovery values into steps the declared shape leaves
- * unspecified (declared recovery wins when present); otherwise take the declared
- * sets verbatim. Then fix training_type: interval subtypes re-run the existing
- * gate; a type that doesn't need complete analysis (e.g. the misclassify-EASY
- * failure mode) is reclassified deterministically from the declared reps; other
- * interval-family types keep their type.
- */
 export function reconcileStructureTowardDeclared(
   model: WorkoutAnalysisOutput,
   declared: WorkoutSet[],
@@ -165,10 +119,6 @@ export function reconcileStructureTowardDeclared(
     modelStructure.length === declared.length &&
     declared.every((set, i) => set.steps.length === modelStructure[i].steps.length);
 
-  // The parse agent emits recovery_value 0 / set_recovery 0 (not null) when the
-  // text says nothing about recovery, so 0 means "unspecified" — keep the model's
-  // measured recovery in that case, and take the pair together so a declared
-  // value never merges with a model type (or vice versa).
   const newStructure: WorkoutSet[] = aligned
     ? declared.map((set, i) => {
         const modelSet = modelStructure[i];
@@ -209,11 +159,6 @@ export function reconcileStructureTowardDeclared(
   };
 }
 
-/**
- * Rebuild the user's expanded set list from a notes-declared structure, carrying
- * each previous work step's target_pace over positionally (flatten both to step
- * lists, copy by index while an index exists; extra steps keep null pace).
- */
 export function rebuildSetsWithDeclaredPaces(
   declared: WorkoutSet[],
   previous: ExpandedIntervalSet[],

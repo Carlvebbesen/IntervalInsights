@@ -21,11 +21,6 @@ export const intervalSegments = pgTable("interval_segments", {
   actualDistance: doublePrecision("actual_distance").notNull(),
   actualDuration: integer("actual_duration").notNull(),
   avgHeartRate: integer("avg_heart_rate"),
-  // Folded normal-REST recovery (Option B): a normal rest is NOT its own row;
-  // its trailing recovery is stored on the preceding INTERVALS row. NULL = the
-  // rep has no folded recovery. `timeSeriesEndTime` stays end-of-WORK; the
-  // recovery occupies [timeSeriesEndTime, recoveryEndTime]. ACTIVE_REST/JOGGING/
-  // WARMUP/COOL_DOWN remain their own rows and leave these NULL.
   recoveryTargetType: targetTypeEnum("recovery_target_type"),
   recoveryTargetValue: doublePrecision("recovery_target_value"),
   recoveryEndTime: doublePrecision("recovery_end_time"),

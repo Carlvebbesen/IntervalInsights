@@ -17,8 +17,6 @@ export async function detectEvents(
     },
     "entering",
   );
-  // Best-effort: this node runs AFTER persistResults has written `completed`.
-  // A throw here would flip a finished analysis to `error` and auto-rerun it.
   try {
     await detectAndPersistEvents(db, {
       activityId: state.activityId,

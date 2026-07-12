@@ -136,11 +136,6 @@ export const EditorStreamsSchema = z.object({
   velocity: z.array(z.number()),
 });
 
-/**
- * Editor-state request: pass exactly one of `structure` (initial load → compute paces)
- * or `sets` (re-derive after a structural edit → paces verbatim). `structure` mirrors
- * the `/proposed-pace` body's `structure: workoutSet[]`.
- */
 export const EditorStateRequestSchema = z
   .object({
     structure: z.array(workoutSet).optional(),
@@ -152,13 +147,6 @@ export const EditorStateRequestSchema = z
     message: "Provide exactly one of `structure` or `sets`",
   });
 
-/**
- * One call that hydrates BOTH the proposed-pace view and the segment editor from a
- * single source of truth: the paced rep-list (`sets`) drives the derived `segments`,
- * so the two views cannot diverge. Replaces the separate /proposed-pace + /draft-segments
- * round-trips. `streams` is null when `includeStreams: false` (e.g. a re-derive after a
- * structural edit, where the client already holds the streams).
- */
 export const EditorStateResponseSchema = z
   .object({
     sets: z.array(ExpandedIntervalSetSchema),
@@ -201,8 +189,6 @@ export const SegmentsResponseSchema = z
   })
   .openapi({ ref: "SegmentsResponse" });
 
-// ─── Strava-shaped schemas (mirror Strava v3 REST shapes for app consumption) ──
-
 export const StravaLapSchema = z
   .object({
     id: z.number(),
@@ -244,9 +230,6 @@ export const SplitMetricSchema = z
   })
   .openapi({ ref: "SplitMetric" });
 
-// Strava SummaryActivity returned by GET /api/strava/sync/activities. The shape
-// is forwarded verbatim from Strava v3, so we mirror the documented fields and
-// allow extras via `passthrough()` to stay forward-compatible.
 export const StravaSummaryActivitySchema = z
   .object({
     id: z.number(),
@@ -300,12 +283,6 @@ export const StravaSyncResultSchema = z
     failed: z.number(),
   })
   .openapi({ ref: "StravaSyncResult" });
-
-// ─── Progress SSE channel (GET /api/progress/stream) ──────────────────────────
-// Cross-repo contract: field names MUST stay in lock-step with the `ProgressEvent`
-// discriminated union in src/services/progress_service.ts (the Flutter app mirrors
-// these). Each event is serialised as an SSE frame whose `event:` is the `type`
-// and whose `data:` is the JSON-encoded payload below.
 
 export const ActivityProgressSchema = z
   .object({

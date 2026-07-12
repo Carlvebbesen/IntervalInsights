@@ -3,7 +3,6 @@ import type { Logger } from "../logger";
 
 const STRAVA_PUSH_SUBSCRIPTIONS_URL = "https://www.strava.com/api/v3/push_subscriptions";
 
-/** Strava's response is forwarded verbatim (status + body) to the admin caller. */
 export type StravaProxyResponse = { status: number; body: unknown };
 
 export async function createPushSubscription(logger: Logger): Promise<StravaProxyResponse> {

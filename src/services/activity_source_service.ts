@@ -31,14 +31,6 @@ async function loadActivitySourceRow(
 
 type FetchSource = "intervals" | "strava_fallback" | "strava";
 
-/**
- * Shared intervals.icu-preferred fetch with whole-call Strava fallback, used by
- * both streams and laps so they fall back identically. intervals is tried when
- * `intervalsIcuId` is set and its token resolves; if the intervals token OR the
- * intervals fetch itself fails, the entire call falls back to Strava when a
- * `stravaActivityId` exists (no per-key/per-lap top-up). `source` distinguishes
- * a never-eligible Strava call (`strava`) from an intervals failure (`strava_fallback`).
- */
 async function fetchIntervalsPreferred<T>(
   db: Db,
   userId: string,
@@ -74,12 +66,6 @@ async function fetchIntervalsPreferred<T>(
   throw new AppError(400, "Activity has no intervals.icu or Strava source to fetch from");
 }
 
-/**
- * Resolves where an activity's time-series data should be fetched from,
- * intervals.icu-preferred (see the intervals-icu-primary-data-source decision).
- * Tokens are resolved lazily so these endpoints work for intervals-only users
- * who never linked Strava. Takes the INTERNAL activity id (not a Strava id).
- */
 export type ActivitySource =
   | { kind: "intervals"; token: string; externalId: string }
   | { kind: "strava"; token: string; externalId: number };
@@ -96,7 +82,6 @@ export async function resolveActivitySource(
       const token = await getIntervalsAccessToken(userId);
       return { kind: "intervals", token, externalId: row.intervalsIcuId };
     } catch (err) {
-      // intervals not linked / token dead — fall back to Strava if we can.
       if (row.stravaActivityId == null) throw err;
     }
   }
@@ -119,8 +104,6 @@ export async function getLaps(db: Db, userId: string, activityId: number): Promi
 
 export async function getSplits(db: Db, userId: string, activityId: number) {
   const src = await resolveActivitySource(db, userId, activityId);
-  // intervals.icu has no per-km splits_metric equivalent; the app derives splits
-  // in-app from the distance stream. Strava still provides them directly.
   if (src.kind === "intervals") return [];
   const activity = await stravaApiService.getActivity(src.token, src.externalId);
   return activity.splits_metric ?? [];
@@ -162,13 +145,6 @@ export async function getStreamSet<K extends keyof StreamTypeMap>(
   return result as Pick<StreamSet, K>;
 }
 
-/**
- * Streams and laps in ONE source decision: if either intervals call fails, the
- * whole pair falls back to Strava together. Lap start/end indices are
- * provider-relative (intervals.icu's index space is not comparable to Strava's
- * stream arrays — see intervals_icu_segments.ts), so consumers that pair laps
- * with streams must never mix sources.
- */
 export async function getStreamsAndLaps<K extends keyof StreamTypeMap>(
   db: Db,
   userId: string,

@@ -47,18 +47,8 @@ function* chunkText(text: string): Generator<string> {
   if (buf) yield buf;
 }
 
-// One in-flight turn per conversation: two concurrent turns interleave one
-// LangGraph thread's checkpoints (double-tap send). In-process is fine at a
-// single replica.
 const activeTurns = new Set<string>();
 
-/**
- * A crash or client abort between super-steps can leave the checkpointed
- * thread ending in an AI message with dangling `tool_calls` — every later
- * turn would then 400 at OpenAI ("tool_calls must be followed by tool
- * messages"), permanently poisoning the conversation. Append synthetic
- * ToolMessages so the thread is resumable.
- */
 async function repairDanglingToolCalls(
   graph: Awaited<ReturnType<typeof buildTrainingGraph>>,
   conversationId: string,
@@ -95,19 +85,12 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
   const stravaAccessToken = c.get("stravaAccessToken");
   const log = c.var.logger;
 
-  // Bun closes idle connections after 10s by default; a single long LLM call
-  // produces no SSE writes for longer than that. Same workaround as the
-  // progress stream.
   (c.env as { timeout?: (req: Request, seconds: number) => void }).timeout?.(c.req.raw, 0);
 
   return streamSSE(c, async (stream) => {
-    // Abort the graph when the client drops — otherwise the full agent +
-    // verifier + tools run continues to completion, burning tokens for nobody.
     const abort = new AbortController();
     stream.onAbort(() => abort.abort());
 
-    // A write failure means the peer is gone: stop writing but let the
-    // already-finished parts (persistence) complete.
     let clientGone = false;
     const safeWrite = async (event: string, data: string) => {
       if (clientGone) return;
@@ -138,9 +121,6 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
       return;
     }
 
-    // Ownership is the only gate on the client-supplied conversationId (which
-    // doubles as the LangGraph thread_id). If the check itself fails we must
-    // NOT fall through to the graph — that would run on an unverified thread.
     let owned: boolean;
     try {
       owned = await chatRepo.ensureConversation(
@@ -226,9 +206,6 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
         return;
       }
 
-      // Persist BEFORE the answer writes: the checkpointed thread already
-      // contains this turn, so failing to store it in chat_messages would make
-      // the transcript diverge from the model's memory.
       let messageId: number | null = null;
       let messageCreatedAt: string | null = null;
       if (persist) {

@@ -96,9 +96,6 @@ stravaApiRouter.post(
         ids,
         c.env.db,
         (internalId, stravaActivityId) => {
-          // Per-activity circuit breaker: the import POST is 1 request, but each
-          // id fans out to a background analysis (real model spend), so the cap
-          // is counted here rather than as route middleware.
           if (
             !tryConsumeQuota(ANALYSIS_START_QUOTA, ANALYSIS_START_DAILY_MAX, userId, c.var.logger)
           )

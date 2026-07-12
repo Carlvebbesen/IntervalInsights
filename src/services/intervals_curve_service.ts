@@ -15,11 +15,6 @@ export interface BestEffortPoint {
 export interface BestEffortCurve {
   type: string;
   window: BestEffortWindow;
-  /**
-   * Unit of `value`: "watts" for power-based sports, otherwise the raw best
-   * value intervals.icu returns for that duration (for runners this is power
-   * if available; the curve `type` tells the caller what was requested).
-   */
   unit: "watts" | "value";
   points: BestEffortPoint[];
 }
@@ -29,7 +24,6 @@ export type BestEffortResult =
   | { status: "no_data"; data: null }
   | { status: "ok"; data: BestEffortCurve };
 
-// Standard "best effort" durations to surface, from sprint to long efforts.
 const DURATION_BUCKETS: { secs: number; label: string }[] = [
   { secs: 5, label: "5s" },
   { secs: 15, label: "15s" },
@@ -59,11 +53,6 @@ function buildCurvesParam(
   }
 }
 
-/**
- * Best-effort curve for an athlete from intervals.icu: the best value (power, or
- * running-power/pace where available) sustained for each standard duration over
- * the requested window. Read-only.
- */
 export async function fetchBestEffortCurve(
   userId: string,
   opts: { type?: string; window?: BestEffortWindow; oldest?: string; newest?: string },
@@ -95,7 +84,6 @@ async function fetchBestEffortCurveWithToken(
   if (!curve) return { status: "no_data", data: null };
 
   const values = curve.values ?? curve.watts ?? [];
-  // secs is ascending; map exact durations to their best value.
   const secToValue = new Map<number, number>();
   curve.secs.forEach((s, i) => {
     const v = values[i];

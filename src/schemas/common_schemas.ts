@@ -3,8 +3,6 @@ import { z } from "zod";
 
 export const ErrorSchema = z.object({ error: z.string() }).openapi({ ref: "Error" });
 
-// Shared weather snapshot (device-sourced, e.g. iOS WeatherKit). temperatureC +
-// humidity are what the heat-pace model needs; the rest refine the estimate.
 export const WeatherSchema = z
   .object({
     temperatureC: z.number(),

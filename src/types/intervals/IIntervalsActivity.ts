@@ -1,5 +1,3 @@
-// Matches intervals.icu's Activity schema from /api/v1/docs. Only the fields
-// we actually read are listed — the real payload has ~170 fields.
 export interface IIntervalsActivity {
   id: string;
   name: string | null;
@@ -35,8 +33,6 @@ export interface IIntervalsActivity {
   created: string | null;
 }
 
-// Matches intervals.icu's Interval schema from /api/v1/docs. Only the fields
-// we actually consume are listed — the real payload is much larger.
 export interface IIntervalsInterval {
   id: number;
   type: string;
@@ -55,9 +51,6 @@ export interface IIntervalsInterval {
   label: string | null;
 }
 
-// Per-sport zone configuration on the athlete. `hr_zones` is an ascending list
-// of upper-bound bpm values (e.g. [123, 142, 160, 178, 197]); `hr_zone_names`
-// labels them. Only the HR-relevant fields are listed.
 export interface IIntervalsSportSettings {
   types: string[] | null;
   hr_zones: number[] | null;
@@ -66,16 +59,10 @@ export interface IIntervalsSportSettings {
   max_hr: number | null;
 }
 
-// Matches intervals.icu's `/athlete/{id}/power-curves` response. The payload
-// shape varies by sport and whether power is available; only the fields we
-// read are typed. `secs[i]` is the duration of `values[i]` (the best value
-// sustained for that duration — watts, or pace in m/s for runners without power).
 export interface IIntervalsPowerCurve {
   type: string;
   secs: number[];
   values: (number | null)[] | null;
-  // Some payloads label the value array differently per sport; kept optional
-  // so the service layer can fall back without breaking.
   watts?: (number | null)[] | null;
 }
 

@@ -18,13 +18,6 @@ type Db = IGlobalBindings["db"];
 
 type WorkoutSet = z.infer<typeof workoutSet>;
 
-/**
- * Re-segment an activity for a USER-PROVIDED structure (e.g. after the user
- * re-describes their intervals via parse-from-text) and return the unified per-rep
- * list — boundaries (from the same `produceSegments` cascade the analyze graph uses)
- * PLUS proposed paces (same logic as `/proposed-pace`). Keeps the segment view and
- * the proposed structure in sync after a re-describe. Read-only; persists nothing.
- */
 export async function previewSegments(
   db: Db,
   userId: string,
@@ -65,11 +58,6 @@ export async function previewSegments(
     }
   }
 
-  // The supplied sets ARE the source of truth — the single rep-list that drives
-  // both the segment list and the pace view. Their paces (already proposed by
-  // /proposed-pace or /parse-intervals) flow straight through to the segments;
-  // we never recompute, so the two views cannot diverge. Derive a 1-rep-per-step
-  // structure so the cascade's shape/rep-count rungs see the same shape as userSets.
   const structure: WorkoutAnalysisOutput["structure"] = sets.map((set) => ({
     set_reps: 1,
     set_recovery: set.set_recovery ?? null,
@@ -137,16 +125,6 @@ async function loadEditorStreams(
   };
 }
 
-/**
- * Hydrate BOTH editor views from one source of truth in a single call. The paced
- * rep-list (`sets`) drives the derived per-rep `segments`, so the proposed-pace view
- * and the segment editor cannot diverge. Two modes via the input:
- *   - `structure` (WorkoutSet[]) → initial load: compute proposed paces (lap-preferred,
- *     same logic as /proposed-pace), then derive segments from them.
- *   - `sets` (paced ExpandedIntervalSet[]) → re-derive after a STRUCTURAL edit
- *     (add/remove/delete a rep) or parse-from-text: the supplied paces flow verbatim.
- * `streams` is returned for the chart unless `includeStreams === false`. Read-only.
- */
 export async function getEditorState(
   db: Db,
   userId: string,

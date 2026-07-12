@@ -12,18 +12,6 @@ function isWork(iv: IIntervalsInterval): boolean {
   return t.includes("WORK") || t === "INTERVALS";
 }
 
-/**
- * Preferred segmentation rung when the activity is linked to intervals.icu:
- * intervals.icu already split the workout into WORK/RECOVERY blocks, so trust
- * that classification instead of re-deriving reps from speed/HR. The blocks are
- * a contiguous partition of the activity, so we lay them end-to-end from t0 by
- * `elapsed_time` (start_index is intervals.icu-relative and not comparable to the
- * Strava streams the app renders) and compute stats against the given streams.
- * Returns null when there's no WORK block, so the caller falls back to laps/LLM.
- *
- * Lives in its own module (not lap_derivation_service) to stay off that file's
- * heavy API-service import chain — it needs only stream stats.
- */
 export function buildSegmentsFromIntervalsIcu(
   activityId: number,
   intervals: IIntervalsInterval[],
@@ -41,11 +29,6 @@ export function buildSegmentsFromIntervalsIcu(
     return null;
   }
 
-  // Only trust intervals.icu's breakdown when it's a credible rep-level partition.
-  // intervals.icu's own detection often fails for HR/pace (esp. treadmill): it
-  // returns a few coarse all-WORK lumps with no RECOVERY — laying those end-to-end
-  // yields a 2-4 segment "interval" plan that hides the real reps. In that case
-  // fall through to the deterministic segmenter (speed/HR), which recovers the reps.
   const workCount = intervals.filter(isWork).length;
   const recoveryCount = intervals.length - workCount;
   if (recoveryCount === 0) {
@@ -55,11 +38,6 @@ export function buildSegmentsFromIntervalsIcu(
     );
     return null;
   }
-  // The TITLE count is authoritative: when the structure gives an expected rep
-  // count, only trust icu if its WORK-block count MATCHES it exactly. icu commonly
-  // under/over-detects (treadmill HR-only reps — e.g. 6 of 10), so a mismatch falls
-  // through to the deterministic segmenter, which lays the full known structure.
-  // Without an expected count, keep a loose sanity floor.
   if (
     expectedReps != null
       ? workCount !== expectedReps

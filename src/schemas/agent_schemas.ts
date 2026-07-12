@@ -82,8 +82,6 @@ export const PendingActivitySchema = z
   })
   .openapi({ ref: "PendingActivity" });
 
-// ─── Proposed-pace response (POST /api/agents/proposed-pace) ──────────────────
-
 export const ProposedPaceResponseSchema = z
   .array(ExpandedIntervalSetSchema)
   .openapi({ ref: "ProposedPaceResponse" });

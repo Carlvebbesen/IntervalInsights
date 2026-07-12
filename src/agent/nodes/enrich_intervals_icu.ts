@@ -24,11 +24,6 @@ export async function maybeEnrichWithIntervalsIcu(
     return {};
   }
 
-  // intervals.icu's webhook fires only after its own analysis finishes and
-  // commits both intervalsIcuId + intervalsAnalyzed together (see
-  // intervals_link_service.commitLink). At the moment this node runs the link
-  // is almost never present yet, so poll up to POLL_TICKS * POLL_INTERVAL_MS
-  // before giving up.
   let intervalsIcuId: string | null = null;
   for (let i = 0; i <= POLL_TICKS; i++) {
     const row = await db.query.activities.findFirst({
@@ -45,9 +40,6 @@ export async function maybeEnrichWithIntervalsIcu(
   }
 
   if (!intervalsIcuId) {
-    // The intervals.icu webhook may never arrive (not configured, or its own
-    // analysis stalled). Proactively GET activities by date and link directly
-    // before giving up. Best-effort: on failure, proceed without enrichment.
     try {
       const link = await linkFromLocalActivity({ db }, { id: state.userId }, state.activityId);
       if (link) {

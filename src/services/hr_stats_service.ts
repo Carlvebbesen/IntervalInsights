@@ -1,7 +1,6 @@
 import type { WorkoutPartType } from "../schema/enums";
 import type { StreamSet } from "../types/strava/IStream";
 
-/** The four HR distribution metrics the heart-rate analysis endpoint returns. */
 export interface HrStats {
   avg: number;
   max: number;
@@ -9,25 +8,14 @@ export interface HrStats {
   mode: number;
 }
 
-/** Segment shape needed to locate work-interval windows in the HR stream. */
 export interface WorkWindowSegment {
   type: WorkoutPartType;
   timeSeriesEndTime: number;
   actualDuration: number;
 }
 
-/**
- * Segment types that count as "work" for `intervalsOnly`. Only the efforts
- * themselves — rest/recovery/warmup/cooldown/jogging are excluded.
- */
 const WORK_SEGMENT_TYPES = new Set<WorkoutPartType>(["INTERVALS"]);
 
-/**
- * Compute avg / max / median / mode from a list of HR samples (≈ 1 sample per
- * second). Zero/negative readings are dropped (Strava pads gaps with 0).
- * `mode` is the integer-bpm value the athlete spent the most samples at — i.e.
- * "most time in HR". Returns null when there are no usable samples.
- */
 export function computeHrStats(hr: readonly number[]): HrStats | null {
   const values = hr.filter((h) => h > 0);
   if (values.length === 0) return null;
@@ -49,7 +37,6 @@ export function computeHrStats(hr: readonly number[]): HrStats | null {
   let mode = 0;
   let bestCount = -1;
   for (const [bpm, count] of counts) {
-    // Tie-break toward the lower bpm for determinism.
     if (count > bestCount || (count === bestCount && bpm < mode)) {
       bestCount = count;
       mode = bpm;
@@ -64,17 +51,10 @@ export function computeHrStats(hr: readonly number[]): HrStats | null {
   };
 }
 
-/** Whole-activity HR stats straight from the heartrate stream. */
 export function computeActivityHrStats(streams: Pick<StreamSet, "heartrate">): HrStats | null {
   return computeHrStats(streams.heartrate?.data ?? []);
 }
 
-/**
- * HR stats restricted to the work intervals. Slices the heartrate stream to the
- * time windows of work segments (`[timeSeriesEndTime - actualDuration,
- * timeSeriesEndTime]`) using the time stream, then computes stats over the
- * concatenated samples. Returns null when there are no work segments or no HR.
- */
 export function computeWorkHrStats(
   streams: Pick<StreamSet, "time" | "heartrate">,
   segments: readonly WorkWindowSegment[],

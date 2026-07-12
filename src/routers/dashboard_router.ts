@@ -38,8 +38,6 @@ dashboardRouter.get(
   validator("query", TrainingSummaryQuerySchema),
   async (c) => {
     const { date } = c.req.valid("query");
-    // Anchor at end-of-day of the athlete's local date: startDateLocal is
-    // stored local-as-UTC, so all week math must run on the athlete's calendar.
     const now = date ? new Date(`${date}T23:59:59.999Z`) : new Date();
     const result = await dashboardController.getDashboard(c.env.db, c.get("userId"), now);
     return c.json(result);

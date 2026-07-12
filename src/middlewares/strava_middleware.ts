@@ -54,7 +54,6 @@ export const getStravaAccessTokens = (userId: string) =>
       const data = (await refreshResponse.json()) as StravaTokenResponse;
       return {
         access_token: data.access_token,
-        // A refresh response can omit the token when it's unchanged; keep the old one.
         refresh_token: data.refresh_token ?? tokens.refresh_token,
         expires_at: data.expires_at,
         athlete_id: tokens.athlete_id,
@@ -76,11 +75,6 @@ export const stravaMiddleware = createMiddleware<TStravaEnv>(async (c, next) => 
   await next();
 });
 
-// Token-optional variant: resolves the Strava token when the user has one but
-// passes through (leaving it unset) when they don't, instead of 403ing. Use it
-// on routes that degrade gracefully without Strava — e.g. GET /pending, which
-// only touches Strava to re-queue stale rows. This also covers migrated users
-// whose `users.stravaId` is set but whose token vault hasn't been backfilled.
 export const softStravaMiddleware = createMiddleware<TStravaEnv>(async (c, next) => {
   const userId = c.get("userId");
   try {

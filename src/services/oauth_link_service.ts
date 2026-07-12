@@ -16,20 +16,12 @@ import { type StoredOAuthToken, writeProviderToken } from "./oauth_token_store";
 
 type Db = IGlobalBindings["db"];
 
-/**
- * The shared shape of linking an OAuth provider account: exchange the
- * authorization code for tokens, persist the provider athlete id on the user
- * row, then store the tokens encrypted in `oauth_provider_tokens` keyed by the
- * internal user id.
- */
 interface OAuthProviderLink<TAthleteId extends string | number> {
   provider: OAuthProvider;
   displayName: string;
   request: { url: string; init: RequestInit };
-  /** Provider-specific handling of a non-2xx token response. Must throw. */
   onExchangeFailure(response: Response, logger: Logger): Promise<never>;
   resolveLink(tokenData: unknown): Promise<{ token: StoredOAuthToken; athleteId: TAthleteId }>;
-  /** Persist the provider athlete id on the user row (`users.id = userId`). */
   persistUserLink(db: Db, userId: string, athleteId: TAthleteId, logger: Logger): Promise<void>;
 }
 

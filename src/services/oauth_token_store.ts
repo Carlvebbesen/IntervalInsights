@@ -5,11 +5,6 @@ import { decryptToken, encryptToken } from "./token_crypto";
 
 type Db = IGlobalBindings["db"];
 
-/**
- * Provider-agnostic token shape, mirroring the old Clerk `privateMetadata`
- * payload. `expires_at` stays Unix epoch seconds so the middleware refresh logic
- * is unchanged; the DB column is a proper `timestamp` and is converted here.
- */
 export interface StoredOAuthToken {
   access_token: string;
   refresh_token?: string;
@@ -17,7 +12,6 @@ export interface StoredOAuthToken {
   athlete_id?: string;
 }
 
-/** Decrypt and return the stored tokens for (user, provider), or null when unlinked. */
 export async function readProviderToken(
   db: Db,
   userId: string,
@@ -35,7 +29,6 @@ export async function readProviderToken(
   };
 }
 
-/** Encrypt and upsert the tokens for (user, provider). */
 export async function writeProviderToken(
   db: Db,
   userId: string,
@@ -56,7 +49,6 @@ export async function writeProviderToken(
     });
 }
 
-/** Remove the stored tokens for (user, provider). No-op when already unlinked. */
 export async function deleteProviderToken(
   db: Db,
   userId: string,

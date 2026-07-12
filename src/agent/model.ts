@@ -12,14 +12,9 @@ import { recordTokenUsage } from "../otel";
 
 export const ANALYSIS_VERSION = "v4.0";
 
-// Analysis-pipeline models. gpt-4o-mini is the default for every structured
-// agent. The stronger tiers exist so the reasoning-heavy agents (classification +
-// structure extraction) can be A/B'd / promoted PER-AGENT via invokeStructured's
-// `model` arg. Verified against the OpenAI lineup 2026-06 (o4-mini = cost-effective
-// o-series reasoning, supports structured outputs; gpt-4.1 = strong general).
 const MINI_MODEL = "gpt-4o-mini";
-const STRONG_MODEL = "gpt-4.1"; // strong general model, drop-in (supports temperature)
-const REASONING_MODEL = "o4-mini"; // o-series: ignores temperature, uses reasoningEffort
+const STRONG_MODEL = "gpt-4.1";
+const REASONING_MODEL = "o4-mini";
 
 class TokenUsageCallback extends BaseCallbackHandler {
   name = "OtelTokenUsage";
@@ -50,15 +45,6 @@ export const gptMiniModel = new ChatOpenAI({
   callbacks: [new TokenUsageCallback(MINI_MODEL)],
 });
 
-/**
- * Stronger tiers for the reasoning-heavy structured agents. `gptStrongModel` is
- * wired into suggest-session "recommended" mode (open-ended coaching judgment
- * where mini just echoes its input); pass one explicitly to
- * `invokeStructured(..., model)` to A/B others. `gptStrongModel` is a drop-in (temperature 0);
- * `o4ReasoningModel` is an o-series reasoning model (no temperature — it reasons
- * at the default effort; bind `reasoningEffort` per-call to tune) with a longer
- * timeout since reasoning runs are slower.
- */
 export const gptStrongModel = new ChatOpenAI({
   model: STRONG_MODEL,
   temperature: 0,
@@ -67,12 +53,6 @@ export const gptStrongModel = new ChatOpenAI({
   callbacks: [new TokenUsageCallback(STRONG_MODEL)],
 });
 
-/**
- * Strong model at a non-zero temperature, for open-ended *generation* where we
- * WANT variety across otherwise-identical inputs (suggest-session "recommended"
- * mode: re-asking should yield a genuinely different session, not the same one).
- * Do NOT use for extraction/classification — those must stay deterministic.
- */
 export const gptStrongCreativeModel = new ChatOpenAI({
   model: STRONG_MODEL,
   temperature: 0.6,
@@ -101,13 +81,6 @@ export async function invokeStructured<T extends Record<string, unknown>>(
   label: string,
   model: ChatOpenAI = gptMiniModel,
 ): Promise<T | null> {
-  // Retry transient structured-output failures (timeouts, malformed/parse errors)
-  // before giving up. Returns null after exhausting (callers treat null as a hard
-  // failure → activity goes to `error`, which /pending then auto-retries).
-  // Rate-limit errors are RETHROWN instead of swallowed, so the callers wrapped
-  // in invokeWithRateLimitRetry get the Retry-After-honouring backoff rather
-  // than converting a 429 burst straight into `error` activities.
-  // `model` defaults to gpt-4o-mini; pass a stronger tier for reasoning-heavy agents.
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_STRUCTURED_ATTEMPTS; attempt++) {
     try {

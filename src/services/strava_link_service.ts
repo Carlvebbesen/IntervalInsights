@@ -139,8 +139,6 @@ export async function syncAllFromStrava(
       .where(eq(activities.userId, user.id));
 
     const stravaIdToLocalId = new Map<number, number>();
-    // null description = never fetched (enqueue it); "" = fetched, Strava had
-    // none (don't re-fetch); non-empty = has one. So "resolved" means non-null.
     const descriptionResolvedById = new Map<number, boolean>();
     const unlinkedLocals: FuzzyLocal[] = [];
     for (const row of localRows) {
@@ -201,10 +199,6 @@ export async function syncAllFromStrava(
             continue;
           }
 
-          // Exact join first: an intervals-sourced row carrying this Strava id
-          // (from intervals.icu) is unambiguously the same workout — link it
-          // rather than insert a duplicate. Falls back to fuzzy time/distance
-          // when intervals.icu had no Strava id for that activity.
           const exactMatch = unlinkedLocals.find((l) => l.intervalsStravaId === summary.id) ?? null;
           const match = exactMatch ?? findUniqueMatch(summary, unlinkedLocals);
           if (match) {
@@ -280,8 +274,6 @@ export async function syncAllFromStrava(
           item.stravaId,
         );
         if (rateLimit) lastRateLimit = rateLimit;
-        // Persist "" when Strava has no description so the row is marked checked
-        // (non-null) and isn't re-queued on every subsequent sync.
         const description = data.description?.trim() ? data.description : "";
         await context.db
           .update(activities)
@@ -333,11 +325,6 @@ export async function syncAllFromStrava(
 
 const MAX_PAGES_TO_SKIP = 10;
 
-/**
- * Forward Strava's activity list, dropping activities already imported for
- * this user. Pages whose activities were ALL already synced are skipped (up
- * to a bounded number of pages) so the client always gets fresh rows or [].
- */
 export async function listUnsyncedActivities(
   db: IGlobalBindings["db"],
   userId: string,

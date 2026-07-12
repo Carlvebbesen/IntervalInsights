@@ -6,11 +6,6 @@ import type {
   EventListItemSchema,
 } from "../schemas/api_schemas";
 
-/**
- * DTOs are the API-facing shapes controllers return — derived from the response
- * zod schemas so the contract has a single source of truth. The mappers convert
- * repository DAOs (with `Date` objects) into JSON-ready DTOs (ISO strings).
- */
 export type EventDto = z.infer<typeof EventListItemSchema>;
 export type ActivityEventDto = z.infer<typeof ActivityEventSchema>;
 export type DeleteEventDto = z.infer<typeof DeleteEventResponseSchema>;

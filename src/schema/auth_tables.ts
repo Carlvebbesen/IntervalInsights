@@ -2,11 +2,6 @@ import { relations } from "drizzle-orm";
 import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users";
 
-// Better Auth-managed tables (session/account/verification models, mapped to
-// plural snake_case via modelName in src/auth.ts). IDs are UUID strings minted
-// by Better Auth (`advanced.database.generateId: "uuid"`); defaultRandom is a
-// DB-level safety net only.
-
 export const sessions = pgTable(
   "sessions",
   {
@@ -28,8 +23,6 @@ export const sessionsRelations = relations(sessions, ({ one }) => ({
   user: one(users, { fields: [sessions.userId], references: [users.id] }),
 }));
 
-// Empty while sign-in is OTP-only; Better Auth requires the model and it makes
-// future social providers free.
 export const accounts = pgTable(
   "accounts",
   {
@@ -56,7 +49,6 @@ export const accountsRelations = relations(accounts, ({ one }) => ({
   user: one(users, { fields: [accounts.userId], references: [users.id] }),
 }));
 
-// Holds the (encrypted) sign-in OTPs, keyed by identifier.
 export const verifications = pgTable(
   "verifications",
   {

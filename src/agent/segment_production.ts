@@ -40,7 +40,6 @@ export function ensureWarmupFirst(
   return [warmup, ...segments].map((s, i) => ({ ...s, segmentIndex: i }));
 }
 
-/** Total work reps implied by an LLM-extracted structure (set_reps × Σ step.reps). */
 export function countStructureReps(
   structure: WorkoutAnalysisOutput["structure"],
 ): number | undefined {
@@ -64,9 +63,6 @@ export async function produceSegments(params: {
   userNotes?: string;
   trainingType: TrainingType;
   intervalsIcuIntervals?: IIntervalsInterval[] | null;
-  // Authoritative work-rep count from a text/notes-declared structure. When set,
-  // a rung whose produced work count contradicts it is rejected (falls through to
-  // the next rung) rather than shipping the wrong count. Undefined ⇒ no change.
   declaredReps?: number;
   log: Logger;
   tag: string;
@@ -78,8 +74,6 @@ export async function produceSegments(params: {
   const workCount = (segments: InsertIntervalSegment[]): number =>
     segments.filter((s) => s.type === "INTERVALS").length;
 
-  // Preferred rung: when the activity is linked to intervals.icu, its own
-  // WORK/RECOVERY breakdown is authoritative — use it before any heuristic.
   const intervalsIcu = params.intervalsIcuIntervals;
   if (intervalsIcu && intervalsIcu.length > 0) {
     log.info({ intervals: intervalsIcu.length }, "intervals.icu linked — attempting its breakdown");
@@ -118,12 +112,6 @@ export async function produceSegments(params: {
     }
   }
 
-  // Deterministic segmenter (speed/HR + the known/inferred structure) for the
-  // non-lap-matching path (indoor / dense / one-big-work-lap), where the LLM
-  // used to invent rep counts and crush the warmup to 60s. Validated on real
-  // workouts — see [[deterministic-interval-segmentation]]. A weak result
-  // (confidence below threshold) falls through to the LLM rather than shipping
-  // a bad split.
   const deterministic = buildSegmentsDeterministic(activityId, laps, userSets, statsStreams);
   if (deterministic && deterministic.confidence >= DETERMINISTIC_CONFIDENCE_THRESHOLD) {
     const reps = workCount(deterministic.segments);

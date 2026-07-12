@@ -3,7 +3,6 @@ import { config } from "../config";
 
 const ANDROID_PACKAGE = "no.cvebbesen.intervalinsights";
 const PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${ANDROID_PACKAGE}`;
-// Only these OAuth params are forwarded to the app; anything else in the query is dropped.
 const FORWARDED_PARAMS = ["code", "error", "state", "scope"] as const;
 
 const STYLES = `
@@ -102,14 +101,6 @@ function trampolinePage(
 </html>`;
 }
 
-/**
- * OAuth callback "trampoline" pages at the universal-link paths. The OS is
- * supposed to intercept these URLs before any request is made, but browsers
- * keep non-gesture redirects in the tab (intervals.icu always; Strava when its
- * app isn't installed). This page hands the flow back to the app via a
- * gesture-driven tap — an Android intent:// link (with a Play Store fallback)
- * or the plain universal link elsewhere. Mounted in src/index.ts and the test app.
- */
 export function registerOAuthCallbackPages<E extends Env>(app: Hono<E>): void {
   const callbacks = [
     { path: "/strava-callback", provider: "Strava" },

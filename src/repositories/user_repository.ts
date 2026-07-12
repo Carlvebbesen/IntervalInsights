@@ -4,7 +4,6 @@ import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
 
-/** Repository for the `users` table. The DAO is the full row. */
 export type UserDao = SelectUser;
 
 export function findById(db: Db, userId: string): Promise<UserDao | undefined> {
