@@ -7,7 +7,6 @@ export interface IGlobalBindings {
 }
 
 export interface IGlobalVariables {
-  /** Legacy Clerk identity — null for Better Auth-native users (dual-auth window). */
   clerkUserId: string | null;
   userId: string;
   role: "guest" | "premium" | "admin";
@@ -16,18 +15,14 @@ export interface IGlobalVariables {
   logger: Logger;
 }
 
-// Extend the global variables for Strava-specific routes
 export interface IStravaVariables extends IGlobalVariables {
   stravaAccessToken: string;
   stravaAthleteId: number | undefined;
 }
 
-// Extend the global variables for Intervals.icu-specific routes
 export interface IIntervalsVariables extends IGlobalVariables {
   intervalsAccessToken: string;
 }
-
-// Helper types for the Hono Generics
 
 export type TGlobalEnv = { Bindings: IGlobalBindings; Variables: IGlobalVariables };
 export type TPublicEnv = {

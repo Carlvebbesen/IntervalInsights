@@ -48,7 +48,6 @@ export async function processIntervalsWebhook(
   const intervalsActivityId = rawActivity ? String(rawActivity.id) : undefined;
 
   if (event.type === "ACTIVITY_DELETED") {
-    // Not enabled in the dashboard; mirroring deletion is an explicit follow-up.
     log.info(
       { athleteId: event.athlete_id, intervalsActivityId, outcome: "ignored" },
       "Ignoring Intervals.icu ACTIVITY_DELETED",
@@ -73,10 +72,6 @@ export async function processIntervalsWebhook(
     return;
   }
 
-  // UPDATED / ANALYZED on an already-linked row: refresh enrichment + numeric
-  // metadata (user-authored title/description/notes are preserved). When no
-  // local row matches yet, fall through to link-or-create — for ANALYZED this
-  // is the ~60 s-delayed safety net; for UPDATED it's a first-seen activity.
   if (isUpdated || isAnalyzed) {
     const existing = await context.db.query.activities.findFirst({
       where: (a, { and, eq }) =>
@@ -110,8 +105,6 @@ export async function processIntervalsWebhook(
     "intervals.icu activity ingested",
   );
 
-  // Surface a freshly-created pending activity to the app (mirrors strava_ingest).
-  // Linked outcomes keep the existing row's status, so no "received" card there.
   if (result.outcome === "created" && result.localActivityId) {
     const row = await context.db.query.activities.findFirst({
       where: (a, { eq }) => eq(a.id, result.localActivityId as number),

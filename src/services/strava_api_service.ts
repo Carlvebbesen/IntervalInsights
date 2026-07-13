@@ -153,12 +153,6 @@ export const stravaApiService = {
           const activity = await this.getActivity(accessToken, id);
           const values = getDbInsertActivity(activity, userId, processHeartRate);
 
-          // Converge with an existing intervals.icu-sourced row for the same
-          // workout (it carries this Strava id in intervalsStravaId but isn't
-          // Strava-linked yet) instead of inserting a cross-source duplicate.
-          // Mirrors the Strava webhook merge. The list endpoint already filters
-          // these out, but a twin can appear between list and import, so guard
-          // here too. intervals enrichment fields are left untouched.
           const twin = await db.query.activities.findFirst({
             where: (a, { and, eq, isNull }) =>
               and(
@@ -229,8 +223,6 @@ export const stravaApiService = {
           : { done: String(processed) },
     });
 
-    // Stagger LLM-triggering analyses to avoid bursting Gemini's RPM quota on
-    // large bulk imports. Fire-and-forget so the HTTP response returns promptly.
     if (onActivitySynced && triggers.length > 0) {
       const STAGGER_MS = 5000;
       void (async () => {

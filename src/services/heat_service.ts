@@ -2,29 +2,22 @@ import type { TrainingType } from "../schema/enums";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import { easePace } from "./pace_service";
 
-// Heat-adjusted paces. The model is a hybrid: a dew-point-linear slope sets the
-// magnitude (so it tracks how muggy it actually is, not just air temperature),
-// anchored to marathon heat-impact research at the aerobic end, then tapered by
-// training zone because heat barely affects short/fast efforts. A small solar
-// term accounts for direct sun. All adjustments are in sec/km (slower = +).
-
 export type HeatZone = "easy" | "threshold" | "interval" | "rep";
 
 export interface WeatherInput {
   temperatureC: number;
-  humidity: number; // relative humidity, %
+  humidity: number;
   uvIndex?: number | null;
-  cloudCover?: number | null; // 0..1
+  cloudCover?: number | null;
   apparentTemperatureC?: number | null;
 }
 
-const DEWPOINT_THRESHOLD_C = 15; // below this, heat is a non-factor
-const HEAT_SLOPE_SEC_PER_KM_PER_C = 1.7; // ≈ Tinman dew-point rule, ≈ marathon research at the easy end
+const DEWPOINT_THRESHOLD_C = 15;
+const HEAT_SLOPE_SEC_PER_KM_PER_C = 1.7;
 const MAX_SOLAR_SEC_PER_KM = 3;
-const MAX_HEAT_LOAD_SEC_PER_KM = 25; // hard cap (readiness penalty caps at 15 — same spirit)
+const MAX_HEAT_LOAD_SEC_PER_KM = 25;
 const MEANINGFUL_LOAD_SEC_PER_KM = 2;
 
-// Aerobic efforts take the full hit; reps are almost unaffected.
 const ZONE_FACTOR: Record<HeatZone, number> = {
   easy: 1.0,
   threshold: 0.65,
@@ -34,7 +27,6 @@ const ZONE_FACTOR: Record<HeatZone, number> = {
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
-// Magnus-Tetens approximation: derive dew point from temperature + RH.
 export function magnusDewPoint(temperatureC: number, humidityPct: number): number {
   const rh = clamp(humidityPct, 1, 100) / 100;
   const a = 17.625;
@@ -49,7 +41,6 @@ function solarLoad(weather: WeatherInput): number {
   return clamp((uv / 2) * (1 - cloud), 0, MAX_SOLAR_SEC_PER_KM);
 }
 
-// Pre-zone heat load in sec/km.
 export function baseHeatLoadSecPerKm(weather: WeatherInput): number {
   const dewC = magnusDewPoint(weather.temperatureC, weather.humidity);
   const heatTerm = Math.max(0, dewC - DEWPOINT_THRESHOLD_C) * HEAT_SLOPE_SEC_PER_KM_PER_C;
@@ -84,8 +75,6 @@ export function computeHeatModel(weather: WeatherInput): HeatModel {
   return { dewPointC: Math.round(dewC * 10) / 10, hasSun, perZoneDeltaSecPerKm, advisory };
 }
 
-// Race distance → heat sensitivity, on the same aerobic→anaerobic spectrum as
-// the zone taper: a marathon (aerobic, long) takes the full hit, a 5k far less.
 const RACE_FACTOR_ANCHORS: { distanceM: number; factor: number }[] = [
   { distanceM: 5000, factor: 0.4 },
   { distanceM: 10000, factor: 0.55 },
@@ -108,7 +97,6 @@ function raceDistanceFactor(distanceM: number): number {
   return a[a.length - 1].factor;
 }
 
-// Seconds added to a race of the given distance under the supplied weather.
 export function heatRaceDeltaSec(weather: WeatherInput, distanceM: number): number {
   const penaltySecPerKm = baseHeatLoadSecPerKm(weather) * raceDistanceFactor(distanceM);
   return Math.round(penaltySecPerKm * (distanceM / 1000));
@@ -127,7 +115,6 @@ export function heatZoneForTrainingType(trainingType: TrainingType | null): Heat
     case "HILL_SPRINTS":
       return "rep";
     default:
-      // SHORT_INTERVALS / LONG_INTERVALS / FARTLEK / RACE / OTHER / null → quality default
       return "interval";
   }
 }
@@ -138,7 +125,6 @@ export interface HeatAdjustmentResult {
   advisory: string;
 }
 
-// Apply a single zone's heat penalty across every step (uniform, like readiness).
 export function applyHeatAdjustment(
   basePaces: ExpandedIntervalSet[],
   weather: WeatherInput,

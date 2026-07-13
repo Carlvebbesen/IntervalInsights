@@ -13,17 +13,9 @@ function protectedResourceMetadataUrl(): string {
   return new URL("/.well-known/oauth-protected-resource/mcp", config.APP_BASE_URL).toString();
 }
 
-/**
- * RFC 8707 defense: with Dynamic Client Registration enabled, ANY registered
- * OAuth app's token for ANY resource on this Clerk instance verifies here.
- * Clerk's AuthInfo exposes no audience, so inspect the JWT's `aud` claim
- * directly. Warn-only until real-world `aud` values are confirmed (Clerk may
- * set it to the client id rather than the resource) — flip
- * MCP_ENFORCE_AUDIENCE=true to enforce.
- */
 function audienceMatches(token: string): boolean {
   const parts = token.split(".");
-  if (parts.length !== 3) return true; // opaque token — verified network-side by Clerk
+  if (parts.length !== 3) return true;
   try {
     const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString()) as {
       aud?: string | string[];
@@ -36,13 +28,6 @@ function audienceMatches(token: string): boolean {
   }
 }
 
-/**
- * Verifies the Clerk-issued OAuth access token an MCP client (Claude/ChatGPT)
- * presents, then resolves it to the internal user — mirroring `authGuard`, but
- * for `oauth_token`s instead of session tokens. On failure it replies 401 with a
- * `WWW-Authenticate` header pointing at the protected-resource metadata so the
- * client can start the OAuth flow.
- */
 export const mcpAuth = createMiddleware<TMcpEnv>(async (c, next) => {
   const token = c.req.header("authorization")?.split(" ")[1];
 
@@ -54,8 +39,6 @@ export const mcpAuth = createMiddleware<TMcpEnv>(async (c, next) => {
     const auth = requestState.toAuth();
     authInfo = auth ? verifyClerkToken(auth, token) : undefined;
   } catch (err) {
-    // A Clerk/network failure is not the client's fault: a 401 here would make
-    // clients discard a valid token and restart the whole OAuth dance.
     logger.error({ err }, "mcp: token verification errored upstream");
     return c.json({ error: "Authorization service unavailable" }, 503);
   }
@@ -84,8 +67,6 @@ export const mcpAuth = createMiddleware<TMcpEnv>(async (c, next) => {
     where: eq(users.clerkId, clerkUserId),
   });
   if (!dbUser) {
-    // Concurrent first-ever requests (initialize + tools/list) race this
-    // insert; the loser must reuse the winner's row, not 500 on the unique key.
     const [created] = await c.env.db
       .insert(users)
       .values({ clerkId: clerkUserId, lastSeenAt: new Date() })

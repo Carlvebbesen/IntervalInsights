@@ -3,13 +3,6 @@ import { pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { oauthProviderEnum } from "./enums";
 import { users } from "./users";
 
-/**
- * Third-party (Strava / intervals.icu) OAuth tokens, keyed by the internal
- * `users.id`. Replaces the Clerk `privateMetadata` token vault. `accessToken` and
- * `refreshToken` hold ciphertext (better-auth/crypto, key `TOKEN_ENC_KEY`) — never
- * plaintext. One row per (user, provider); the row is deleted on unlink/deauth and
- * cascades away with the user.
- */
 export const oauthProviderTokens = pgTable(
   "oauth_provider_tokens",
   {

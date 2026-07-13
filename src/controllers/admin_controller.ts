@@ -5,12 +5,6 @@ import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
 
-/**
- * Set a user's role in the DB (source of truth for identity/role). The admin
- * role is deliberately unreachable through the API: it can't be granted here,
- * and rows that already hold it can't be modified — both require a direct
- * database update.
- */
 export async function setUserRole(
   db: Db,
   targetUserId: string,

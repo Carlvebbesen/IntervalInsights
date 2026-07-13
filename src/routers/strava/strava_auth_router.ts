@@ -8,7 +8,6 @@ import type { TGlobalEnv } from "../../types/IRouters";
 
 const stravaAuthRouter = new Hono<TGlobalEnv>();
 
-// Externally pinned in the Strava app registration — non-prod deploys must register their own callback.
 const REDIRECT_URI = new URL("/strava-callback", config.APP_BASE_URL).toString();
 
 const STRAVA_CLIENT_ID = config.STRAVA_CLIENT_ID;

@@ -52,9 +52,6 @@ export type DraftAnalysisResult = WorkoutAnalysisOutput & {
   acceptedSets?: ExpandedIntervalSet[];
   segmentsFromLaps?: boolean;
   proposedSegments?: ProposedSegmentDraft[];
-  // Provenance of the adopted structure: "text" when the title/description
-  // declared it (text authority), else "model". `declaredStructure` is what the
-  // text gate parsed, kept for observability.
   structureSource?: "text" | "model";
   declaredStructure?: WorkoutAnalysisOutput["structure"] | null;
   // Explicitly text-declared paces (m/s), flat and positional — one entry per
@@ -74,20 +71,14 @@ export const activities = pgTable(
     trainingType: trainingTypeEnum("training_type"),
     intervalStructureId: integer("interval_structure_id").references(() => intervalStructures.id),
     analyzedAt: timestamp("analyzed_at"),
-    // Stamped on every ongoing_* transition; the requeue orphan detector keys
-    // on it (created_at/analyzed_at are ingest/initial times, not run starts).
     analysisStartedAt: timestamp("analysis_started_at"),
     analysisStatus: analysisStatusEnum("analysis_status").default("pending"),
     analysisAttemptCount: integer("analysis_attempt_count").notNull().default(0),
     draftAnalysisResult: json("draft_analysis_result").$type<DraftAnalysisResult>(),
     analysisVersion: text("analysis_version").default("v1.0"),
     stravaActivityId: bigint("strava_activity_id", { mode: "number" }),
-    // Strava's opaque gear id (legacy). Kept for back-compat + matching imports.
     gearId: text("gear_id"),
-    // FK to the local `gears` table — the source of truth going forward.
     localGearId: integer("local_gear_id").references(() => gears.id),
-    // Set when a Strava `update` webhook changed the gear post-import — the
-    // user's deliberate Strava choice, which wins the pending preselect chain.
     gearUpdatedFromStrava: boolean("gear_updated_from_strava").notNull().default(false),
     hasHeartrate: boolean("has_heart_rate"),
     title: text("title").notNull(),
@@ -103,11 +94,6 @@ export const activities = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
     indoor: boolean("indoor").notNull(),
     intervalsIcuId: text("intervals_icu_id"),
-    // intervals.icu reports the originating Strava id on its activities. Stored
-    // here (NOT in stravaActivityId, which marks a row as Strava-sourced) purely
-    // so the Strava ingest paths can exact-join an intervals-sourced row for the
-    // same workout instead of creating a duplicate. Null when intervals.icu has
-    // no Strava id for the activity → callers fall back to fuzzy time/distance.
     intervalsStravaId: bigint("intervals_strava_id", { mode: "number" }),
     intervalsAnalyzed: boolean("intervals_analyzed").default(false),
     intervalsIcuEnrichedAt: timestamp("intervals_icu_enriched_at"),
@@ -126,12 +112,6 @@ export const activities = pgTable(
     icuFtp: integer("icu_ftp"),
     icuCtl: doublePrecision("icu_ctl"),
     icuAtl: doublePrecision("icu_atl"),
-    // Heart-rate distribution stats computed from the HR stream. avg/max are
-    // already stored above (averageHeartRate/maxHeartRate); these add the
-    // histogram-derived metrics. `work*` variants restrict to work intervals
-    // (null when the activity has no stored work segments). `hrStatsComputedAt`
-    // marks that computation was attempted, so we don't refetch streams for
-    // activities that legitimately have no HR data.
     medianHeartRate: integer("median_heart_rate"),
     modeHeartRate: integer("mode_heart_rate"),
     workAvgHeartRate: integer("work_avg_heart_rate"),

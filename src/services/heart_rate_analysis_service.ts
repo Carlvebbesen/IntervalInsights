@@ -37,10 +37,8 @@ export interface HeartRateAnalysisFilters extends HrAnalysisFilters {
   intervalsOnly?: boolean;
 }
 
-/** Default zone colours (intervals.icu returns none); cycled by zone index. */
 const ZONE_PALETTE = ["#22C55E", "#3B82F6", "#F59E0B", "#EF4444", "#7C3AED", "#EC4899", "#14B8A6"];
 
-/** Max activities whose stats we compute synchronously on a single request. */
 const MAX_SYNC_LAZY_COMPUTES = 15;
 
 const METRIC_KEYS = ["avgHr", "maxHr", "medianHr", "modeHr"] as const;
@@ -54,8 +52,6 @@ export async function getHeartRateAnalysis(
 ): Promise<Result> {
   const log = logger.child({ service: "heartRateAnalysis" });
 
-  // 1. intervals.icu must be linked (zones come from there). Mirror the
-  // not_linked discriminator used by the wellness/fitness series.
   const result = await withIntervalsToken(userId, (intervalsToken) =>
     analyzeWithToken(db, userId, intervalsToken, filters, log),
   );
@@ -69,33 +65,23 @@ async function analyzeWithToken(
   filters: HeartRateAnalysisFilters,
   log: Logger,
 ): Promise<Result> {
-  // 2. HR processing requires explicit consent (same gate as /activity/:id/heartrate).
   const consent = await userHasHeartRateConsent(db, userId);
   if (!consent) {
     throw new AppError(403, "Heart-rate processing not enabled for this account");
   }
 
-  // 3. Filter the user's completed activities.
   const rows = await activityRepo.listForHrAnalysis(db, userId, filters);
   if (rows.length === 0) {
     return { status: "no_data" };
   }
 
-  // 4. Lazily compute & persist missing HR stats. avg/max are always available
-  // from stored columns; median/mode (and the work-interval variants) may be
-  // missing for activities that predate the pipeline change. Compute a bounded
-  // number synchronously and background-fill the rest (their median/mode are
-  // null this time and fill in for the next request).
   await fillMissingStats(db, userId, rows, log);
 
-  // 5. Build one point per activity, choosing whole-activity vs work metrics.
   const intervalsOnly = filters.intervalsOnly === true;
   const points = rows.map((row) => toPoint(row, intervalsOnly));
 
-  // 6. Zones from intervals.icu (best-effort — empty array is valid).
   const zones = await fetchZones(intervalsToken, log);
 
-  // 7. Per-metric min/max/mean across the points.
   const summaries = buildSummaries(points);
 
   return { status: "ok", points, zones, summaries };
@@ -105,7 +91,6 @@ function round(value: number | null): number | null {
   return value == null ? null : Math.round(value);
 }
 
-// Exported for unit testing.
 export function toPoint(row: HrAnalysisRow, intervalsOnly: boolean): Point {
   const avg = intervalsOnly ? row.workAvgHeartRate : row.averageHeartRate;
   const max = intervalsOnly ? row.workMaxHeartRate : row.maxHeartRate;
@@ -161,18 +146,11 @@ async function fillMissingStats(
   }
 }
 
-// Exported for unit testing.
 export function normalizeIntervalsStreams(raw: unknown): Pick<StreamSet, "time" | "heartrate"> {
   const { time, heartrate } = mapIntervalsStreamsToStreamSet(raw);
   return { time, heartrate };
 }
 
-/**
- * Fetch the activity's HR/time streams via the unified source service
- * (intervals.icu preferred, Strava fallback, HR consent gated internally),
- * compute whole-activity and work-interval stats, persist them, and mutate `row`
- * in place so the response reflects the freshly computed values.
- */
 export async function computeAndPersistRow(
   db: Db,
   userId: string,
@@ -182,10 +160,6 @@ export async function computeAndPersistRow(
   try {
     streams = await getStreamSet(db, userId, row.id, ["time", "heartrate"]);
   } catch (err) {
-    // With no Strava fallback (incl. the no-source AppError(400) case), a failure
-    // here is terminal for this row — mark it attempted so it isn't retried every
-    // request. When a Strava id exists, failures (incl. rate limits) propagate to
-    // the caller's per-row handling.
     if (row.stravaActivityId != null) throw err;
     await activityRepo.updateHrStats(db, row.id, { full: null, work: null });
     row.hrStatsComputedAt = new Date();
@@ -212,7 +186,6 @@ export async function computeAndPersistRow(
   row.workMaxHeartRate = work?.max ?? null;
   row.workMedianHeartRate = work?.median ?? null;
   row.workModeHeartRate = work?.mode ?? null;
-  // Backfill whole-activity avg/max from the histogram only when missing.
   if (full) {
     row.averageHeartRate = row.averageHeartRate ?? full.avg;
     row.maxHeartRate = row.maxHeartRate ?? full.max;
@@ -230,12 +203,6 @@ async function fetchZones(intervalsToken: string, log: Logger): Promise<Zone[]> 
   }
 }
 
-/**
- * Convert the athlete's running HR-zone configuration into chart bands.
- * `hr_zones` is an ascending list of upper-bound bpm values; each band runs from
- * the previous upper bound to the current one. A leading 0 (boundary-style
- * config) is dropped. Exported for testing.
- */
 export function buildHrZones(athlete: IIntervalsAthlete): Zone[] {
   const settings = athlete.sportSettings ?? [];
   const runningTypes = new Set<string>(RUNNING_SPORT_TYPES);
@@ -265,7 +232,6 @@ function metricValue(point: Point, key: MetricKey): number | null {
   return point[key];
 }
 
-// Exported for unit testing.
 export function buildSummaries(points: Point[]): Record<string, MetricSummary> {
   const summaries: Record<string, MetricSummary> = {};
   for (const key of METRIC_KEYS) {
@@ -281,7 +247,6 @@ export function buildSummaries(points: Point[]): Record<string, MetricSummary> {
       sum += value;
       count++;
     }
-    // Only include metrics we actually have values for (per the contract).
     if (count === 0) continue;
     summaries[key] = { min, max, mean: sum / count };
   }

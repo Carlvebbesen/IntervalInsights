@@ -29,18 +29,10 @@ export async function proposeSegments(
   const statsStreams = state.streams as Required<Pick<StreamSet, "time" | "distance">> &
     Pick<StreamSet, "heartrate">;
 
-  // Build the per-rep set list ONCE, with proposed paces filled by the SAME logic
-  // as the /proposed-pace view (analysis_controller.getProposedPace): lap-derived
-  // when the outdoor activity has laps, else history. Keeping the two in lockstep
-  // is the unification — the proposed SEGMENTS and the proposed PACES are one rep
-  // list carrying identical paces, so they can't disagree in the editor.
   const structure = state.initialResult?.structure ?? [];
   let draftSets: ExpandedIntervalSet[] = structure.length
     ? generateCompleteIntervalSet(structure)
     : [];
-  // Pace-fill (lap-derived or history) is a running concern (D7): rides/skis are
-  // power/speed-based, so their proposed segments carry null target paces and the
-  // deterministic/LLM segmenter splits on speed/power streams instead.
   if (structure.length && !isPowerSport(state.activityType)) {
     try {
       const fromLaps = state.laps?.length ? getProposedPaceFromLaps(state.laps, structure) : null;
@@ -81,9 +73,6 @@ export async function proposeSegments(
     targetPace: s.targetPace,
   }));
 
-  // Atomic jsonb merge instead of read-modify-write: a concurrent draft write
-  // (e.g. a forced re-analysis interleaving with run_initial_agent) must not be
-  // clobbered by a stale spread.
   await db
     .update(activities)
     .set({

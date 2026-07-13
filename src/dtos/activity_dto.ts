@@ -9,9 +9,6 @@ export type ActivityListItemDto = z.infer<typeof ActivityListItemSchema>;
 
 const iso = (d: Date | null | undefined): string | null => d?.toISOString() ?? null;
 
-/** Map a full activity DAO (Date objects) to the JSON-ready DTO. `localGearId` flows
- * through the spread; the resolved `gear` summary (works even for retired gear) is
- * passed separately by the controller. */
 export function toActivityDto(
   dao: ActivityDao,
   events?: ActivityEventDto[],

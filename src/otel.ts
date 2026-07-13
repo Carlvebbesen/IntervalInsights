@@ -18,12 +18,6 @@ import {
   GEN_AI_TOKEN_TYPE_VALUE_OUTPUT,
 } from "@opentelemetry/semantic-conventions/incubating";
 
-// Bun's native `fetch` doesn't go through undici, so
-// @opentelemetry/instrumentation-undici / -http never patch it. This module
-// emits the standard `http.client.request.duration` histogram and a CLIENT-kind
-// span manually, so Strava / intervals.icu calls become visible in Tempo and
-// Prometheus.
-
 const meter = metrics.getMeter("intervals-backend");
 const tracer = trace.getTracer("intervals-backend");
 
@@ -37,10 +31,6 @@ const genAiTokenUsage = meter.createHistogram("gen_ai.client.token.usage", {
   unit: "{token}",
 });
 
-// Templatize path segments that look like IDs (3+ digits, optional leading
-// letter) so span names stay low-cardinality. Matches Strava activity IDs
-// (numeric, 9-11 digits), intervals.icu IDs (`i12345`), Strava gear IDs
-// (`g1234567`), while leaving version segments like `v3` untouched.
 const ID_SEGMENT = /\/[a-zA-Z]?\d{3,}/g;
 
 export async function tracedFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
@@ -122,10 +112,6 @@ export function recordTokenUsage(
   }
 }
 
-// --- Product-usage counters (how users act on their analyses) ---
-// Counters carry only LOW-cardinality attributes (no user.id / activity.id —
-// those live on traces & logs). They feed the Grafana dashboards that show how
-// often users edit segments, re-run analysis, or change an activity's type.
 const segmentEditCounter = meter.createCounter("activity.segment.edit", {
   description: "User edits to an activity's interval segments",
   unit: "{edit}",
@@ -141,7 +127,6 @@ const trainingTypeChangeCounter = meter.createCounter("activity.training_type.ch
   unit: "{change}",
 });
 
-/** A user edited an activity's interval segments (bulk replace or single patch). */
 export function recordSegmentEdit(attrs: {
   editKind: "bulk" | "single";
   source: string;
@@ -154,7 +139,6 @@ export function recordSegmentEdit(attrs: {
   });
 }
 
-/** A user (re)ran the analysis pipeline: phase "start" = (re)generate, "resume" = complete. */
 export function recordAnalysisRun(attrs: {
   phase: "start" | "resume";
   trigger: "manual" | "auto" | "reanalyze";
@@ -165,7 +149,6 @@ export function recordAnalysisRun(attrs: {
   });
 }
 
-/** An activity's training type changed — via a manual metadata edit or at analysis resume. */
 export function recordTrainingTypeChange(attrs: {
   trainingType: string;
   via: "manual" | "resume";

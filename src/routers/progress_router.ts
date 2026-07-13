@@ -65,9 +65,6 @@ progressRouter.get(
     const userId = c.get("userId");
     const log = c.var.logger;
 
-    // Bun closes idle connections after 10s by default; an SSE stream is mostly
-    // idle between events, so disable the per-connection idle timeout for this
-    // request. The heartbeat below is what detects a dead peer.
     (c.env as { timeout?: (req: Request, seconds: number) => void }).timeout?.(c.req.raw, 0);
 
     return streamSSE(c, async (stream) => {

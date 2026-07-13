@@ -104,14 +104,12 @@ activitiesRouter.get(
   },
 );
 
-// Editable activity-metadata fields for PATCH /:id.
 const activityMetadataSchema = z.object({
   trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),
   notes: z.string().nullable().optional(),
   feeling: z.number().nullable().optional(),
 });
 
-// PATCH /:id — preferred update route.
 activitiesRouter.patch(
   "/:id",
   describeRoute({
@@ -160,8 +158,6 @@ activitiesRouter.patch(
 const stravaActivitiesRouter = new Hono<TStravaEnv>();
 stravaActivitiesRouter.use("*", stravaMiddleware);
 
-// intervals.icu-preferred (falls back to Strava); on the global router so
-// intervals-only users (no Strava link) can reach it. Path id is the INTERNAL id.
 activitiesRouter.get(
   "/:id/laps",
   describeRoute({

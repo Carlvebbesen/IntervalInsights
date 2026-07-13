@@ -7,7 +7,7 @@ import { fetchPaceAnchor } from "./pace_anchor_service";
 type Db = IGlobalBindings["db"];
 
 const PROFILE_WINDOW_DAYS = 90;
-const WEEKLY_WINDOW_DAYS = 84; // 12 weeks
+const WEEKLY_WINDOW_DAYS = 84;
 
 const num = (v: unknown): number | null => {
   if (v == null) return null;
@@ -24,14 +24,6 @@ function fmtSecPerKm(sec: number | null | undefined): string | null {
 
 const prettyType = (t: string): string => t.replace(/_/g, " ").toLowerCase();
 
-/**
- * A compact, human-readable snapshot of who this athlete is — recent weekly
- * mileage, run/interval volume, easy-vs-quality mix, fitness (VDOT + paces), and
- * their habitual interval sessions — assembled from existing dashboard / pace-anchor
- * aggregations. Fed to the suggest-session agent so it can tailor to the athlete
- * instead of guessing. Every source is best-effort: a failure or missing datum
- * drops its line rather than the whole block. Returns "" when nothing is known.
- */
 export async function buildAthleteProfileBlock(db: Db, userId: string, now: Date): Promise<string> {
   const runningTypes = [...RUNNING_SPORT_TYPES];
   const since90 = new Date(now);
@@ -54,7 +46,6 @@ export async function buildAthleteProfileBlock(db: Db, userId: string, now: Date
     .filter((n): n is number => n != null)
     .map((m) => m / 1000);
   if (weeklyKm.length > 0) {
-    // The most recent bucket is usually a partial week — exclude it from the average.
     const full = weeklyKm.length > 1 ? weeklyKm.slice(0, -1) : weeklyKm;
     const avg = full.reduce((a, b) => a + b, 0) / full.length;
     const min = Math.min(...full);

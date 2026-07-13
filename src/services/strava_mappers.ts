@@ -1,11 +1,6 @@
 import type { InsertActivity } from "../schema";
 import type { DetailedActivity, SummaryActivity } from "../types/strava/IDetailedActivity";
 
-/**
- * Strava DTO → DB-row mappers. Moved out of the schema layer so schema files
- * stay limited to table/enum/relation definitions.
- */
-
 export function getDbInsertActivity(
   data: DetailedActivity,
   userId: string,

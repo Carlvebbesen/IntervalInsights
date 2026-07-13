@@ -1,15 +1,5 @@
-/**
- * Heart-rate lag compensation. HR trails effort by ~10-30 s (cardiac response +
- * device smoothing), so an HR-based work/rest gate lands late and HR-detected
- * bouts drift right. intervals.icu flags this as an unfixed weakness and it is the
- * root cause of our HR-ambiguous reps (626). We cross-correlate HR against the
- * speed signal, find the lag that best aligns them, and shift HR earlier by it
- * before HR is used in any segmentation decision. See the brain entry
- * `interval-segmentation-approaches-landscape`.
- */
 import { SEGMENTER_CONFIG } from "./segmenter_config";
 
-/** Pearson correlation of two equal-length series; 0 when undefined. */
 function correlation(a: number[], b: number[]): number {
   const n = Math.min(a.length, b.length);
   if (n < 2) return 0;
@@ -35,14 +25,6 @@ function correlation(a: number[], b: number[]): number {
   return cov / Math.sqrt(va * vb);
 }
 
-/**
- * Estimate the lag (seconds, ≥0) by which HR trails speed: the shift that
- * maximises correlation between speed[i] and hr[i+lag]. Returns 0 when no shift
- * beats the zero-lag correlation by `minCorrelationGain` (e.g. steady runs with no
- * structure to align). Operates on the sampled series; `time` gives the seconds
- * axis so non-1 Hz streams are handled by converting the second-lag to an index
- * span via the median sample period.
- */
 export function estimateHrLag(
   time: number[],
   speed: number[],
@@ -71,11 +53,6 @@ export function estimateHrLag(
   return bestShift * dt;
 }
 
-/**
- * Shift HR earlier in time by `lagSeconds` (pulling each sample's HR back to the
- * effort that caused it), holding the array length. The tail repeats the last
- * value. Returns the input unchanged when the lag rounds to zero.
- */
 export function shiftHrEarlier(time: number[], hr: number[], lagSeconds: number): number[] {
   const n = hr.length;
   if (n === 0 || lagSeconds <= 0) return hr;
@@ -88,7 +65,6 @@ export function shiftHrEarlier(time: number[], hr: number[], lagSeconds: number)
   return out;
 }
 
-/** Convenience: estimate and apply HR-lag in one call (no-op when disabled). */
 export function compensateHrLag(time: number[], speed: number[], hr: number[]): number[] {
   if (!SEGMENTER_CONFIG.hrLag.enabled) return hr;
   const lag = estimateHrLag(time, speed, hr);

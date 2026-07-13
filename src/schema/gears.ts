@@ -29,15 +29,10 @@ export const gears = pgTable(
     model: text("model").notNull(),
     nickname: text("nickname"),
     surface: gearSurfaceEnum("surface").notNull().default("ROAD"),
-    // Training types this shoe suits; empty = allround (suits everything).
     useTypes: trainingTypeEnum("use_types").array().notNull().default([]),
     isActive: boolean("is_active").notNull().default(true),
     retiredAt: timestamp("retired_at"),
-    // Strava's opaque gear id; null for shoes created manually in-app.
     stravaGearId: text("strava_gear_id"),
-    // Snapshot of Strava's distance + the moment it was captured. Activities
-    // dated after `baselineDate` are summed into `maintainedDistanceMeters`;
-    // everything up to it is already inside `baselineDistanceMeters`.
     baselineDistanceMeters: doublePrecision("baseline_distance_meters").notNull().default(0),
     baselineDate: timestamp("baseline_date"),
     maintainedDistanceMeters: doublePrecision("maintained_distance_meters").notNull().default(0),
@@ -73,7 +68,6 @@ export const gearDefaults = pgTable(
   ],
 );
 
-// interval_structures is GLOBAL (no userId) — per-user defaults key (userId, structureId).
 export const gearSignatureDefaults = pgTable(
   "gear_signature_defaults",
   {

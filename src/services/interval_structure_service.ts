@@ -3,44 +3,21 @@ import type { workoutSet } from "../agent/initial_analysis_agent";
 import { SIGNATURE_VENUES } from "../agent/running_venues";
 import type { InsertIntervalSegment } from "../schema";
 
-/**
- * Interval-structure domain logic: signature generation and structure naming.
- * Moved out of the schema layer (which now holds only tables/enums/relations)
- * so the rules live with the rest of the business logic and can be reused by
- * services/controllers.
- *
- * Signatures are CANONICAL: raw work components are dropped (zero/custom),
- * snapped to a named venue when a measured distance lands on one, then
- * quantized, so measured GPS distances (1509 m) and clean prescriptions
- * (1500 m) that mean the same session collapse to one signature. See the
- * `signature-canonicalization` project note.
- */
-
 export type IntervalComponent = {
   value: number;
   unit: "m" | "km" | "sec" | "min";
 };
 
-// Activity-level GPS confirmation, resolved upstream where streams are available
-// (see resolveVenueContext). A two-way gate: a confirmed venue lets a distance
-// snap even when the value looks like a clean prescription, while GPS present
-// but unconfirmed vetoes a snap the athlete's location contradicts. GPS never
-// forces a snap outside the venue's ±tolerance.
 export type VenueContext = {
-  // Venue tokens whose geofence the activity's GPS track confirmed.
   confirmedTokens: string[];
-  // Whether a usable GPS track was available at all. When true, a venue NOT in
-  // confirmedTokens is actively VETOED (the athlete was elsewhere, so a rep that
-  // merely matches a venue length must not borrow its token). When false, there
-  // is nothing to confirm or veto with, so snapping falls back to distance only.
   hasGps: boolean;
 };
 
 const VENUE_SNAP_TOLERANCE = 0.025;
-const DISTANCE_QUANTUM_SHORT = 50; // < 3 km → nearest 50 m
-const DISTANCE_QUANTUM_LONG = 250; // ≥ 3 km → nearest 250 m
+const DISTANCE_QUANTUM_SHORT = 50;
+const DISTANCE_QUANTUM_LONG = 250;
 const DISTANCE_LONG_THRESHOLD = 3000;
-const TIME_QUANTUM = 15; // seconds
+const TIME_QUANTUM = 15;
 
 type CanonicalComponent =
   | { kind: "distance"; meters: number }
@@ -62,29 +39,18 @@ const isDistanceUnit = (unit: IntervalComponent["unit"]) => unit === "m" || unit
 
 const quantize = (value: number, quantum: number) => Math.round(value / quantum) * quantum;
 
-/** Snap a measured distance to a named venue, or null if none applies. */
 const snapToVenue = (meters: number, venue: VenueContext | undefined) => {
   for (const v of SIGNATURE_VENUES) {
     const within = Math.abs(meters - v.meters) / v.meters <= VENUE_SNAP_TOLERANCE;
     if (!within) continue;
-    // GPS is a two-way gate. Confirmed → snap outright (even a round value).
     if (venue?.confirmedTokens.includes(v.token)) return { token: v.token, meters: v.meters };
-    // GPS present but this venue not confirmed → veto: the athlete was elsewhere
-    // (e.g. a 1500 m track rep whose length happens to sit inside NG's window).
     if (venue?.hasGps) continue;
-    // No GPS to judge with → distance-only heuristic: a non-round measured value
-    // (1509 m) implies a real loop, not a clean prescription.
     if (Math.round(meters) % DISTANCE_QUANTUM_SHORT !== 0)
       return { token: v.token, meters: v.meters };
   }
   return null;
 };
 
-/**
- * Drop → snap → quantize. Produces the canonical component list a signature and
- * structure name are rendered from. Zero/negative values (custom/placeholder
- * segments) are dropped so they can't pollute the signature.
- */
 export const canonicalizeComponents = (
   components: IntervalComponent[],
   venue?: VenueContext,
@@ -120,9 +86,6 @@ const renderPart = (c: CanonicalComponent): string => {
   }
 };
 
-// Sort key: distance-like parts (distances + venue tokens) first, ordered by
-// metres; time parts after, ordered by seconds. Deterministic so equivalent
-// workouts always render an identical signature.
 const partSortKey = (c: CanonicalComponent): [number, number] => {
   if (c.kind === "time") return [1, c.seconds];
   return [0, c.meters];

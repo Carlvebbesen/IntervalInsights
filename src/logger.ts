@@ -2,12 +2,6 @@ import { context } from "@opentelemetry/api";
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import pino from "pino";
 
-// `@opentelemetry/instrumentation-pino` doesn't activate under Bun (its
-// require-in-the-middle hook isn't honored by Bun's loader), so we forward
-// Pino records to the OTel LoggerProvider ourselves. The destination writes
-// each line to stdout AND emits an OTel LogRecord — trace_id/span_id are
-// picked up from the active context, so Grafana trace↔logs correlation works.
-
 const SEVERITY: Record<string, { text: string; number: SeverityNumber }> = {
   trace: { text: "TRACE", number: SeverityNumber.TRACE },
   debug: { text: "DEBUG", number: SeverityNumber.DEBUG },
@@ -37,9 +31,7 @@ const destination = {
         attributes,
         context: context.active(),
       });
-    } catch {
-      // Non-JSON or malformed line; skip OTel forwarding but stdout already got it.
-    }
+    } catch {}
   },
 };
 

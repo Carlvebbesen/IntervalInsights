@@ -2,25 +2,7 @@ import { SIGNATURE_VENUES } from "../agent/running_venues";
 import type { LatLng, StreamSet } from "../types/strava/IStream";
 import type { VenueContext } from "./interval_structure_service";
 
-/**
- * GPS venue confirmation (D4 of signature-canonicalization). Resolves which
- * named venues an activity was performed at, from its latlng stream, so the
- * signature layer can snap a distance to that venue's token even when the
- * measured value looks like a clean prescription.
- *
- * This is a CONFIRMING signal only — it never forces a snap on its own. The
- * signature layer still requires the distance to be within the venue's
- * tolerance, so a coincidental pass through a geofence can't mislabel a
- * differently-sized rep (e.g. an outdoor 400 m track rep at Bislett is far
- * outside the 546.5 m tolerance and stays 400 m regardless of GPS).
- */
-
 const SAMPLE_LIMIT = 200;
-// Fraction of sampled GPS points that must fall inside a venue's geofence for it
-// to count as "performed here". Lenient on purpose: a whole-activity track also
-// covers warmup/cooldown running to and from the venue, so a real session sits
-// well below 50% inside — and a false negative now under-snaps a genuine venue
-// visit (the token is vetoed), which is worse than the bounded false positive.
 const MIN_INSIDE_FRACTION = 0.3;
 
 const toRad = (deg: number) => (deg * Math.PI) / 180;

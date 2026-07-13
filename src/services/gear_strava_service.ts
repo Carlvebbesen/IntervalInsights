@@ -14,7 +14,6 @@ import { stravaApiService } from "./strava_api_service";
 
 type Db = IGlobalBindings["db"];
 
-/** Curated shoe brands offered in the create form (free-text "Other" still allowed). */
 export const KNOWN_SHOE_BRANDS = [
   "Nike",
   "Adidas",
@@ -41,7 +40,6 @@ export const KNOWN_SHOE_BRANDS = [
   "Karhu",
 ] as const;
 
-/** Curated road/gravel/MTB brands offered in the create form (free-text "Other" still allowed). */
 export const KNOWN_BIKE_BRANDS = [
   "Trek",
   "Specialized",
@@ -73,7 +71,6 @@ export const KNOWN_BIKE_BRANDS = [
   "Argon 18",
 ] as const;
 
-/** Curated cross-country ski brands offered in the create form (free-text "Other" still allowed). */
 export const KNOWN_XC_SKI_BRANDS = [
   "Fischer",
   "Atomic",
@@ -87,7 +84,6 @@ export const KNOWN_XC_SKI_BRANDS = [
   "One Way",
 ] as const;
 
-/** Curated brand list per gear type, served by `GET /gear/brands?gearType=`. */
 export function brandsForGearType(gearType: GearType): readonly string[] {
   switch (gearType) {
     case "BICYCLE":
@@ -99,8 +95,6 @@ export function brandsForGearType(gearType: GearType): readonly string[] {
   }
 }
 
-/** Split a Strava gear name into a known brand + model (longest brand prefix
- * wins), matching against the brand list for the gear type. */
 export function parseBrandModel(
   name: string | null | undefined,
   brands: readonly string[] = KNOWN_SHOE_BRANDS,
@@ -123,7 +117,6 @@ export function parseBrandModel(
   return { brand: null, model: trimmed };
 }
 
-/** Per-gear-type brand list + model fallback for `parseBrandModel`. */
 function brandParseOptions(gearType: GearType): {
   brands: readonly string[];
   fallbackModel: string;
@@ -134,8 +127,6 @@ function brandParseOptions(gearType: GearType): {
   };
 }
 
-/** Seed a bike's surface from Strava's `frame_type` (1=MTB, 2=cyclocross,
- * 3=road, 4=TT, 5=gravel); cyclocross/gravel both map to GRAVEL, else ROAD. */
 export function surfaceFromFrameType(frameType: number | undefined): GearSurface {
   switch (frameType) {
     case 1:
@@ -154,14 +145,6 @@ export interface GearSyncResult {
   linked: number;
 }
 
-/**
- * Import/refresh a single user's shoes AND bikes from Strava and link their
- * activities. Source of truth for both the in-app "Sync from Strava" button and
- * the all-users backfill script. New gear is created with a Strava-distance
- * baseline anchored at now (so existing activities, already inside that number,
- * aren't double-counted); existing gear is resynced (baseline refreshed +
- * post-baseline total recomputed). Skis have no Strava gear (manual only).
- */
 export async function syncUserGearFromStrava(
   db: Db,
   userId: string,
@@ -179,7 +162,6 @@ export async function syncUserGearFromStrava(
   };
   const gearData = new Map<string, StravaGearData>();
 
-  // 1. The athlete profile carries the complete shoe + bike list (incl. unused).
   try {
     const athlete = await stravaApiService.getAthlete(accessToken);
     for (const s of athlete.shoes ?? []) {
@@ -208,9 +190,6 @@ export async function syncUserGearFromStrava(
     );
   }
 
-  // 2. Supplement with gear referenced by the user's shoe/bike activities
-  //    (catches retired gear the profile omits): infer each gear's type from the
-  //    activity sport type and tally road/trail votes for shoe surface.
   const actRows = await db
     .select({ stravaGearId: activities.gearId, sportType: activities.sportType })
     .from(activities)
@@ -350,12 +329,6 @@ async function importGearFromStrava(
   });
 }
 
-/**
- * On Strava ingest, resolve (lazy-importing if needed) the local gear for an
- * activity's Strava gear id and assign it. A newly-imported gear's baseline is
- * anchored at the triggering activity's date, so that activity — already inside
- * Strava's distance snapshot — isn't double-counted; later activities add normally.
- */
 export async function linkActivityGearOnIngest(
   db: Db,
   userId: string,
@@ -378,13 +351,6 @@ export async function linkActivityGearOnIngest(
   await gearRepo.assignActivityToGear(db, userId, activityId, gear.id);
 }
 
-/**
- * A Strava `update` webhook changed the activity's gear: re-resolve the local
- * gear (lazy-importing like ingest), refresh a known gear's attributes from
- * Strava, and move the activity onto it via assignActivityToGear (which keeps
- * both gears' counters correct). Null clears the link. Returns whether the
- * re-link was applied — false only when a lazy import failed.
- */
 export async function relinkActivityGearFromStrava(
   db: Db,
   userId: string,

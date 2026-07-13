@@ -30,9 +30,6 @@ export async function getTrainingSummary(
   userId: string,
   localDate?: string,
 ): Promise<z.infer<typeof TrainingSummaryResponseSchema>> {
-  // `activitiesOnDate` matches against `startDateLocal`, so "today" must be the
-  // athlete's local calendar date. Fall back to the server's UTC date only when
-  // the client doesn't supply one.
   const today = localDate ?? toISODate(new Date());
   const [summary, todayRows] = await Promise.all([
     fetchTrainingSummary(userId),

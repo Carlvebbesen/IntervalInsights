@@ -178,12 +178,6 @@ export function recomputeSegmentStats(
   }));
 }
 
-/**
- * True when the boundaries' work count (`type === "INTERVALS"`) matches the total
- * work-step count of `userSets`. Empty `userSets` ⇒ true (nothing to enforce).
- * Used to detect when stale proposal boundaries diverge from the (possibly
- * notes-reconciled) user shape, so labels aren't mapped onto the wrong rep count.
- */
 export function boundariesMatchUserShape(
   boundaries: SegmentBoundary[],
   userSets: ExpandedIntervalSet[],

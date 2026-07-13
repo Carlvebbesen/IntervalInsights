@@ -5,12 +5,7 @@ import { userRoleEnum } from "./enums";
 
 export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
-  // Legacy Clerk identity key, nullable during the dual-auth window (Better
-  // Auth users never get one). Dropped in Phase 6.
   clerkId: text("clerk_id").unique(),
-  // Better Auth core columns. email/name stay nullable until the Phase 3
-  // backfill lands and the Phase 6 cutover tightens them — Better Auth's own
-  // sign-in path always supplies both, so the looser DB constraint is safe.
   email: text("email").unique(),
   emailVerified: boolean("email_verified").notNull().default(false),
   name: text("name"),

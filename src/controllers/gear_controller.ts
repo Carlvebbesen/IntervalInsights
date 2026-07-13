@@ -25,7 +25,6 @@ type UpdateGearInput = z.infer<typeof UpdateGearSchema>;
 
 const BUCKETS: TrainingBucket[] = ["EASY", "LONG", "INTERVALS", "RACE"];
 
-/** Set/clear the (bucket, surface) defaults for a gear from the create/edit toggles. */
 async function applyDefaultToggles(
   db: Db,
   userId: string,
@@ -58,7 +57,6 @@ async function applyDefaultToggles(
   }
 }
 
-/** Build a full GearDto (with default flags + per-type counts) for one gear. */
 async function buildGearDto(db: Db, userId: string, gearId: number): Promise<GearDto> {
   const gear = await gearRepo.findByIdForUser(db, userId, gearId);
   if (!gear) throw new AppError(404, "Gear not found");
@@ -157,12 +155,10 @@ export async function updateGear(
 
   const newSurface = input.surface ?? existing.surface;
   if (input.isActive === false) {
-    // Retired gear can't be a default anywhere.
     await gearRepo.clearDefaultsForGear(db, userId, id);
     await gearRepo.clearSignatureDefaultsForGear(db, userId, id);
   } else {
     if (input.surface && input.surface !== existing.surface) {
-      // Defaults are surface-keyed; drop stale-surface entries before re-applying.
       await gearRepo.clearDefaultsForGear(db, userId, id);
     }
     await applyDefaultToggles(db, userId, id, existing.gearType, newSurface, input);

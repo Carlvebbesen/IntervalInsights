@@ -14,8 +14,6 @@ const mcpRouter = new Hono<TMcpEnv>();
 
 const RESOURCE_URL = new URL("/mcp", config.APP_BASE_URL).toString();
 
-// Public OAuth discovery documents (RFC 9728 + RFC 8414). MCP clients fetch
-// these unauthenticated to learn where to authenticate (Clerk).
 mcpRouter.get("/.well-known/oauth-protected-resource/mcp", (c) =>
   c.json(
     generateClerkProtectedResourceMetadata({
@@ -28,9 +26,6 @@ mcpRouter.get("/.well-known/oauth-protected-resource/mcp", (c) =>
   ),
 );
 
-// Proxied from Clerk per request otherwise: cache it so an unauthenticated
-// caller can't use us as an outbound-fetch amplifier, and a Clerk hiccup
-// doesn't 500 the discovery flow.
 const AS_METADATA_TTL_MS = 5 * 60_000;
 let asMetadataCache: { at: number; value: Record<string, unknown> } | null = null;
 
@@ -49,8 +44,6 @@ mcpRouter.get("/.well-known/oauth-authorization-server", async (c) => {
   }
 });
 
-// The MCP endpoint itself: outside the `/api/*` session-auth chain, so it injects
-// its own db handle and verifies OAuth tokens instead of Clerk session tokens.
 mcpRouter.use("/mcp", async (c, next) => {
   c.env.db = db;
   await next();
@@ -66,9 +59,6 @@ mcpRouter.post("/mcp", async (c) => {
   return response ?? c.body(null, 202);
 });
 
-// Stateless server: a GET would open a standalone SSE stream (plus keepalive
-// timer) that a per-request server can never push to — one dead connection per
-// call. DELETE (session termination) is meaningless without sessions.
 mcpRouter.all("/mcp", (c) => c.json({ error: "Method not allowed" }, 405));
 
 export default mcpRouter;

@@ -13,9 +13,6 @@ import { generateCompleteIntervalSet } from "../../services/utils";
 import type { ExpandedIntervalSet } from "../../types/ExpandedIntervalSet";
 import type { AnalysisState } from "../graph_state";
 
-// The resume payload is validated at the HTTP boundary (POST /agents/resume-analysis),
-// but `interrupt()` returns `unknown`, so re-validate here rather than trusting a cast —
-// a malformed/corrupted checkpoint payload should fail loudly, not corrupt the run.
 const resumePayloadSchema = z.object({
   notes: z.string().optional(),
   sets: z.array(ExpandedIntervalSetSchema).optional(),
@@ -64,17 +61,8 @@ export async function awaitUserInput(state: AnalysisState): Promise<Partial<Anal
 
   const confirmedTrainingType = userInput.trainingType ?? null;
 
-  // Notes beat title/description (newer + deliberate): if the resume-time notes
-  // declare a structure ("only did 8 of 10"), rebuild userSets toward them,
-  // carrying the previously-proposed paces over positionally. Generic/empty notes
-  // fail the prefilter inside extractDeclaredStructure and cost no LLM call. Any
-  // failure keeps the user's original sets.
   let structureSource: "model" | "text" | "notes" = state.structureSource ?? "model";
   try {
-    // Try the deterministic "N of M" completion first (free, no LLM): the notes
-    // name no distances/durations, so the parse agent correctly returns nothing —
-    // "8 av 10" refers to the EXISTING structure. Only fall through to the parse
-    // path when the notes declare a NEW structure.
     const partial = applyPartialCompletion(userInput.notes, userSets);
     if (partial) {
       const prevWorkSteps = userSets.reduce((n, s) => n + s.steps.length, 0);

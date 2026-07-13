@@ -99,12 +99,6 @@ The leading number in a title is the rep COUNT, never the duration. "6x6min" = 6
 | 15x90/30s | 90s | SHORT_INTERVALS |
 `;
 
-/**
- * Sport-aware framing (D7). Runs get the original pace-based prompt verbatim
- * (empty block). Rides/skis get a block telling the model their intervals are
- * power/HR/speed-based, not pace-based — the trainingType taxonomy is unchanged
- * and applies to all three sports.
- */
 function sportContextBlock(type: string): string {
   if (!isPowerSport(type)) return "";
   return `
@@ -136,25 +130,6 @@ function formatIntervalsIcuBlock(prediction: IntervalsIcuPrediction | null | und
   return `\n  ### INTERVALS.ICU PREDICTION (treat as a strong hint, not ground truth)\n  ${tableBlock}\n`;
 }
 
-/**
- * Deterministic guardrail: reconcile SHORT_INTERVALS vs LONG_INTERVALS against the
- * model's OWN extracted structure. gpt-4o-mini reliably parses the per-rep value
- * into `work_value` but occasionally flips the gate inequality (observed: "7x4min
- * = 240s each; 240 < 120 -> SHORT"). A rep >= 120 s OR >= 800 m makes it LONG;
- * all reps shorter make it SHORT. Only touches the two interval subtypes.
- */
-/**
- * Deterministic guardrail: collapse the Cartesian rep-count blowup. When the
- * per-rep lap evidence lists N reps of slightly varying measured size, gpt-4o-mini
- * sometimes emits N steps that EACH carry reps:N (observed: "10x1000m" → 9 steps ×
- * reps 9 = 81; "Treadmill" → 14 × 14 = 196), inflating the rep count N→N². The
- * signature is unmistakable and effectively never legitimate for N ≥ 3: a set whose
- * steps are all the same work_type and all carry the SAME reps value R equal to the
- * step count. Collapse it to a single step of reps:R sized at the MEDIAN measured
- * value (median, not min/max, so a single under/over-measured rep can't flip the
- * SHORT/LONG gate). Runs before reconcileIntervalSubtype so the gate sees the fixed
- * structure. A genuine sequence ("3,2,1 km") has reps:1 per step and is untouched.
- */
 export function reconcileSetsBlowup(
   sets: z.infer<typeof workoutSet>[],
 ): z.infer<typeof workoutSet>[] {

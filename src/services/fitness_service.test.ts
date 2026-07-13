@@ -4,10 +4,6 @@ import { classifyHrv, computeHrvAssessment } from "./fitness_service";
 
 const DAY_MS = 86_400_000;
 
-/**
- * Build a dateStr → hrv map ending at `targetDate`, oldest first. `null` entries
- * are skipped (missing nights). The last element lands on `targetDate`.
- */
 function seriesEndingAt(targetDate: string, dailyHrv: (number | null)[]): Map<string, number> {
   const map = new Map<string, number>();
   const target = new Date(`${targetDate}T00:00:00Z`).getTime();
@@ -22,9 +18,6 @@ function seriesEndingAt(targetDate: string, dailyHrv: (number | null)[]): Map<st
 }
 
 describe("classifyHrv (Garmin per-day rule: 7d-avg inside band = balanced, outside = unbalanced)", () => {
-  // Real Garmin "Daily Totals" data supplied by the user. Each row is the
-  // 7-day average, the displayed baseline band, and the dot colour Garmin drew.
-  // (May 3 omitted — Garmin had no data that day.)
   const garminRows: Array<{
     date: string;
     avg: number;
@@ -73,9 +66,6 @@ describe("classifyHrv (Garmin per-day rule: 7d-avg inside band = balanced, outsi
   }
 
   test("nightly value and 7-day average classify independently against the same band", () => {
-    // The "both" chart: the smooth 7-day average can be balanced while a single
-    // noisy night sits outside the band (→ orange nightly dot). Same classifier,
-    // different inputs.
     const band: IHrvBaseline = { mean: 75, lowerBalanced: 60, upperBalanced: 90 };
     const sevenDayAvg = 74;
     const noisyNight = 45;
@@ -96,15 +86,14 @@ describe("computeHrvAssessment (baseline must be slow-moving so dips surface)", 
   const TARGET = "2026-05-28";
 
   test("insufficient history → status & baseline null", () => {
-    const series = seriesEndingAt(TARGET, [70, 72, 68, 74, 71]); // only 5 days
+    const series = seriesEndingAt(TARGET, [70, 72, 68, 74, 71]);
     const a = computeHrvAssessment(series, TARGET);
     expect(a.status).toBeNull();
     expect(a.baseline).toBeNull();
-    expect(a.rollingAvg).not.toBeNull(); // still averages the recent window
+    expect(a.rollingAvg).not.toBeNull();
   });
 
   test("recent average inside a stable band → balanced", () => {
-    // 90 days oscillating 85/91 (mean ~88), recent week stays in range.
     const daily = Array.from({ length: 90 }, (_, i) => (i % 2 === 0 ? 85 : 91));
     const a = computeHrvAssessment(seriesEndingAt(TARGET, daily), TARGET);
     expect(a.status).toBe("balanced");
@@ -112,9 +101,6 @@ describe("computeHrvAssessment (baseline must be slow-moving so dips surface)", 
   });
 
   test("declining HRV (high baseline, recent drop) → unbalanced — the all-green bug", () => {
-    // 83 days at 95, then a 7-day drop to 68. The slow baseline stays high, so
-    // the recent average falls below it. A short/recency-hugging baseline would
-    // have tracked the drop and wrongly stayed balanced.
     const daily = [...Array(83).fill(95), ...Array(7).fill(68)];
     const a = computeHrvAssessment(seriesEndingAt(TARGET, daily), TARGET);
     expect(a.status).toBe("unbalanced");
@@ -130,8 +116,8 @@ describe("computeHrvAssessment (baseline must be slow-moving so dips surface)", 
   });
 
   test("baseline never emits 'low' per-day (only balanced/unbalanced/null)", () => {
-    const daily = [...Array(83).fill(95), ...Array(7).fill(40)]; // deep drop
+    const daily = [...Array(83).fill(95), ...Array(7).fill(40)];
     const a = computeHrvAssessment(seriesEndingAt(TARGET, daily), TARGET);
-    expect(a.status).toBe("unbalanced"); // not "low"
+    expect(a.status).toBe("unbalanced");
   });
 });

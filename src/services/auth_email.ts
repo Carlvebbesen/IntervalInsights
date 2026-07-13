@@ -4,7 +4,6 @@ import { logger } from "../logger";
 
 const OTP_TTL_MINUTES = 10;
 
-// Interval Insights brand palette (source of truth: app lib/common/utils/app_theme.dart)
 const NAVY = "#0f0a51";
 const ACCENT = "#98d2eb";
 const BACKGROUND = "#F1F5F9";
@@ -49,11 +48,6 @@ function otpEmailHtml(otp: string): string {
 </html>`;
 }
 
-/**
- * Deliver the sign-in OTP via Resend. Outside production the email is not sent —
- * the code is logged instead so local flows can be exercised without a real
- * Resend key (and without spamming real inboxes from dev machines).
- */
 export async function sendSignInOtpEmail(email: string, otp: string): Promise<void> {
   if (config.NODE_ENV !== "production") {
     logger.info({ email, otp }, "sign-in OTP (dev mode — email not sent)");

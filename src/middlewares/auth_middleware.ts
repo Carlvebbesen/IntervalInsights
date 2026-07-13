@@ -19,7 +19,6 @@ const tagSpanWithUser = ({ userId, clerkUserId, role }: AuthIdentity, provider: 
   span?.setAttribute("user.id", userId);
   if (clerkUserId) span?.setAttribute("clerk.user.id", clerkUserId);
   span?.setAttribute("user.role", role);
-  // Tracks the Clerk → Better Auth traffic shift; drives the Phase 6 cutover call.
   span?.setAttribute("auth.provider", provider);
 };
 
@@ -50,21 +49,12 @@ const finishAuth = async (
   await next();
 };
 
-/**
- * Fetch email + display name from Clerk for the dual-auth identity bridge.
- * Failures degrade to a null identity (the request must not fail because Clerk's
- * management API hiccuped); the Phase 3 backfill re-runs cover any row this
- * leaves email-less.
- */
 const fetchClerkIdentity = async (
   c: Context<TGlobalEnv>,
   clerkUserId: string,
 ): Promise<{ email: string | null; name: string | null }> => {
   try {
     const clerkUser = await clerkClient.users.getUser(clerkUserId);
-    // Only verified addresses may become the Better Auth identity key — an
-    // unverified address would let this Clerk account capture someone else's
-    // future OTP sign-in (email is the match key, and we stamp emailVerified).
     const isVerified = (a?: { verification?: { status?: string } | null } | null) =>
       a?.verification?.status === "verified";
     const primary = clerkUser.primaryEmailAddress;
@@ -83,19 +73,9 @@ const fetchClerkIdentity = async (
   }
 };
 
-/**
- * Dual-auth guard (App Store review window): a Better Auth bearer token and a
- * legacy Clerk session token both resolve to the same `users` row. The Better
- * Auth path is tried first — `session.user` IS the app users row (every app
- * column is an additionalField), so no extra user query is needed. The Clerk
- * fallback keeps the lazy-create, enriched with email/name from Clerk so rows
- * created during the dual window can later be matched by Better Auth email
- * sign-in (the dual-window identity gap).
- */
 export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
   const baSession = await auth.api.getSession({ headers: c.req.raw.headers });
   if (baSession) {
-    // Structurally the full users row — see src/auth.ts additionalFields.
     const sessionUser = baSession.user as unknown as SelectUser;
     const dbUser = await bumpLastSeen(c, sessionUser);
     return finishAuth(c, next, dbUser, "better-auth");
@@ -112,10 +92,6 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
 
   if (!dbUser) {
     const { email, name } = await fetchClerkIdentity(c, clerkAuth.userId);
-    // onConflictDoNothing covers both a concurrent-create race on clerkId and
-    // the email already belonging to another row (e.g. deleted account
-    // re-registered via Better Auth OTP while an old Clerk session lives on) —
-    // an unguarded insert would 500 every request from that session forever.
     const [newUser] = await c.env.db
       .insert(users)
       .values({
@@ -136,8 +112,6 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
       });
     }
     if (!dbUser) {
-      // The conflict was on email, not clerkId: create the row without the
-      // email; the pre-cutover duplicate-email sanity check reconciles it.
       c.var.logger.warn(
         { clerkUserId: clerkAuth.userId, email },
         "Email already owned by another user — creating row without email",
@@ -166,7 +140,6 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
               emailVerified: true,
             })) ?? dbUser;
         } catch (err) {
-          // Unique-email collision belongs to the pre-cutover sanity check, not here.
           c.var.logger.warn({ err, userId: dbUser.id }, "Email enrichment failed — continuing");
         }
       }

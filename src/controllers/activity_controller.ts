@@ -58,21 +58,12 @@ export async function listActivities(
   };
 }
 
-/** Resolve the gear summary for an activity's localGearId (works for retired gear). */
 async function resolveGearSummary(db: Db, userId: string, localGearId: number | null) {
   if (localGearId == null) return null;
   const summary = (await gearRepo.findSummariesByIds(db, userId, [localGearId])).get(localGearId);
   return summary ? toGearSummaryDto(summary) : null;
 }
 
-/**
- * Resolve the local gear id for an activity, self-healing the link on demand.
- * A local link always wins. Otherwise, if the activity still carries a Strava
- * gear id, link the matching local gear — importing it from Strava the first
- * time it's seen — so the detail page shows the right shoe even for activities
- * ingested before the local-gear feature. Best-effort: any failure (e.g. Strava
- * not linked) leaves the activity unlinked rather than failing the request.
- */
 async function resolveActivityGearId(
   db: Db,
   userId: string,
@@ -89,14 +80,12 @@ async function resolveActivityGearId(
   const stravaGearId = activity.gearId;
   if (!stravaGearId) return null;
 
-  // Already imported locally → just link this activity (no Strava call needed).
   const existing = await gearRepo.findByStravaGearId(db, userId, stravaGearId);
   if (existing) {
     await gearRepo.assignActivityToGear(db, userId, activity.id, existing.id);
     return existing.id;
   }
 
-  // Not local yet → import from Strava (needs a token), then link.
   try {
     const { access_token } = await getStravaAccessTokens(userId);
     await linkActivityGearOnIngest(db, userId, access_token, activity.id, {
@@ -125,7 +114,6 @@ export async function getActivityDetail(
     eventRepo.listForActivity(db, activityId),
   ]);
 
-  // Backfill intervals.icu enrichment lazily, off the request path.
   if (!activity.intervalsIcuId || !activity.intervalsIcuEnrichedAt) {
     runInBackground(
       "intervals.enrichActivity",
@@ -143,8 +131,6 @@ export async function getActivityDetail(
 export async function getSegments(db: Db, userId: string, activityId: number) {
   await activityRepo.requireOwnedActivity(db, userId, activityId);
 
-  // GDPR: gate HR the same way GET /:id/streams does. Without consent, drop
-  // "heartrate" from the re-derive fetch and null it on the returned segments.
   const consent = await userHasHeartRateConsent(db, userId);
   const segments = await getSegmentsForActivity(db, userId, activityId, consent);
   if (!consent) {
@@ -185,7 +171,6 @@ export async function updateMetadata(
   return toActivityDto(updated, undefined, gear);
 }
 
-/** Assign (or clear, with gearId=null) the local gear on an activity. */
 export async function assignGear(
   db: Db,
   userId: string,

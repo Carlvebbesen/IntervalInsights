@@ -3,22 +3,11 @@ import type { IIntervalsActivity, IIntervalsInterval } from "../types/intervals/
 import type { Lap } from "../types/strava/IDetailedActivity";
 import type { LatLng, StreamSet } from "../types/strava/IStream";
 
-// intervals.icu returns start_date_local as naïve local time (no `Z`). We store
-// local times as UTC instants, so parse the naïve string as UTC.
 function parseIntervalsLocalStart(value: string): Date {
   const normalized = value.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`;
   return new Date(normalized);
 }
 
-/**
- * intervals.icu Activity → DB row, the intervals-only counterpart to
- * strava_mappers.getDbInsertActivity. Used by the master-sync path to create
- * local rows for activities that have no Strava source. `stravaActivityId` is
- * null (these never came from Strava); `intervalsIcuId` carries the link.
- * `intervalsStravaId` records intervals.icu's reported Strava id (if any) so the
- * Strava ingest paths can later dedupe against this row.
- * Enrichment metrics are layered on separately via buildEnrichment.
- */
 export function mapIntervalsActivityToInsert(
   activity: IIntervalsActivity,
   userId: string,
@@ -44,25 +33,12 @@ export function mapIntervalsActivityToInsert(
   };
 }
 
-/**
- * intervals.icu DTO → internal (Strava-shaped) mappers. The pipeline's canonical
- * stream/laps shapes are the Strava `StreamSet` and `Lap`; these adapters let
- * intervals.icu be a drop-in source. Pure functions — also used by the
- * master-sync path.
- */
-
 type IntervalsStream = { type?: unknown; data?: unknown; data2?: unknown };
 
 function asNumberArray(data: unknown): number[] | null {
   return Array.isArray(data) ? (data as number[]) : null;
 }
 
-/**
- * intervals.icu splits its GPS `latlng` stream into two parallel arrays —
- * `data` (latitudes) and `data2` (longitudes) — unlike Strava, which returns
- * `[lat, lng]` tuples. Zip them back into the StreamSet's tuple shape. Falls
- * back to reading tuples directly in case a source ever returns them that way.
- */
 function toLatLngStream(entry: IntervalsStream): { data: LatLng[] } | null {
   const lat = asNumberArray(entry.data);
   const lng = asNumberArray(entry.data2);
@@ -81,14 +57,6 @@ function toLatLngStream(entry: IntervalsStream): { data: LatLng[] } | null {
   return null;
 }
 
-/**
- * Map intervals.icu's `[{ type, data }]` stream array onto the internal
- * StreamSet. intervals.icu's `type` keys mirror Strava's, so `velocity_smooth`,
- * `heartrate`, `watts`, `distance`, `altitude`, `cadence`, `time` map straight
- * across. `latlng` is special — intervals.icu splits it into `data` (lat) +
- * `data2` (lng), zipped back to tuples by toLatLngStream. Types absent for an
- * activity are simply left undefined.
- */
 export function mapIntervalsStreamsToStreamSet(raw: unknown): StreamSet {
   const out: StreamSet = {};
   if (!Array.isArray(raw)) return out;
@@ -131,11 +99,6 @@ export function mapIntervalsStreamsToStreamSet(raw: unknown): StreamSet {
   return out;
 }
 
-/**
- * intervals.icu's /activity/{id}/intervals returns a wrapper object
- * (e.g. { icu_intervals: [...] }) rather than a bare array. Pull out the
- * interval list defensively so a shape change can't crash the caller.
- */
 export function extractIntervalsList(raw: unknown): IIntervalsInterval[] {
   if (Array.isArray(raw)) return raw as IIntervalsInterval[];
   if (raw && typeof raw === "object") {
@@ -146,14 +109,6 @@ export function extractIntervalsList(raw: unknown): IIntervalsInterval[] {
   return [];
 }
 
-/**
- * Map intervals.icu intervals onto the internal `Lap` shape that
- * `lap_derivation_service` consumes. Only the fields that code actually reads
- * are populated meaningfully (`distance`, `moving_time`, `elapsed_time`,
- * `average_speed`, `start_index`, `end_index`, HR); the rest are filled with
- * neutral defaults. `average_speed` falls back to distance/time when
- * intervals.icu omits it, so lap matching still works.
- */
 export function mapIntervalsToLaps(intervals: IIntervalsInterval[]): Lap[] {
   return intervals.map((iv, idx) => {
     const movingTime = iv.moving_time ?? 0;
@@ -186,7 +141,6 @@ export function mapIntervalsToLaps(intervals: IIntervalsInterval[]): Lap[] {
   });
 }
 
-/** Convenience: raw intervals wrapper → internal `Lap[]` in one call. */
 export function mapIntervalsRawToLaps(raw: unknown): Lap[] {
   return mapIntervalsToLaps(extractIntervalsList(raw));
 }

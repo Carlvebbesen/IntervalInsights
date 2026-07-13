@@ -50,7 +50,6 @@ const createEventSchema = z.object({
   eventType: z.enum(eventTypeEnum.enumValues),
   bodyLocation: z.string().min(1).nullable().optional(),
   description: z.string().min(1),
-  // ISO-8601 timestamp. Defaults to the activity's start date when omitted.
   startTime: z.string().datetime().optional(),
   status: z.enum(eventStatusEnum.enumValues).optional(),
 });

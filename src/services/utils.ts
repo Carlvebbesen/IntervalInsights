@@ -5,7 +5,6 @@ import type { LLMActivitySummary } from "../types/LLMActivitySummary";
 import type { Lap } from "../types/strava/IDetailedActivity";
 import type { ActivityDataPoint, StreamSet } from "../types/strava/IStream";
 
-/** Canonical Strava camelCase sport types we import AND analyze (D6). */
 export const ANALYZED_SPORT_TYPES = new Set<string>([
   "Run",
   "TrailRun",
@@ -26,10 +25,6 @@ export const ANALYZED_SPORT_TYPES = new Set<string>([
 export function shouldAnalyze(sportType: string): boolean {
   return ANALYZED_SPORT_TYPES.has(sportType);
 }
-// Precedence on resume: an explicit user choice always wins; otherwise the FRESH
-// draft's type (written this run) beats the activities column, which only holds
-// the PREVIOUS completed run's type and would silently shadow a force
-// re-analysis. The column is the legacy fallback for rows without a draft.
 export function resolveResumeTrainingType(
   userType: TrainingType | null,
   draftType: TrainingType | null,
@@ -193,22 +188,13 @@ export function calculateSegmentStats(
     timeSeriesEndTime: streamSet.time.data[endIdx],
   };
 }
-// ─── Activity Conversion Helpers ─────────────────────────────────────────────
 
-/** Sport types where distance is measured in time (not metres) and needs conversion */
 const TIME_BASED_SPORT_TYPES: string[] = ["Elliptical"];
 
-/**
- * Converts elliptical moving time (seconds) to an equivalent distance in metres.
- * Conversion: 30 min (1800 s) = 5 km (5000 m)
- */
 export function ellipticalTimeToMetres(movingTimeSeconds: number): number {
   return (movingTimeSeconds / 1800) * 5000;
 }
 
-/**
- * Returns whether a sport type should use time-based distance conversion.
- */
 export function isTimeBased(sportType: string): boolean {
   return TIME_BASED_SPORT_TYPES.includes(sportType);
 }

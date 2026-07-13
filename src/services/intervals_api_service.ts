@@ -12,17 +12,9 @@ import type { IIntervalsWellness } from "../types/intervals/IIntervalsWellness";
 const INTERVALS_BASE_URL = "https://intervals.icu/api/v1";
 const INTERVALS_FETCH_TIMEOUT_MS = 8000;
 
-// Every intervals.icu call leaves the backend from one IP, which intervals.icu
-// caps at 10 req/s. Serialize the *start* of each request to a minimum spacing so
-// bursts — the master backfill's per-activity getActivity loop, or many webhooks
-// firing at once — stay under that ceiling. JS is single-threaded, so the
-// read-and-bump of `nextSlotMs` below is atomic: concurrent callers are handed
-// sequential, non-overlapping slots. Heavy callers are sequential `await` loops,
-// so each holds at most one slot at a time and interactive requests interleave
-// fairly rather than queueing behind a whole backfill.
-const MIN_REQUEST_SPACING_MS = 120; // ~8.3 req/s, headroom under the 10/s IP cap
+const MIN_REQUEST_SPACING_MS = 120;
 const MAX_RATE_LIMIT_RETRIES = 3;
-const MAX_RETRY_AFTER_MS = 6 * 60 * 1000; // beyond this, surface the 429 to the caller
+const MAX_RETRY_AFTER_MS = 6 * 60 * 1000;
 
 let nextSlotMs = 0;
 
@@ -34,8 +26,6 @@ async function acquirePacingSlot(): Promise<void> {
   if (wait > 0) await sleep(wait);
 }
 
-// intervals.icu sends `Retry-After` in whole seconds on a 429. Fall back to
-// exponential backoff (1s, 2s, 4s) when the header is missing or unparseable.
 function rateLimitBackoffMs(response: Response, attempt: number): number {
   const header = response.headers.get("Retry-After");
   const seconds = header ? Number.parseInt(header, 10) : Number.NaN;
@@ -43,8 +33,6 @@ function rateLimitBackoffMs(response: Response, attempt: number): number {
   return 2 ** attempt * 1000;
 }
 
-// intervals.icu stream `type` keys mirror Strava's. This is the full set the
-// analysis pipeline consumes; callers may override with a narrower list.
 export const DEFAULT_INTERVALS_STREAM_TYPES = [
   "time",
   "heartrate",
@@ -64,8 +52,6 @@ async function fetchIntervals<T>(
   const url = new URL(`${INTERVALS_BASE_URL}${endpoint}`);
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
-      // intervals.icu accepts repeated query params (e.g. `curves`); an array
-      // value is appended once per element, a string once.
       for (const v of Array.isArray(value) ? value : [value]) {
         if (v) url.searchParams.append(key, v);
       }
@@ -129,8 +115,6 @@ export const intervalsApiService = {
   },
 
   async getActivityIntervals(accessToken: string, activityId: string) {
-    // intervals.icu returns a wrapper object (e.g. { icu_intervals: [...], ... })
-    // here, not a bare array — caller must normalize.
     return fetchIntervals<unknown>(`/activity/${activityId}/intervals`, accessToken);
   },
 
@@ -139,9 +123,6 @@ export const intervalsApiService = {
     activityId: string,
     types: readonly string[] = DEFAULT_INTERVALS_STREAM_TYPES,
   ) {
-    // intervals.icu returns an array of { type, data } stream objects — caller
-    // must normalize into the internal StreamSet shape. Types absent for a
-    // given activity are simply omitted from the response array.
     return fetchIntervals<unknown>(`/activity/${activityId}/streams`, accessToken, {
       types: types.join(","),
     });
@@ -161,9 +142,6 @@ export const intervalsApiService = {
     });
   },
 
-  // Best-effort curves (power for cycling, pace/running-power where available)
-  // for the requested `curves` codes (e.g. `s0` = this season, `r.<from>.<to>`
-  // = a custom date range) and activity `type`.
   async getPowerCurves(accessToken: string, curves: string[], type: string) {
     return fetchIntervals<IIntervalsPowerCurve[]>("/athlete/0/power-curves", accessToken, {
       curves,

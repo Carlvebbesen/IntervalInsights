@@ -17,13 +17,6 @@ import { stravaApiService } from "./strava_api_service";
 import { getDbInsertActivity } from "./strava_mappers";
 import { shouldAnalyze } from "./utils";
 
-/**
- * Find the intervals-sourced twin (`stravaActivityId IS NULL`,
- * `intervalsIcuId NOT NULL`) for a Strava activity that isn't linked by exact
- * `intervalsStravaId`. Fuzzy fallback for the device-dual-sync case where
- * intervals.icu never learned this activity's Strava id: exactly one candidate
- * within ±5 min / ±3 % distance merges; zero or ambiguous → no merge (insert).
- */
 async function findFuzzyIntervalsTwin(
   context: IGlobalBindings,
   userId: string,
@@ -80,17 +73,13 @@ async function maybeStartImmediateAnalysis(
 
 export async function processStravaWebhook(body: IStravaWebhookEvent, context: IGlobalBindings) {
   if (body.object_type === "athlete" && body.aspect_type === "update") {
-    // Strava deauthorization event
     const user = await context.db.query.users.findFirst({
       where: (u, { eq }) => eq(u.stravaId, body.owner_id.toString()),
     });
     if (!user) return;
 
-    // Delete all activities (interval_segments cascade via ON DELETE CASCADE)
     await context.db.delete(activities).where(eq(activities.userId, user.id));
 
-    // Keep local gears (source of truth) but zero their derived counters — the
-    // activities backing them are gone; the Strava-snapshot baseline is retained.
     await context.db
       .update(gears)
       .set({ maintainedDistanceMeters: 0, activityCount: 0 })
@@ -107,10 +96,6 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
   if (body.object_type !== "activity") return;
 
   const stravaActivityId = body.object_id;
-  // Strava webhooks are unsigned and the subscription-id check is weak
-  // (low-entropy int). Defense-in-depth: resolve the owner from `owner_id` and
-  // scope every mutation to that user's rows, so a forged event can at worst
-  // touch the forger's own data.
   const user = await context.db.query.users.findFirst({
     where: (u, { eq }) => eq(u.stravaId, body.owner_id.toString()),
   });
@@ -132,7 +117,6 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
       );
     if (!row) return;
     if (row.localGearId != null) {
-      // Detach (decrements the gear's counters) before the row disappears.
       await gearRepo.assignActivityToGear(context.db, row.userId, row.id, null);
     }
     return await context.db.delete(activities).where(eq(activities.id, row.id));
@@ -141,8 +125,6 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
   const accessToken = (await getStravaAccessTokens(user.id)).access_token;
 
   const data = await stravaApiService.getActivity(accessToken, stravaActivityId);
-  // Never trust the payload's owner claim: re-validate against the activity
-  // Strava actually returns for the resolved user's token.
   if (data.athlete?.id !== body.owner_id) {
     logger.warn(
       { stravaActivityId, claimedOwner: body.owner_id, actualOwner: data.athlete?.id },
@@ -182,13 +164,6 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
       );
     }
 
-    // Converge with an existing intervals.icu-sourced row for the same workout
-    // instead of inserting a duplicate. Merge the Strava metadata onto it,
-    // attach the Strava id, and re-arm analysis — intervals enrichment fields
-    // are left untouched (not in the payload). Exact `intervalsStravaId` join
-    // first (intervals.icu reported this Strava id); fall back to a fuzzy
-    // time/distance match for the device-dual-sync case where intervals.icu
-    // never learned the Strava id.
     const exactTwin = await context.db.query.activities.findFirst({
       where: (a, { and, eq, isNull }) =>
         and(
@@ -289,8 +264,6 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
       );
     if (!existing) return;
     await context.db.update(activities).set(activity).where(eq(activities.id, existing.id));
-    // Keep the assigned gear's maintained distance in sync. localGearId is
-    // preserved (the mapper never sets it, so manual assignments survive).
     await gearRepo.adjustForDistanceChange(
       context.db,
       existing.id,
@@ -299,7 +272,6 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
     );
     const newStravaGearId = data.gear_id ?? null;
     if (newStravaGearId !== (existing.gearId ?? null) && activity.startDateLocal) {
-      // The user changed the gear on Strava — re-link and remember the choice.
       const relinked = await relinkActivityGearFromStrava(
         context.db,
         user.id,

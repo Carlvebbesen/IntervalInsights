@@ -119,8 +119,6 @@ export const TrainingSummaryQuerySchema = z.object({
   date: isoDate.optional(),
 });
 
-// ─── Fitness view (flat CTL/ATL/TSB/HRV/sleep series + per-day detail) ─────────
-
 const FitnessPointSchema = z
   .object({
     date: z.string(),
@@ -133,8 +131,6 @@ const FitnessPointSchema = z
     hrv7dAvg: z.number().nullable(),
     hrvStatus: z.enum(["balanced", "unbalanced", "low"]).nullable(),
     hrvNightlyStatus: z.enum(["balanced", "unbalanced", "low"]).nullable(),
-    // Personal baseline band (mean ± 1 SD) for shading the "balanced" zone behind
-    // the HRV line. Null when there's insufficient history for a baseline.
     hrvBaseline: z
       .object({
         mean: z.number(),
@@ -176,9 +172,6 @@ const FitnessDayActivitySchema = z
   })
   .openapi({ ref: "FitnessDayActivity" });
 
-// NOTE: bare object (NOT status-wrapped) — the frontend FitnessDayDetail.fromJson
-// reads date/fitness/activities at the top level. `fitness` is null when
-// intervals.icu isn't linked or has no wellness record for that day.
 export const FitnessDayResponseSchema = z
   .object({
     date: z.string(),
@@ -273,7 +266,6 @@ const PaceAnchorDataSchema = z
   })
   .openapi({ ref: "PaceAnchorData" });
 
-// Optional weather passed as query params on GET /dashboard/pace-anchor.
 export const PaceAnchorQuerySchema = z
   .object({
     temperatureC: z.coerce.number().optional(),
@@ -290,10 +282,6 @@ export const PaceAnchorResponseSchema = z
     z.object({ status: z.literal("not_linked"), data: z.null() }),
   ])
   .openapi({ ref: "PaceAnchorResponse" });
-
-// ─── Heart-rate analysis (POST /api/heart-rate/analysis) ──────────────────────
-// Contract: docs/backend/heart_rate_analysis_contract.md in the app repo. The
-// app sends a partial body (omitted field = no constraint).
 
 export const HeartRateAnalysisRequestSchema = z
   .object({
@@ -342,9 +330,6 @@ export const HrMetricSummarySchema = z
   })
   .openapi({ ref: "HrMetricSummary" });
 
-// NOTE: for status:"ok" the parser reads points/zones/summaries from the TOP
-// LEVEL alongside status — they are NOT nested under a `data` envelope (unlike
-// the wellness/fitness series). `summaries` is keyed by metric api-key.
 export const HeartRateAnalysisResponseSchema = z
   .discriminatedUnion("status", [
     z.object({

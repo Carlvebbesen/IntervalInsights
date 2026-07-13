@@ -16,10 +16,8 @@ import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
 
-/** DAO returned by this repository — the full gear row minus the internal `userId`. */
 export type GearDao = Omit<SelectGear, "userId">;
 
-// Columns returned to callers — never leaks `userId`.
 export const gearColumns = {
   id: gears.id,
   gearType: gears.gearType,
@@ -38,7 +36,6 @@ export const gearColumns = {
   createdAt: gears.createdAt,
 } as const;
 
-// Compact projection for resolving a gear name/badge on an activity.
 export const gearSummaryColumns = {
   id: gears.id,
   brand: gears.brand,
@@ -65,9 +62,6 @@ export interface GearListFilters {
   order?: "asc" | "desc";
 }
 
-/** An assigned activity contributes its distance to a gear's maintained total iff
- * the gear has no baseline (manual) or the activity is dated after it. Compared in
- * JS (both are Date instances) to avoid timestamp-param coercion across the driver. */
 function contributes(baselineDate: Date | null, startDateLocal: Date): boolean {
   return baselineDate === null || startDateLocal > baselineDate;
 }
@@ -157,8 +151,6 @@ export async function update(
   return row;
 }
 
-// ─── Defaults (one gear per (bucket, surface) per user) ─────────────────────────
-
 export function getDefaults(db: Db, userId: string) {
   return db
     .select({
@@ -239,8 +231,6 @@ export async function clearDefaultsForGear(db: Db, userId: string, gearId: numbe
     .where(and(eq(gearDefaults.userId, userId), eq(gearDefaults.gearId, gearId)));
 }
 
-// ─── Per-signature defaults (one gear per (user, interval structure)) ───────────
-
 export function getSignatureDefaults(db: Db, userId: string) {
   return db
     .select({
@@ -291,12 +281,6 @@ export async function clearSignatureDefaultsForGear(
     .where(and(eq(gearSignatureDefaults.userId, userId), eq(gearSignatureDefaults.gearId, gearId)));
 }
 
-// ─── Denormalized distance/count maintenance ────────────────────────────────────
-
-/**
- * Move an activity onto `newGearId` (or off all gear when null), keeping both the
- * old and new gear's `activityCount` + `maintainedDistanceMeters` correct. Atomic.
- */
 export async function assignActivityToGear(
   db: Db,
   userId: string,
@@ -369,7 +353,6 @@ export async function assignActivityToGear(
   });
 }
 
-/** Apply a distance delta to an activity's gear after a Strava `update` webhook. */
 export async function adjustForDistanceChange(
   db: Db,
   activityId: number,
@@ -398,7 +381,6 @@ export async function adjustForDistanceChange(
   });
 }
 
-/** Recompute `activityCount` + `maintainedDistanceMeters` from scratch (reconciliation). */
 export async function recompute(db: Db, gearId: number): Promise<void> {
   const [agg] = await db
     .select({
@@ -417,8 +399,6 @@ export async function recompute(db: Db, gearId: number): Promise<void> {
     .where(eq(gears.id, gearId));
 }
 
-/** Re-snapshot a gear's Strava baseline (distance + date=now) then recompute the
- * post-baseline maintained total — the only correct way to refresh from Strava. */
 export async function resync(db: Db, gearId: number, stravaDistanceMeters: number): Promise<void> {
   await db
     .update(gears)
@@ -427,7 +407,6 @@ export async function resync(db: Db, gearId: number, stravaDistanceMeters: numbe
   await recompute(db, gearId);
 }
 
-/** Link every still-unlinked activity carrying `stravaGearId` to a local gear. Returns linked count. */
 export async function linkActivitiesByStravaGearId(
   db: Db,
   userId: string,
@@ -448,10 +427,6 @@ export async function linkActivitiesByStravaGearId(
   return linked.length;
 }
 
-// ─── Suggestions / stats helpers ────────────────────────────────────────────────
-
-/** Active gears of a type most recently used, most-recent first (for suggestions).
- * A non-null `surface` additionally scopes candidates to that surface. */
 export async function recentGearIdsByGearType(
   db: Db,
   userId: string,
@@ -477,8 +452,6 @@ export async function recentGearIdsByGearType(
   return rows.map((r) => r.gearId).filter((x): x is number => x !== null);
 }
 
-/** Map of the user's active (non-retired) gear ids → gear type — for filtering
- * suggestion candidates to the activity's gear type. */
 export async function activeGearTypeById(db: Db, userId: string): Promise<Map<number, GearType>> {
   const rows = await db
     .select({ id: gears.id, gearType: gears.gearType })
@@ -487,9 +460,6 @@ export async function activeGearTypeById(db: Db, userId: string): Promise<Map<nu
   return new Map(rows.map((r) => [r.id, r.gearType]));
 }
 
-/** Active gears of a type whose `useTypes` contains the training type,
- * most recently used first (never-used ones last, newest-created first).
- * A non-null `surface` additionally scopes candidates to that surface. */
 export async function gearIdsByUseType(
   db: Db,
   userId: string,
@@ -517,7 +487,6 @@ export async function gearIdsByUseType(
   return rows.map((r) => r.id);
 }
 
-/** One row per (gear, trainingType) with a count — for the per-shoe stats chips. */
 export function trainingTypeCountsByGear(db: Db, userId: string) {
   return db
     .select({

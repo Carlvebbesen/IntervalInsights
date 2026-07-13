@@ -30,11 +30,6 @@ export function matchLapsToExpandedSteps(
   let cursor = -1;
   let stepCounter = 0;
 
-  // Effort gate: a real work rep is fast; warmup/recovery laps are slow. This
-  // stops a warmup lap whose distance happens to be near a work target from
-  // being stolen as rep 1 (pyramid case — see [[deterministic-interval-segmentation]]).
-  // If it over-rejects and yields no match, the caller falls back to the
-  // deterministic segmenter, so the gate is safe to apply.
   const maxLapSpeed = Math.max(0, ...laps.map((l) => l.average_speed ?? 0));
   const workSpeedFloor = 0.7 * maxLapSpeed;
 
@@ -50,13 +45,6 @@ export function matchLapsToExpandedSteps(
       for (let i = cursor + 1; i < laps.length; i++) {
         const lap = laps[i];
         const lapVal = targetIsDistance ? lap.distance : lap.moving_time;
-        // The effort gate guards the FIRST match against stealing a warmup lap
-        // whose distance is near a work target (the pyramid case, #510). Later reps
-        // are already disambiguated by the distance/time match (recovery laps don't
-        // match a work target) plus the monotonic cursor, so a strict speed floor
-        // there wrongly drops genuinely-slower work reps when the athlete fades or
-        // one rep is much faster (e.g. 10x1000m — #626). Apply the floor only on the
-        // first step; afterwards require just a positive speed.
         const passesEffort =
           stepCounter === 0 ? lap.average_speed >= workSpeedFloor : lap.average_speed > 0;
         if (Math.abs(lapVal - targetVal) <= tolerance && lap.average_speed > 0 && passesEffort) {
@@ -305,8 +293,6 @@ export async function getSegmentsForActivity(
     .orderBy(asc(intervalSegments.segmentIndex));
 
   if (stored.length > 0) {
-    // Option B: stored rows have normal rests FOLDED into work rows — expand
-    // them back so callers see the same work + REST shape as before.
     const expanded = expandRestSegments(stored);
     log.info({ stored: stored.length, expanded: expanded.length }, "returning stored segments");
     return expanded;

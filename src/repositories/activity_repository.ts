@@ -30,12 +30,10 @@ import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
 
-/** Repository for the `activities` table. The DAO is the full row. */
 export type ActivityDao = SelectActivity;
 
 export const PAGE_SIZE = 15;
 
-// Projection used by the list endpoint.
 const listColumns = {
   id: activities.id,
   title: activities.title,
@@ -80,12 +78,6 @@ export interface ActivityListFilters {
   eventIds?: number[];
 }
 
-/**
- * Join-heavy list query (the repo "exception" for cross-table reads): filters
- * activities by signature (interval_structures) and linked events
- * (activity_events ⋈ events). Returns an empty list when a sub-filter excludes
- * everything, mirroring the original short-circuits.
- */
 export async function listForUser(
   db: Db,
   userId: string,
@@ -151,7 +143,6 @@ export async function listForUser(
     .orderBy(dir(sortCol));
 }
 
-/** Columns the heart-rate analysis endpoint reads per matching activity. */
 const hrAnalysisColumns = {
   id: activities.id,
   startDateLocal: activities.startDateLocal,
@@ -182,13 +173,6 @@ export interface HrAnalysisFilters {
   dateTo?: string;
 }
 
-/**
- * All completed activities for a user matching the HR-analysis filters, with no
- * pagination/cap (stats are read straight off the row, so this is a single
- * cheap query). Mirrors the filter semantics of `listForUser`: AND across
- * categories, OR within a category. Returns [] when the signature filter
- * resolves to no structures.
- */
 export async function listForHrAnalysis(
   db: Db,
   userId: string,
@@ -220,10 +204,6 @@ export async function listForHrAnalysis(
     .orderBy(desc(activities.startDateLocal));
 }
 
-/**
- * Repair intervals.icu-sourced rows that stored an average HR but never set the
- * `hasHeartrate` flag. Purely local — no external API. Returns the row count.
- */
 export async function repairHasHeartrateFlag(db: Db, userId: string): Promise<number> {
   const rows = await db
     .update(activities)
@@ -239,10 +219,6 @@ export async function repairHasHeartrateFlag(db: Db, userId: string): Promise<nu
   return rows.length;
 }
 
-/**
- * Write summary HR (avg/max + flag) onto an activity and clear
- * `hrStatsComputedAt` so Phase B recomputes its stream-derived stats.
- */
 export async function updateSummaryHr(
   db: Db,
   activityId: number,
@@ -259,7 +235,6 @@ export async function updateSummaryHr(
     .where(eq(activities.id, activityId));
 }
 
-/** Completed HR-bearing activities whose stream stats have never been computed. */
 export function listHrStatsBackfillCandidates(db: Db, userId: string): Promise<HrAnalysisRow[]> {
   return db
     .select(hrAnalysisColumns)
@@ -295,7 +270,6 @@ export async function requireOwnedActivity(
   return activity;
 }
 
-/** Returns the activity's local start date, or `undefined` if it isn't owned by the user. */
 export async function getStartDateLocalForUser(
   db: Db,
   userId: string,
@@ -322,7 +296,6 @@ export async function updateMetadataForUser(
   return updated;
 }
 
-/** Activities in the given analysis statuses, projected for the pending list. */
 export function listPending(db: Db, userId: string, statuses: readonly AnalysisStatus[]) {
   return db
     .select({
@@ -348,7 +321,6 @@ export function listPending(db: Db, userId: string, statuses: readonly AnalysisS
     .where(and(eq(activities.userId, userId), inArray(activities.analysisStatus, [...statuses])));
 }
 
-/** Minimal rows for the SSE progress snapshot of in-flight analyses. */
 export function listInFlight(db: Db, userId: string, statuses: readonly AnalysisStatus[]) {
   return db
     .select({
@@ -361,7 +333,6 @@ export function listInFlight(db: Db, userId: string, statuses: readonly Analysis
     .where(and(eq(activities.userId, userId), inArray(activities.analysisStatus, [...statuses])));
 }
 
-/** Minimal context for pace lap-derivation: is the activity indoor + its Strava id. */
 export async function findPaceContext(
   db: Db,
   userId: string,
@@ -373,17 +344,6 @@ export async function findPaceContext(
   });
 }
 
-/**
- * Of the given Strava activity ids, the subset the user already has locally —
- * counting a row as "already present" when EITHER it is Strava-sourced
- * (`stravaActivityId`) OR it is an intervals.icu-sourced twin carrying the same
- * originating Strava id (`intervalsStravaId`). The latter is essential: a Strava
- * load must not re-import a workout that already exists as an intervals.icu row,
- * or it creates a cross-source duplicate (see the duplicate-rows gotcha).
- *
- * Returns a `Set<number>` for O(1) membership in the list/import filters. An
- * empty `ids` array short-circuits to an empty set (no query).
- */
 export async function existingStravaIdsForUser(
   db: Db,
   userId: string,
@@ -415,7 +375,6 @@ export async function existingStravaIdsForUser(
   return present;
 }
 
-/** Per-gear usage rows: one row per (gear, trainingType) with a count. */
 export function getGearUsage(db: Db, userId: string) {
   return db
     .select({
@@ -430,14 +389,6 @@ export function getGearUsage(db: Db, userId: string) {
 
 type HrStatValues = { avg: number; max: number; median: number; mode: number };
 
-/**
- * Persist computed HR-distribution stats for an activity. Writes the
- * histogram-derived whole-activity median/mode and the work-interval variants,
- * and backfills averageHeartRate/maxHeartRate from the histogram only when they
- * are currently null (COALESCE), so device/intervals.icu values win when present.
- * `hrStatsComputedAt` is always set so we don't reattempt for activities that
- * have no usable HR data.
- */
 export async function updateHrStats(
   db: Db,
   activityId: number,
@@ -466,7 +417,6 @@ export async function updateHrStats(
     .where(eq(activities.id, activityId));
 }
 
-/** Delete all of a user's activities (interval_segments cascade via ON DELETE CASCADE). */
 export async function deleteAllForUser(db: Db, userId: string): Promise<void> {
   await db.delete(activities).where(eq(activities.userId, userId));
 }

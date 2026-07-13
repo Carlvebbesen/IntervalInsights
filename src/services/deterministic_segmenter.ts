@@ -7,17 +7,6 @@ import { compensateHrLag } from "./hr_lag";
 import { SEGMENTER_CONFIG as CFG } from "./segmenter_config";
 import { calculateSegmentStats } from "./utils";
 
-/**
- * Deterministic interval segmentation for the `lapsMatch=False` path (indoor /
- * dense / one-big-work-lap), replacing the LLM tiling that invented rep counts
- * and crushed the warmup to 60s. Strategy validated on 8 real workouts — see the
- * brain entry `deterministic-interval-segmentation`.
- *
- * Signal facts: speed/pace is the primary rep discriminator (HR can't separate
- * dense intervals); always operate in time[] seconds (streams aren't always 1Hz);
- * lap-bound the work window before detecting reps so warmup strides don't fool it.
- */
-
 type StatsStreams = Required<Pick<StreamSet, "time" | "distance">> & Pick<StreamSet, "heartrate">;
 
 interface RepDesc {
@@ -67,7 +56,6 @@ export function flattenReps(userSets: ExpandedIntervalSet[]): RepDesc[] {
   return reps;
 }
 
-/** Windowed speed (m/s) from cumulative distance; mirrors the app's deriveVelocity. */
 export function deriveSpeed(
   time: number[],
   distance: number[],
@@ -113,12 +101,6 @@ function median(values: number[]): number {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
-/**
- * Mode-aware lap classification:
- * - ≤1 meaningful lap → unusable (derive window from speed).
- * - ≤5 meaningful laps → boundary (HR separates warmup/work/cooldown here).
- * - many laps → per-rep (work laps are the high-SPEED ones; rest/warmup are slow).
- */
 export function classifyLaps(
   laps: Lap[],
   time: number[],
@@ -158,14 +140,6 @@ export function classifyLaps(
 
 const lapDurationSec = (l: Lap): number => l.moving_time ?? l.elapsed_time ?? 0;
 
-/**
- * Drop a trailing cooldown lap that slipped past the per-rep speed gate. A slow
- * jog after the final rep can sit just above `perRepSpeedFraction`×maxSpeed, so
- * it lands in the work set and inflates the rep count (observed: a 1900 m @
- * 4:50/km cooldown counted as a 6th rep after a 5×NG session). It is removed
- * only when it is BOTH clearly slower AND clearly longer than the other reps —
- * both required so a faster finisher or a mildly-fading last rep survives.
- */
 function dropTrailingCooldown(work: Lap[]): Lap[] {
   if (work.length < CFG.laps.trailingCooldownMinReps + 1) return work;
   const rest = work.slice(0, -1);
@@ -179,15 +153,6 @@ function dropTrailingCooldown(work: Lap[]): Lap[] {
   return slower && longer ? rest : work;
 }
 
-/**
- * Surge detection: find sustained high-speed runs inside [ws, we]. This is the
- * primary rep primitive for the unusable / no-structure cases — the work region
- * is [firstBout.start, lastBout.end], which excludes a slow warmup/cooldown and
- * fixes the warmup-lands-early bug (the previous sliding-window detector leaked
- * ~200 s of warmup into the work window). Threshold is the midpoint between the
- * work and rest speed levels; adjacent runs separated by a sub-gap are merged and
- * too-short runs dropped so a single warmup stride doesn't read as a rep.
- */
 export function detectBouts(
   time: number[],
   speed: number[],
@@ -197,11 +162,6 @@ export function detectBouts(
   minGapSec = MIN_GAP_SECONDS,
 ): { bouts: WorkBout[]; workLvl: number; restLvl: number } {
   const inWin = (i: number): boolean => time[i] >= ws && time[i] <= we;
-  // Keep rest (near-zero) samples in the distribution — they ARE the low level.
-  // Threshold off a low floor, not a midpoint percentile: when work dominates the
-  // time (e.g. 360s work / 60s rest ≈ 85% duty) even the 15th percentile lands in
-  // the work band, so a percentile-midpoint never separates. Floor (p05) ≈ rest,
-  // workLvl (p75) ≈ work; the gate sits halfway between.
   const win = speed.filter((_, i) => inWin(i)).sort((a, b) => a - b);
   if (win.length === 0) return { bouts: [], workLvl: 0, restLvl: 0 };
   const workLvl = percentile(win, CFG.bouts.workPercentile);
@@ -209,13 +169,6 @@ export function detectBouts(
   const thr = restLvl + CFG.bouts.thresholdFraction * (workLvl - restLvl);
   if (workLvl <= 0 || thr <= 0) return { bouts: [], workLvl, restLvl };
 
-  // Per-sample work/rest label, by one of three cores (all feed the same run-
-  // forming below): PELT change-point detection (principled multi-changepoint
-  // partition with a min-size short-rep guard), the Markov/Viterbi prior (charges
-  // a switch cost so one fast/slow sample can't open or close a bout), or the raw
-  // `speed > thr` threshold. PELT and Markov both kill the threshold's flicker —
-  // the inference over-segmentation (504 24→20). PELT is the core; Markov is the
-  // fallback when PELT is off or the window is too short.
   const idxInWin: number[] = [];
   for (let i = 0; i < time.length; i++) if (inWin(i)) idxInWin.push(i);
   const labelOf = new Map<number, number>();
@@ -227,8 +180,6 @@ export function detectBouts(
   const minSizeSamples = Math.max(2, Math.round(CFG.pelt.minSizeSeconds / Math.max(winDt, 0.1)));
 
   if (CFG.pelt.enabled && winSpeed.length >= 2 * minSizeSamples) {
-    // PELT partitions the window; each segment is work if its mean speed clears
-    // the work/rest gate. Adjacent same-label segments coalesce in the run loop.
     const cps = pelt(winSpeed, minSizeSamples, defaultPenalty(winSpeed));
     const bounds = [0, ...cps, winSpeed.length];
     for (let b = 0; b < bounds.length - 1; b++) {
@@ -273,12 +224,6 @@ export function detectBouts(
   return { bouts, workLvl, restLvl };
 }
 
-/**
- * Pick the contiguous run of `n` bouts with the most uniform spacing. When surge
- * detection turns up more bouts than reps (a warmup/cooldown stride read as a
- * bout), the real reps are the evenly-spaced cluster; the stray stride sits off
- * to one side behind an outlier gap, so the lowest-variance window drops it.
- */
 function selectRegion(bouts: WorkBout[], n: number): WorkBout[] {
   if (n <= 0 || bouts.length <= n) return bouts;
   let best = bouts.slice(0, n);
@@ -297,7 +242,6 @@ function selectRegion(bouts: WorkBout[], n: number): WorkBout[] {
   return best;
 }
 
-/** Synthesize reps from detected bouts when the user gave no structure (item 1). */
 function inferRepsFromBouts(bouts: WorkBout[]): RepDesc[] {
   const workMed = median(bouts.map((b) => b.end - b.start));
   const gaps: number[] = [];
@@ -314,7 +258,6 @@ function inferRepsFromBouts(bouts: WorkBout[]): RepDesc[] {
   }));
 }
 
-/** Slide a window of ~structSecs over the speed series, maximizing in-work fraction. */
 export function detectWorkWindowBySpeed(
   time: number[],
   speed: number[],
@@ -342,26 +285,18 @@ export function detectWorkWindowBySpeed(
   return { ws: best.ws, we: best.we };
 }
 
-/** Nearest time index for a target time (binary-ish linear scan is fine at this size). */
 function indexAtTime(time: number[], target: number): number {
   let idx = time.findIndex((t) => t >= target);
   if (idx === -1) idx = time.length - 1;
   return idx;
 }
 
-/** Time at which cumulative distance first reaches `targetDist` (distance is monotone). */
 function timeAtDistance(time: number[], distance: number[], targetDist: number): number {
   let idx = distance.findIndex((d) => d >= targetDist);
   if (idx === -1) idx = distance.length - 1;
   return time[idx] ?? time[time.length - 1] ?? 0;
 }
 
-/**
- * Lay the nominal work/rest durations from `ws`, then snap each work-bout edge to
- * the nearest speed transition (improves alignment, esp. the unusable/no-lap case).
- * Guarantees exactly `reps.length` work bouts. `snapped`/`total` report how many
- * edges locked onto a real transition — the caller folds that into confidence.
- */
 export function templatePlace(
   ws: number,
   we: number,
@@ -426,13 +361,6 @@ export function templatePlace(
   return { bouts, snapped, total: reps.length * 2 };
 }
 
-/**
- * Choose the signal bouts are detected from. Normally speed (the primary rep
- * discriminator). But when speed can't separate work from rest — flat treadmill
- * speed or HR-only reps, the case intervals.icu's HR detection mishandles — fall
- * back to lag-compensated HR, which still carries the effort structure. On
- * clean-speed data the contrast clears the floor and this returns speed unchanged.
- */
 function pickDetectionSignal(time: number[], speed: number[], hr: number[] | undefined): number[] {
   if (!CFG.hrLag.enabled || !hr || hr.length !== speed.length) return speed;
   const positive = speed.filter((x) => x > 0).sort((a, b) => a - b);
@@ -467,7 +395,6 @@ function estimateStructSecs(reps: RepDesc[], _time: number[], speed: number[]): 
   return total;
 }
 
-/** Mean in-bout speed vs mean inter-bout speed → [0,1] contrast (higher = cleaner reps). */
 function speedContrast(time: number[], speed: number[], bouts: WorkBout[]): number {
   if (bouts.length === 0) return 0;
   const inBout = (t: number): boolean => bouts.some((b) => t >= b.start && t <= b.end);
@@ -515,26 +442,8 @@ function pushSeg(
   });
 }
 
-/**
- * Build segments deterministically. Returns null when it can't (no usable
- * streams, no reps and nothing inferable). Otherwise returns the segments plus a
- * [0,1] confidence so the caller can fall back to the LLM on a weak result.
- *
- * Confidence blends: how many template edges snapped to a real speed transition
- * (1.0 when bouts come straight from laps/surges), the work-vs-rest speed
- * contrast, and whether the bout count matched the expected rep count. Inferred
- * structures (no user title) are discounted since the rep count is itself a guess.
- */
-/** Short TIME reps (≤ this many seconds) read short because the pace stream lags the effort. */
 export const SHORT_REP_EXPAND_MAX_SECONDS = CFG.expand.shortRepMaxSeconds;
 
-/**
- * Recover the prescribed duration of short TIME reps whose detected bout is only
- * the late, brief high-speed CORE (pace lag). Expand SYMMETRICALLY around the core
- * centre — the lag shifts the core LATE, so forward-only expansion overshoots into
- * the rest and inverts work/rest. Never shrinks below the core; clamps to the
- * neighbouring bouts (and t0/tEnd). Pure; only touches TIME reps ≤ `maxSec`.
- */
 export function expandShortReps(
   bouts: WorkBout[],
   reps: RepDesc[],
@@ -560,15 +469,6 @@ export function expandShortReps(
   return out;
 }
 
-/**
- * DISTANCE analog of expandShortReps: detection captures only the high-speed CORE
- * of a distance rep (a "1000 m" rep can read 666 m). When a DISTANCE rep's bout
- * spans less than `minRatio` of its prescribed distance, grow it SYMMETRICALLY in
- * distance (around the core centre) until it covers the prescribed distance, clamped
- * to the neighbouring bouts and t0/tEnd. The title distance is authoritative — a
- * "1000 m" rep should read ~1000 m. Only runs on detected bouts (not authoritative
- * device laps); over-long bouts are pulled back by clampOverlongBouts.
- */
 export function expandShortDistanceReps(
   bouts: WorkBout[],
   reps: RepDesc[],
@@ -601,19 +501,6 @@ export function expandShortDistanceReps(
   return out;
 }
 
-/**
- * Bind a prescribed rep sequence to detected work bouts by MEASURE, not position.
- * On noisy treadmill data the speed gate lets a few rests cross into the work-lap
- * set, so there are more bouts than reps; assigning reps[i]→bouts[i] then shifts
- * every rep after a spurious bout — a 175s effort ends up tagged the "60s" rep
- * (activity 622, sets 2-4). Picks the order-preserving subsequence of `bouts` of
- * length reps.length that minimises total relative measure error (DP, i.e.
- * DTW-with-skips). Sequence order makes a spurious bout expensive to keep — it
- * would have to match the NEXT prescribed value, which it doesn't — so the extras
- * get skipped and the surrounding REST segments absorb their time. Measure is
- * duration for TIME reps, covered distance for DISTANCE reps. Caller only invokes
- * this when bouts.length > reps.length; equal/short counts keep positional.
- */
 export function alignBoutsToReps(
   bouts: WorkBout[],
   reps: RepDesc[],
@@ -638,7 +525,6 @@ export function alignBoutsToReps(
   };
 
   const INF = Number.POSITIVE_INFINITY;
-  // dp[i][j] = min total cost to bind the first i reps using the first j bouts.
   const dp: number[][] = Array.from({ length: N + 1 }, () => new Array<number>(M + 1).fill(INF));
   const took: boolean[][] = Array.from({ length: N + 1 }, () =>
     new Array<boolean>(M + 1).fill(false),
@@ -671,19 +557,8 @@ export function alignBoutsToReps(
   return chosen.reverse();
 }
 
-/** Default over-run tolerance: keep real variation, trim only clear overruns. */
 export const OVERLONG_TOLERANCE = CFG.clamp.overlongTolerance;
 
-/**
- * Trim work bouts that overrun the prescribed measure — the prescribed value is a
- * strong prior (a "1000 m" rep is ~950-1050 m, not 1200; a long TIME rep drifts
- * only ±10-20 s). Detection or device laps sometimes overrun: a lap that kept
- * counting, or a boundary that leaked into the rest. When a bout's measure exceeds
- * the target by more than `tol`, pull its END back to exactly the prescribed
- * measure from the bout start; the trimmed tail falls into the following REST.
- * Within tolerance the detected end is kept (real variation). Never EXTENDS — under
- * -measure is expandShortReps' job — and only touches known TIME/DISTANCE reps.
- */
 export function clampOverlongBouts(
   bouts: WorkBout[],
   reps: RepDesc[],
@@ -740,13 +615,7 @@ export function buildSegmentsDeterministic(
   let bouts: WorkBout[];
   let snapFrac = 1;
   let countMatch = 1;
-  // Set when we deliberately lay the full known structure because detection found
-  // fewer work blocks than reps — the title count is authoritative, so the result
-  // must be USED rather than discarded for the (count-inventing) LLM fallback.
   let forcedCount = false;
-  // True when bouts came from STREAM detection (detectBouts / templatePlace) rather
-  // than authoritative device laps — gates the short-rep pace-lag expansion, which
-  // must run on detected cores but not on real laps.
   let boutsFromDetection = false;
 
   if (inferred) {
@@ -756,20 +625,11 @@ export function buildSegmentsDeterministic(
     bouts = detected;
     reps = inferRepsFromBouts(detected);
   } else if (cls.mode === "per-rep" && cls.workLaps.length >= reps.length) {
-    // Enough work laps to cover the structure: bind them to reps — align away the
-    // spurious extras when there are more laps than reps (622), else 1:1.
     const lapBouts = cls.workLaps.map((l) => lapWindow(l, time));
     bouts =
       lapBouts.length > reps.length ? alignBoutsToReps(lapBouts, reps, time, distance) : lapBouts;
     countMatch = 1;
   } else {
-    // Boundary / one-big-lap, OR per-rep UNDER-detection where the lap-level
-    // 0.75×max-speed gate missed reps (626 — slower reps; 616 — the compound's
-    // short second block). Recover reps from SAMPLE-level speed valleys:
-    // detectBouts finds the rests and the work runs between them, catching what the
-    // lap gate dropped; selectRegion trims to the prescribed count. Only if
-    // detection STILL falls short do we count-guarantee via template (the title
-    // count is authoritative — see forcedCount).
     boutsFromDetection = true;
     const region = cls.mode === "boundary" ? { ws: cls.ws, we: cls.we } : { ws: t0, we: tEnd };
     const { bouts: detected } = detectBouts(time, detectionSignal, region.ws, region.we);
@@ -790,18 +650,11 @@ export function buildSegmentsDeterministic(
   }
   if (bouts.length === 0) return null;
 
-  // Recover short TIME reps under-measured due to pace lag — only when the
-  // structure is KNOWN and bouts came from stream detection (not authoritative
-  // device laps / inference). Keyed on detection, not mode: per-rep under-detection
-  // also lands here (616's 45s reps detect as 20-30s cores). See expandShortReps.
   if (!inferred && boutsFromDetection) {
     bouts = expandShortReps(bouts, reps, t0, tEnd);
     bouts = expandShortDistanceReps(bouts, reps, time, distance, t0, tEnd);
   }
 
-  // Pull in work bouts that overrun the prescribed measure (a "1000 m" rep that
-  // a device lap recorded as 1200 m). Applies in every known-structure mode,
-  // including per-rep, since the overrun usually comes from the laps themselves.
   if (!inferred) {
     bouts = clampOverlongBouts(bouts, reps, time, distance);
   }
@@ -855,10 +708,6 @@ export function buildSegmentsDeterministic(
     CFG.confidence.contrastWeight * contrast +
     CFG.confidence.countWeight * countMatch;
   if (inferred) confidence *= CFG.confidence.inferredFactor;
-  // Count-guaranteed structures are user-authoritative on count; their template
-  // placement snaps few edges (the missing reps have no transitions) so the raw
-  // blend reads low — floor above the cascade's LLM-fallback threshold so the
-  // structure-honoring split is kept instead of handing off to the count-inventing LLM.
   if (forcedCount) confidence = Math.max(confidence, CFG.confidence.forcedCountFloor);
   confidence = Math.max(0, Math.min(1, confidence));
 

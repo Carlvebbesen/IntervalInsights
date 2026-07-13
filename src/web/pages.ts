@@ -171,8 +171,6 @@ ${content}
 </html>`;
 }
 
-/** Wrap any GFM `<table>` in a horizontally scrollable container so wide legal
- * tables never force the page body to scroll on narrow screens. */
 function wrapTables(html: string): string {
   return html
     .replace(/<table>/g, '<div class="table-wrap"><table>')
@@ -291,11 +289,6 @@ const HTML_HEADERS = {
   "Cache-Control": "public, max-age=3600",
 } as const;
 
-/**
- * Registers the public human-facing web pages (rendered legal docs + the Google
- * Play account-deletion guide) at the app root. Mounted in both src/index.ts and
- * the test app so they stay covered by the endpoint suite.
- */
 export function registerWebPages<E extends Env>(app: Hono<E>): void {
   app.get("/privacy-policy", async () => {
     const html = await renderMarkdownPage("Privacy Policy", "privacy_policy.md");

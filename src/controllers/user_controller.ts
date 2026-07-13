@@ -94,16 +94,6 @@ export async function updateUserSettings(
   return toUserSettingsDto(settings);
 }
 
-/**
- * Permanently delete the user. Revoke Strava OAuth FIRST — deleting the user row
- * cascades `oauth_provider_tokens` away, so the token must be read before then.
- * Then the user's activities (interval_segments cascade), events (event_attributes
- * cascade), gears (gear_defaults cascade), and the user row itself (chat
- * conversations/messages + oauth token rows cascade). Events and gears reference
- * users with ON DELETE NO ACTION, so they must be removed explicitly or the user
- * delete fails. External cleanup failures are swallowed so a missing Strava link
- * can't block deletion.
- */
 export async function deleteAccount(
   db: Db,
   userId: string,
@@ -115,9 +105,7 @@ export async function deleteAccount(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ access_token: tokens.access_token }),
     });
-  } catch {
-    // Strava may not be linked — continue with cleanup
-  }
+  } catch {}
 
   await activityRepo.deleteAllForUser(db, userId);
   await db.delete(events).where(eq(events.userId, userId));

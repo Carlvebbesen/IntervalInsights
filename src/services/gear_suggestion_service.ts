@@ -26,17 +26,6 @@ export type GearSuggestions = {
 
 const MAX_SUGGESTIONS = 3;
 
-/**
- * Prefetches the user's gear defaults once and returns a per-activity suggester.
- * Every step is keyed on the activity's gear type (D4/D7): the user's deliberate
- * Strava gear change → per-signature default → use-type match →
- * (gearType, bucket, surface) default → recents-by-type. Candidates are filtered
- * to the activity's gear type, and retired gear is skipped at every step. When the
- * activity's surface is determinable, the use-type and recents steps are further
- * scoped to that surface (skis fall back to type-only). Recents and use-type lookups
- * memoize the in-flight promise per `gearType:surface` key, so concurrent activities
- * share one query.
- */
 export async function createGearSuggester(
   db: Db,
   userId: string,

@@ -169,7 +169,6 @@ gearRouter.patch(
   },
 );
 
-// Needs a Strava token → separate sub-router with stravaMiddleware.
 const gearStravaRouter = new Hono<TStravaEnv>();
 gearStravaRouter.use("*", stravaMiddleware);
 

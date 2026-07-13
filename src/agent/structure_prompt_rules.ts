@@ -1,11 +1,3 @@
-/**
- * Structure-extraction rules shared verbatim by the analyze classifier
- * (`initial_analysis_agent.ts`) and the free-text parse agent
- * (`parse_intervals_agent.ts`). Both emit the same `workoutSet[]` shape, so the
- * Set/Step/rep-count rules — including the hard-won Norwegian comma-list,
- * "N x (a,b,c)", and compound-block fixes — must live in exactly one place.
- * Callers may append their own agent-specific rules after this block.
- */
 export const STRUCTURE_EXTRACTION_RULES = `1. **Identify Repeating Series:** For a simple workout like **10x1000m**: create one Set with **set_reps: 1** and one Step with **reps: 10**. For a complex workout like **3x (3km + 2km + 1km)**: create one Set with **set_reps: 3** and, inside that set, three Steps (3000m, 2000m, 1000m) each with **reps: 1**.
 2. **Units:** Always convert distance to METERS and time to SECONDS.
 3. **Comma-separated values are a STEP LIST, not decimals (Norwegian list notation):** "3,2,1 km" = three Steps of 3 km, 2 km, 1 km (→ 3000m, 2000m, 1000m); "2 x 3,2,2 km" = one Set with **set_reps: 2** and three Steps (3000m, 2000m, 2000m). A comma between numbers in such a list is a SEPARATOR, never a decimal point.

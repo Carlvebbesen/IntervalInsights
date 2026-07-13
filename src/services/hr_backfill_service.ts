@@ -55,14 +55,6 @@ function hrBackfillCompletedMessage(
   };
 }
 
-/**
- * Backfill missing heart-rate data for a user in three phases: (A1) repair the
- * `hasHeartrate` flag on intervals.icu-sourced rows, (A2) re-fetch lost Strava
- * HR summaries, (B) compute missing HR stream stats. Emits SSE sync events and
- * always finishes with a `completed` event, even on crash. Resumable and
- * rate-limit aware — Phase B converges because `computeAndPersistRow` always
- * stamps `hrStatsComputedAt`.
- */
 export async function runHrBackfill(
   context: IGlobalBindings,
   userId: string,
@@ -82,10 +74,8 @@ export async function runHrBackfill(
       log.warn({ err }, "no Strava token for HR backfill");
     }
 
-    // Phase A1: repair intervals.icu-sourced rows that stored HR but never set the flag.
     result.summaryUpdated += await activityRepo.repairHasHeartrateFlag(context.db, userId);
 
-    // Phase A2: re-fetch lost Strava HR summaries for rows still missing avg HR.
     if (stravaToken) {
       const localRows = await context.db
         .select({
@@ -143,7 +133,6 @@ export async function runHrBackfill(
       }
     }
 
-    // Phase B: compute stream stats for candidates missing them.
     const candidates = await activityRepo.listHrStatsBackfillCandidates(context.db, userId);
     let i = 0;
     for (; i < candidates.length && i < MAX_STREAM_FETCHES_PER_RUN; i++) {

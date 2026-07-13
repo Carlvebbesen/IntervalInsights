@@ -52,8 +52,6 @@ function cacheKey(
 ): string {
   const shape = structureId != null ? `id:${structureId}` : `h:${hashStructure(sets)}`;
   const w = weather ? `|w:${Math.round(weather.temperatureC)}:${Math.round(weather.humidity)}` : "";
-  // A growing exclusion list on 'suggest another' changes the key, so the brief
-  // cache never re-serves an already-shown suggestion.
   const r = recentlySuggested.length > 0 ? `|r:${recentlySuggested.join("~")}` : "";
   return `${userId}|${date}|${shape}|m:${mode}${w}${r}`;
 }
@@ -125,15 +123,8 @@ async function buildHistorySummary(
 
 type WorkoutStep = WorkoutSet["steps"][number];
 
-/**
- * Rebuild a workout shape from the segments actually performed, for structures
- * whose activities never stored a draft structure (e.g. sync-imported sessions).
- * Segments are grouped by set, consecutive same-target reps collapse into a
- * step, and identical consecutive set-groups collapse into one set with reps.
- */
 const MAX_TRUSTED_REST_S = 600;
 
-/** Round a derived rest to a clean number; treat sub-3s as no rest and >10min as untrustworthy. */
 function cleanRest(seconds: number | null): number | null {
   if (seconds == null || seconds > MAX_TRUSTED_REST_S) return null;
   if (seconds <= 2) return 0;
@@ -164,9 +155,6 @@ export function setsFromSegments(
     r.type === "INTERVALS" && mapType(r.targetType) != null && !!r.targetValue;
   const isRest = (r: (typeof rows)[number]) => r.type === "REST" || r.type === "ACTIVE_REST";
 
-  // Resolve each work rep's recovery in priority order: folded normal-REST on
-  // the work row → a separate REST/ACTIVE_REST row before the next rep → the
-  // measured timing gap (last resort). Exact stored rest beats approximation.
   const segs: Seg[] = [];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -214,8 +202,6 @@ export function setsFromSegments(
     else groups.push([s]);
   }
 
-  // Each group → (steps, setRecovery). The last seg's recovery is the rest
-  // *between* groups, so it becomes set_recovery rather than a rep recovery.
   type Group = { steps: WorkoutStep[]; setRecovery: number | null };
   const built: Group[] = groups
     .map((segsInGroup) => {
@@ -267,8 +253,6 @@ export function setsFromSegments(
         s.recovery_value === b[i].recovery_value,
     );
 
-  // Collapse identical consecutive groups into one set; set_recovery is the
-  // typical between-group rest across the repeats.
   const sets: WorkoutSet[] = [];
   const groupRests: number[][] = [];
   for (const g of built) {
@@ -462,9 +446,6 @@ export async function suggestSession(
     readiness,
     advisory: combinedAdvisory,
   };
-  // Sweep expired entries on write — keys embed client-controlled parts
-  // (structure hash, exclusion list), so without eviction the map grows for
-  // the life of the process.
   const nowMs = Date.now();
   for (const [staleKey, entry] of cache) {
     if (nowMs - entry.at >= CACHE_TTL_MS) cache.delete(staleKey);

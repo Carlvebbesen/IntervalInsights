@@ -29,7 +29,6 @@ type WorkoutSet = z.infer<typeof workoutSet>;
 
 const PENDING_STATUSES: readonly AnalysisStatus[] = ["initial", "pending", "error"];
 
-/** Re-queue stale rows (if a token is present), then return the user's pending activities. */
 export async function getPending(
   db: Db,
   userId: string,
@@ -73,10 +72,6 @@ export async function startActivityAnalysis(
     throw new AppError(400, "Access token missing");
   }
   const owned = await activityRepo.requireOwnedActivity(db, userId, activityId);
-  // Fire-and-forget — the pipeline runs in the background. `force` re-runs an
-  // already-analysed / sync-imported activity (overwrites its draft + segments).
-  // The Strava id comes from the owned row, never the request body: a mismatched
-  // client value would write another activity's streams onto this row.
   recordAnalysisRun({ phase: "start", trigger: force ? "reanalyze" : "manual" });
   runInBackground(
     "analysis.start",

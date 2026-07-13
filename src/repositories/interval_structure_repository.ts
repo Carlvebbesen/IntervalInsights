@@ -4,8 +4,6 @@ import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
 
-/** Repository for the `interval_structures` table. */
-
 export async function findById(db: Db, id: number): Promise<{ id: number } | undefined> {
   const [row] = await db
     .select({ id: intervalStructures.id })
@@ -14,11 +12,6 @@ export async function findById(db: Db, id: number): Promise<{ id: number } | und
   return row;
 }
 
-/**
- * Distinct interval structures the user has at least one activity linked to,
- * with how many times they've done it and when they last did. Ordered by most
- * recently performed so repeated, comparable sessions surface first.
- */
 export function listDistinctForUser(db: Db, userId: string) {
   return db
     .select({
@@ -35,12 +28,6 @@ export function listDistinctForUser(db: Db, userId: string) {
     .orderBy(sql`MAX(${activities.startDateLocal}) DESC`);
 }
 
-/**
- * Every activity the user has linked to a given interval structure, oldest →
- * newest, with a per-session summary of the work reps (count, average work pace
- * in sec/km, average work HR) derived from `interval_segments`. Use to track how
- * a repeated session has progressed over time.
- */
 export function structureHistory(db: Db, userId: string, structureId: number) {
   const workPaceExpr = sql`CASE WHEN ${intervalSegments.actualDistance} > 0 THEN ${intervalSegments.actualDuration}::float / ${intervalSegments.actualDistance} * 1000 ELSE NULL END`;
   const targetWorkPaceExpr = sql`CASE WHEN ${intervalSegments.targetPace} > 0 THEN 1000.0 / ${intervalSegments.targetPace} ELSE NULL END`;
@@ -73,12 +60,6 @@ export function structureHistory(db: Db, userId: string, structureId: number) {
     .orderBy(asc(activities.startDateLocal));
 }
 
-/**
- * The work segments of the most recent activity linked to a structure that
- * actually has interval segments, ordered as performed. Used to reconstruct a
- * workout shape for structures whose activities never stored a draft structure
- * (e.g. sync-imported sessions).
- */
 export async function representativeIntervalSegments(db: Db, userId: string, structureId: number) {
   const rep = await db
     .select({ id: activities.id })
@@ -95,8 +76,6 @@ export async function representativeIntervalSegments(db: Db, userId: string, str
   const activityId = rep[0]?.id;
   if (activityId == null) return [];
 
-  // All types (not just INTERVALS): between-set / single-rep-set recovery is
-  // stored as separate ACTIVE_REST rows whose target_value holds the rest.
   return db
     .select({
       setGroupIndex: intervalSegments.setGroupIndex,
