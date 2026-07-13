@@ -13,6 +13,7 @@ import { eq } from "drizzle-orm";
 import * as gearRepo from "../src/repositories/gear_repository";
 import { updateUserSettings } from "../src/repositories/user_settings_repository";
 import { activities, gears } from "../src/schema";
+import { progressService } from "../src/services/progress_service";
 import { stravaApiService } from "../src/services/strava_api_service";
 import { closePool, createTestUser, deleteTestUser, getDb } from "./helpers/db";
 import { insertActivity } from "./helpers/fixtures";
@@ -313,6 +314,49 @@ describe("processStravaWebhook (real implementation)", () => {
       expect(imported.activityCount).toBe(1);
       expect(seeded.id).toBe(row.id);
     } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  it("emits an `updated` progress event on a title change even when the analysis restart is skipped", async () => {
+    const user = await createStravaUser();
+    const captured: { event: string; data: Record<string, unknown> }[] = [];
+    const unregister = progressService.register(user.id, {
+      writeSSE: async (msg) => {
+        captured.push({ event: msg.event, data: JSON.parse(msg.data) });
+      },
+    });
+    try {
+      const stravaActivityId = nextAthleteId() * 1000;
+      // A `completed` row is in SKIP_RESTART_STATUSES — the restart is skipped,
+      // but the app must still learn the title changed (the stale-title fix).
+      const seeded = await insertActivity(user.id, {
+        stravaActivityId,
+        title: "Original title",
+        analysisStatus: "completed",
+      });
+
+      // An update with NO relevant field change (empty `updates`) → no emission.
+      getActivityResult = stravaActivity(stravaActivityId, user.athleteId, { name: "Original title" });
+      await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "update"), context);
+      expect(captured.filter((e) => e.event === "progress" && e.data.phase === "updated")).toHaveLength(0);
+
+      // A title change → exactly one `updated` emission.
+      getActivityResult = stravaActivity(stravaActivityId, user.athleteId, { name: "Renamed for real" });
+      const titleEvent = {
+        ...createEvent(stravaActivityId, user.athleteId, "update"),
+        updates: { title: "Renamed for real" },
+      };
+      await processStravaWebhook(titleEvent, context);
+
+      const updated = captured.filter((e) => e.event === "progress" && e.data.phase === "updated");
+      expect(updated).toHaveLength(1);
+      expect(updated[0].data.kind).toBe("strava_ingest");
+      expect(updated[0].data.id).toBe(seeded.id);
+      expect(updated[0].data.title).toBe("Renamed for real");
+      expect(updated[0].data.analysisStatus).toBe("completed");
+    } finally {
+      unregister();
       await deleteTestUser(user.id);
     }
   });

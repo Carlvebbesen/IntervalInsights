@@ -12,7 +12,7 @@ import { classifyUserActivity } from "./ingest_gating";
 import { intervalsApiService } from "./intervals_api_service";
 import { mapIntervalsActivityToInsert } from "./intervals_mappers";
 import { deleteProviderToken } from "./oauth_token_store";
-import { publishSync } from "./progress_service";
+import { progressService, publishSync } from "./progress_service";
 import { shouldAnalyze } from "./utils";
 
 type Db = IGlobalBindings["db"];
@@ -296,7 +296,7 @@ export async function refreshLinkedIntervalsActivity(
 ): Promise<"refreshed" | "no_token" | "no_source" | "no_match"> {
   const row = await context.db.query.activities.findFirst({
     where: (a, { eq, and }) => and(eq(a.id, localActivityId), eq(a.userId, user.id)),
-    columns: { id: true, intervalsIcuId: true },
+    columns: { id: true, intervalsIcuId: true, title: true, analysisStatus: true },
   });
   if (!row) return "no_match";
   if (!row.intervalsIcuId) return "no_source";
@@ -340,6 +340,19 @@ export async function refreshLinkedIntervalsActivity(
       ...buildEnrichment(full, processHeartRate),
     })
     .where(eq(activities.id, row.id));
+
+  // Surface the refresh to the app (ACTIVITY_UPDATED/ANALYZED) so an activity the
+  // user edited on intervals.icu reflects live, mirroring the Strava update path.
+  await progressService.publish(user.id, {
+    type: "progress",
+    data: {
+      id: row.id,
+      kind: "intervals_ingest",
+      phase: "updated",
+      analysisStatus: row.analysisStatus ?? undefined,
+      title: row.title ?? undefined,
+    },
+  });
 
   return "refreshed";
 }
