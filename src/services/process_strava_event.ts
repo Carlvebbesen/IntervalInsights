@@ -2,6 +2,7 @@ import { and, eq, gte, isNotNull, isNull, lte } from "drizzle-orm";
 import { logger } from "../logger";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import * as gearRepo from "../repositories/gear_repository";
+import { findOrCreateUserSettings } from "../repositories/user_settings_repository";
 import { activities, gears, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
@@ -45,6 +46,29 @@ async function findFuzzyIntervalsTwin(
 
   if (candidates.length !== 1) return null;
   return candidates[0];
+}
+
+/**
+ * D3: when the user opted out of waiting for the Strava-side title/description
+ * edit (`waitForStravaUpdate === false`), kick analysis off right away instead
+ * of leaving it for the Strava `update` webhook. Null settings (users row
+ * gone mid-race) fall through to the default (wait) — no start.
+ */
+async function maybeStartImmediateAnalysis(
+  context: IGlobalBindings,
+  accessToken: string,
+  stravaActivityId: number,
+  userId: string,
+  activityId: number,
+) {
+  const settings = await findOrCreateUserSettings(context.db, userId);
+  if (settings?.waitForStravaUpdate === false) {
+    logger.info(
+      { userId, activityId, stravaActivityId },
+      "Immediate analysis start (waitForStravaUpdate=false)",
+    );
+    await triggerAnalysisByStravaId(context.db, accessToken, stravaActivityId, userId);
+  }
 }
 
 export async function processStravaWebhook(body: IStravaWebhookEvent, context: IGlobalBindings) {
@@ -185,6 +209,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
             startDateLocal: activity.startDateLocal?.toISOString(),
           },
         });
+        await maybeStartImmediateAnalysis(context, accessToken, stravaActivityId, user.id, twin.id);
       }
       return;
     }
@@ -214,6 +239,13 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
           startDateLocal: activity.startDateLocal?.toISOString(),
         },
       });
+      await maybeStartImmediateAnalysis(
+        context,
+        accessToken,
+        stravaActivityId,
+        user.id,
+        inserted.id,
+      );
     }
     return;
   }
@@ -224,6 +256,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
         id: activities.id,
         distance: activities.distance,
         gearId: activities.gearId,
+        analysisStatus: activities.analysisStatus,
       })
       .from(activities)
       .where(
@@ -258,8 +291,29 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
           .where(eq(activities.id, existing.id));
       }
     }
-    if (activityClass === "active" && (body.updates?.title || body.updates?.description)) {
-      await triggerAnalysisByStravaId(context.db, accessToken, stravaActivityId, user.id);
+    // Surface the edit to the app whenever a user-visible field actually changed
+    // (gate on the webhook's `updates` keys, not every update event). Fires even
+    // when the analysis restart is skipped by SKIP_RESTART_STATUSES — otherwise a
+    // completed activity keeps a stale title in the app (the stale-title fix).
+    const relevantUpdate =
+      body.updates?.title != null ||
+      body.updates?.description != null ||
+      body.updates?.gear_id != null;
+    if (activityClass === "active" && relevantUpdate) {
+      await progressService.publish(user.id, {
+        type: "progress",
+        data: {
+          id: existing.id,
+          kind: "strava_ingest",
+          phase: "updated",
+          analysisStatus: existing.analysisStatus ?? undefined,
+          title: activity.title ?? undefined,
+          startDateLocal: activity.startDateLocal?.toISOString(),
+        },
+      });
+      if (body.updates?.title || body.updates?.description) {
+        await triggerAnalysisByStravaId(context.db, accessToken, stravaActivityId, user.id);
+      }
     }
   }
 }

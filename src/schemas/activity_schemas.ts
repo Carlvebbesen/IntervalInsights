@@ -303,8 +303,8 @@ export const ProgressSnapshotEventSchema = z
 export const ProgressEventSchema = z
   .object({
     id: z.number().int(),
-    kind: z.enum(["strava_ingest", "intervals_ingest", "intervals_sync", "analysis"]),
-    phase: z.enum(["received", "processing", "ready_for_review"]),
+    kind: z.enum(["strava_ingest", "intervals_ingest", "analysis"]),
+    phase: z.enum(["received", "processing", "ready_for_review", "updated"]),
     analysisStatus: z.enum(analysisStatusEnum.enumValues).optional(),
     title: z.string().optional(),
     startDateLocal: z.string().optional(),

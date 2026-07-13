@@ -1,10 +1,11 @@
 // GDPR account deletion: DELETE /api/v1/user/data must remove EVERY row the
 // user owns (activities + interval_segments cascade, events + attributes,
-// gears + defaults, chat conversations + messages cascade, the users row, and
-// the encrypted oauth_provider_tokens rows via cascade) — while another user's
-// rows survive intact.
+// gears + defaults, chat conversations + messages cascade, the users row, the
+// user_settings row via cascade, and the encrypted oauth_provider_tokens rows
+// via cascade) — while another user's rows survive intact.
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { getOrCreateUserSettings } from "../src/repositories/user_settings_repository";
 import {
   activities,
   chatConversations,
@@ -51,6 +52,7 @@ async function seedOwnedRows(userId: string) {
   await db
     .insert(chatMessages)
     .values({ conversationId: conversation.id, role: "user", content: "hello" });
+  await getOrCreateUserSettings(db, userId);
 }
 
 async function countOwnedRows(userId: string) {
@@ -69,6 +71,7 @@ async function countOwnedRows(userId: string) {
     messages: await one(
       `SELECT COUNT(*) FROM chat_messages m JOIN chat_conversations c ON c.id = m.conversation_id WHERE c.user_id = $1`,
     ),
+    userSettings: await one(`SELECT COUNT(*) FROM user_settings WHERE user_id = $1`),
   };
 }
 
@@ -108,6 +111,7 @@ describe("DELETE /api/v1/user/data", () => {
           gears: 1,
           conversations: 1,
           messages: 1,
+          userSettings: 1,
         });
 
         const res = await app.fetch(
@@ -126,6 +130,7 @@ describe("DELETE /api/v1/user/data", () => {
           gears: 0,
           conversations: 0,
           messages: 0,
+          userSettings: 0,
         });
 
         // The other user's data survives in full.
@@ -138,6 +143,7 @@ describe("DELETE /api/v1/user/data", () => {
           gears: 1,
           conversations: 1,
           messages: 1,
+          userSettings: 1,
         });
 
         // Strava OAuth revocation was attempted…

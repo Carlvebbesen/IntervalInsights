@@ -138,3 +138,57 @@ export const generateStructureName = (
   if (parts.length === 1) return `(n)x ${parts[0]}`;
   return `Mixed (${parts.join("/")})`;
 };
+
+type StructureStep = z.infer<typeof workoutSet>["steps"][number];
+
+// A step's magnitude, times folded to whole minutes when divisible by 60.
+const stepMagnitude = (step: StructureStep): { value: number; unit: "m" | "min" | "s" } => {
+  if (step.work_type === "DISTANCE") return { value: step.work_value, unit: "m" };
+  return step.work_value % 60 === 0
+    ? { value: step.work_value / 60, unit: "min" }
+    : { value: step.work_value, unit: "s" };
+};
+
+const formatStructureSet = (set: z.infer<typeof workoutSet>): string => {
+  const steps = set.steps ?? [];
+  if (steps.length === 0) return "";
+  const setReps = set.set_reps > 0 ? set.set_reps : 1;
+
+  if (steps.length === 1) {
+    const step = steps[0];
+    const count = setReps * (step.reps > 0 ? step.reps : 1);
+    const { value, unit } = stepMagnitude(step);
+    return count > 1 ? `${count}×${value}${unit}` : `${value}${unit}`;
+  }
+
+  // Multi-step: factor a shared unit ("3,2,1min") when every step has reps 1 and
+  // the same unit; otherwise render each step in full ("3×400m,200m").
+  const mags = steps.map(stepMagnitude);
+  const uniform =
+    steps.every((s) => (s.reps ?? 1) <= 1) && mags.every((m) => m.unit === mags[0].unit);
+  if (uniform) {
+    return `${setReps}×(${mags.map((m) => m.value).join(",")}${mags[0].unit})`;
+  }
+  const inner = steps
+    .map((s, i) => {
+      const { value, unit } = mags[i];
+      const reps = s.reps > 0 ? s.reps : 1;
+      return reps > 1 ? `${reps}×${value}${unit}` : `${value}${unit}`;
+    })
+    .join(",");
+  return `${setReps}×(${inner})`;
+};
+
+/**
+ * Compact human-readable summary of a draft workout structure for the pending
+ * list badge — e.g. "10×1000m", "4×(3,2,1min)". Null when there is no structure.
+ * Distances render in metres; times fold to whole minutes ("min") when divisible
+ * by 60, else seconds ("s"). Multiple sets join with " | ".
+ */
+export const formatStructureSummary = (
+  structure: z.infer<typeof workoutSet>[] | null | undefined,
+): string | null => {
+  if (!structure || structure.length === 0) return null;
+  const parts = structure.map(formatStructureSet).filter((p) => p.length > 0);
+  return parts.length > 0 ? parts.join(" | ") : null;
+};

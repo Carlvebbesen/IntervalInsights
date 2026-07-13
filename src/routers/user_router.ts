@@ -2,7 +2,13 @@ import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
 import * as userController from "../controllers/user_controller";
-import { DeleteAccountResponseSchema, ErrorSchema, UserSchema } from "../schemas/api_schemas";
+import {
+  DeleteAccountResponseSchema,
+  ErrorSchema,
+  UpdateUserSettingsSchema,
+  UserSchema,
+  UserSettingsSchema,
+} from "../schemas/api_schemas";
 import type { TGlobalEnv } from "../types/IRouters";
 
 const userRouter = new Hono<TGlobalEnv>();
@@ -94,6 +100,33 @@ userRouter.patch(
       c.req.valid("json"),
     );
     return c.json(user);
+  },
+);
+
+userRouter.patch(
+  "/settings",
+  describeRoute({
+    description:
+      "Partially update the authenticated user's analysis/notification settings. Returns the full settings object.",
+    responses: {
+      200: {
+        description: "Updated settings",
+        content: { "application/json": { schema: resolver(UserSettingsSchema) } },
+      },
+      400: {
+        description: "Invalid body",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("json", UpdateUserSettingsSchema),
+  async (c) => {
+    const settings = await userController.updateUserSettings(
+      c.env.db,
+      c.get("userId"),
+      c.req.valid("json"),
+    );
+    return c.json(settings);
   },
 );
 

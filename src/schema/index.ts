@@ -8,4 +8,5 @@ export * from "./interval_segments";
 export * from "./interval_structure";
 export * from "./oauth_provider_tokens";
 export * from "./script_runs";
+export * from "./user_settings";
 export * from "./users";

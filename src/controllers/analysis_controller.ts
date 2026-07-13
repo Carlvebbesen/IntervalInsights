@@ -9,8 +9,15 @@ import { recordAnalysisRun, recordTrainingTypeChange } from "../otel";
 import * as activityRepo from "../repositories/activity_repository";
 import type { AnalysisStatus, TrainingType } from "../schema";
 import type { PendingActivitySchema } from "../schemas/api_schemas";
-import { ResumeValidationError, resumeAnalysis, startAnalysis } from "../services/analysis_service";
+import {
+  autoCompleteAnalysis,
+  NoPendingInterruptError,
+  ResumeValidationError,
+  resumeAnalysis,
+  startAnalysis,
+} from "../services/analysis_service";
 import { createGearSuggester } from "../services/gear_suggestion_service";
+import { formatStructureSummary } from "../services/interval_structure_service";
 import { getProposedPaceForStructure, getProposedPaceFromLaps } from "../services/pace_service";
 import { requeueStaleActivities } from "../services/requeue_service";
 import { stravaApiService } from "../services/strava_api_service";
@@ -48,6 +55,7 @@ export async function getPending(
         startDateLocal: r.startDateLocal.toISOString(),
         suggestedGearId,
         gearSuggestions,
+        structureSummary: formatStructureSummary(r.draftAnalysisResult?.structure ?? null),
       };
     }),
   );
@@ -126,6 +134,50 @@ export async function resumeActivityAnalysis(
   }
   recordAnalysisRun({ phase: "resume", trigger: "manual" });
   if (trainingType) recordTrainingTypeChange({ trainingType, via: "resume" });
+  return { success: true };
+}
+
+/**
+ * Quick-complete (D3): resume an activity paused at `initial` with an empty
+ * payload, assigning suggested gear + carrying any text-declared paces. Works for
+ * every user regardless of `analysisReviewMode` — a manual-mode user tapping the
+ * complete-now action is the whole point. A raced concurrent user resume
+ * (`NoPendingInterruptError`) is treated as already-done success (user-wins); a
+ * `ResumeValidationError` (e.g. a structureless interval draft) surfaces as the
+ * error envelope, leaving the row `initial` for manual review.
+ */
+export async function autoCompleteActivity(
+  db: Db,
+  accessToken: string | undefined,
+  userId: string,
+  activityId: number,
+  logger: Logger,
+): Promise<{ success: true }> {
+  if (!accessToken) {
+    throw new AppError(400, "Access token missing");
+  }
+  const activity = await activityRepo.requireOwnedActivity(db, userId, activityId);
+  if (activity.analysisStatus !== "initial") {
+    throw new AppError(409, "Activity is not ready to complete");
+  }
+  try {
+    await autoCompleteAnalysis(db, accessToken, activityId, userId, activity, logger);
+  } catch (err) {
+    // NoPendingInterruptError is a subclass of ResumeValidationError — check it first.
+    if (err instanceof NoPendingInterruptError) {
+      logger.info(
+        { activityId },
+        "auto-complete no-op — user resume already claimed the interrupt",
+      );
+      return { success: true };
+    }
+    if (err instanceof ResumeValidationError) {
+      logger.info({ err: err.message }, "auto-complete validation failed");
+      throw new AppError(400, err.message);
+    }
+    throw err;
+  }
+  recordAnalysisRun({ phase: "resume", trigger: "auto" });
   return { success: true };
 }
 

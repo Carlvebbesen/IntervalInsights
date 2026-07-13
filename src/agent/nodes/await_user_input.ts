@@ -3,6 +3,7 @@ import { z } from "zod";
 import { logger } from "../../logger";
 import { trainingTypeEnum } from "../../schema/enums";
 import { EditedSegmentSchema, ExpandedIntervalSetSchema } from "../../schemas/api_schemas";
+import { progressService } from "../../services/progress_service";
 import {
   applyPartialCompletion,
   extractDeclaredStructure,
@@ -23,6 +24,21 @@ const resumePayloadSchema = z.object({
 export async function awaitUserInput(state: AnalysisState): Promise<Partial<AnalysisState>> {
   const log = logger.child({ node: "awaitUserInput", activityId: state.activityId });
   log.info("entering interrupt (or resuming with payload)");
+
+  // The draft + proposed segments both exist by now — signal the app the activity
+  // is ready to review before parking at the interrupt. (Runs again on resume;
+  // harmless — the app treats it as an idempotent pending refetch.)
+  await progressService.publish(state.userId, {
+    type: "progress",
+    data: {
+      id: state.activityId,
+      kind: "analysis",
+      phase: "ready_for_review",
+      analysisStatus: "initial",
+      title: state.activityTitle || undefined,
+    },
+  });
+
   const raw = interrupt({
     initialResult: state.initialResult,
     activityId: state.activityId,

@@ -4,6 +4,7 @@ export const ONCE_SCRIPTS = [
   "backfill_events",
   "backfill_gears",
   "backfill_hr_stats",
+  "backfill_user_settings",
   "run_backfill_fold",
   "sync_clerk_to_db",
 ] as const;

@@ -4,11 +4,27 @@ import {
   CURRENT_TERMS_OF_SERVICE_VERSION,
 } from "../consent_versions";
 import type { UserDao } from "../repositories/user_repository";
-import type { UserSchema } from "../schemas/api_schemas";
+import type { UserSettingsDao } from "../repositories/user_settings_repository";
+import type { UserSchema, UserSettingsSchema } from "../schemas/api_schemas";
 
 export type UserDto = z.infer<typeof UserSchema>;
+export type UserSettingsDto = z.infer<typeof UserSettingsSchema>;
 
-export function toUserDto(dao: UserDao): UserDto {
+export function toUserSettingsDto(settings: UserSettingsDao): UserSettingsDto {
+  return {
+    waitForStravaUpdate: settings.waitForStravaUpdate,
+    analysisReviewMode: settings.analysisReviewMode,
+    maxHeartRate: settings.maxHeartRate,
+    processHeartRate: settings.processHeartRate,
+  };
+}
+
+/**
+ * `maxHeartRate`/`processHeartRate` are read FROM `settings` (not the `users`
+ * row) — old Shorebird clients still read these top-level fields, but
+ * `settings` is now the source of truth (see analysis-settings migration).
+ */
+export function toUserDto(dao: UserDao, settings: UserSettingsDao): UserDto {
   return {
     id: dao.id,
     clerkId: dao.clerkId,
@@ -17,13 +33,14 @@ export function toUserDto(dao: UserDao): UserDto {
     image: dao.image,
     stravaId: dao.stravaId,
     role: dao.role,
-    maxHeartRate: dao.maxHeartRate,
-    processHeartRate: dao.processHeartRate,
+    maxHeartRate: settings.maxHeartRate,
+    processHeartRate: settings.processHeartRate,
     privacyPolicyAcceptedAt: dao.privacyPolicyAcceptedAt?.toISOString() ?? null,
     privacyPolicyVersion: dao.privacyPolicyVersion,
     currentPrivacyPolicyVersion: CURRENT_PRIVACY_POLICY_VERSION,
     termsOfServiceAcceptedAt: dao.termsOfServiceAcceptedAt?.toISOString() ?? null,
     termsOfServiceVersion: dao.termsOfServiceVersion,
     currentTermsOfServiceVersion: CURRENT_TERMS_OF_SERVICE_VERSION,
+    settings: toUserSettingsDto(settings),
   };
 }

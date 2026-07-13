@@ -104,11 +104,25 @@ async function main() {
       id: schema.users.id,
       clerkId: schema.users.clerkId,
       email: schema.users.email,
-      maxHeartRate: schema.users.maxHeartRate,
-      processHeartRate: schema.users.processHeartRate,
+      maxHeartRate: schema.userSettings.maxHeartRate,
+      processHeartRate: schema.userSettings.processHeartRate,
+      legacyMaxHeartRate: schema.users.maxHeartRate,
+      legacyProcessHeartRate: schema.users.processHeartRate,
     })
-    .from(schema.users);
-  const userById = new Map(userRows.map((u) => [u.id, u]));
+    .from(schema.users)
+    .leftJoin(schema.userSettings, eq(schema.userSettings.userId, schema.users.id));
+  // Users without a settings row yet (pre-backfill) fall back to the legacy
+  // users columns, so dumps stay faithful until the prod backfill runs.
+  const userById = new Map(
+    userRows.map((u) => [
+      u.id,
+      {
+        ...u,
+        maxHeartRate: u.maxHeartRate ?? u.legacyMaxHeartRate,
+        processHeartRate: u.processHeartRate ?? u.legacyProcessHeartRate,
+      },
+    ]),
+  );
 
   let acts = await db
     .select()
@@ -276,8 +290,8 @@ async function main() {
       user: user
         ? {
             clerkId: user.clerkId,
-            maxHeartRate: (user as any).maxHeartRate ?? null,
-            processHeartRate: (user as any).processHeartRate ?? null,
+            maxHeartRate: user.maxHeartRate ?? null,
+            processHeartRate: user.processHeartRate ?? null,
           }
         : null,
       db: {

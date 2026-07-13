@@ -91,6 +91,17 @@ mock.module("../src/services/intervals_wellness_service.ts", () => ({
   fetchWeekWellnessStats: async () => null,
 }));
 
+// Mutable delegate: a test file may swap this (e.g. to count/assert calls)
+// and MUST call reset() when done — the mock is global across files.
+export const analysisServiceMock = {
+  triggerAnalysisByStravaId: async (..._args: unknown[]) => {},
+  autoCompleteAnalysis: async (..._args: unknown[]) => {},
+  reset() {
+    this.triggerAnalysisByStravaId = async (..._args: unknown[]) => {};
+    this.autoCompleteAnalysis = async (..._args: unknown[]) => {};
+  },
+};
+
 mock.module("../src/services/analysis_service.ts", () => {
   class ResumeValidationError extends Error {
     constructor(message: string) {
@@ -98,11 +109,21 @@ mock.module("../src/services/analysis_service.ts", () => {
       this.name = "ResumeValidationError";
     }
   }
+  class NoPendingInterruptError extends ResumeValidationError {
+    constructor(message: string) {
+      super(message);
+      this.name = "NoPendingInterruptError";
+    }
+  }
   return {
     ResumeValidationError,
+    NoPendingInterruptError,
     startAnalysis: async () => {},
     resumeAnalysis: async () => {},
-    triggerAnalysisByStravaId: async () => {},
+    autoCompleteAnalysis: (...args: unknown[]) =>
+      analysisServiceMock.autoCompleteAnalysis(...args),
+    triggerAnalysisByStravaId: (...args: unknown[]) =>
+      analysisServiceMock.triggerAnalysisByStravaId(...args),
   };
 });
 
@@ -137,6 +158,8 @@ mock.module("../src/services/lap_derivation_service.ts", () => ({
 }));
 
 mock.module("../src/agent/parse_intervals_agent.ts", () => ({
+  parseWorkoutStep: z.object({ target_pace_string: z.string().nullable().optional() }),
+  parseWorkoutSet: z.object({ steps: z.array(z.unknown()) }),
   parseIntervalsOutput: z.object({ sets: z.array(z.unknown()) }),
   invokeParseIntervalsAgent: async () => ({ sets: [] }),
 }));

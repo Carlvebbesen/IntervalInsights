@@ -11,10 +11,13 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { eq } from "drizzle-orm";
 import * as gearRepo from "../src/repositories/gear_repository";
+import { updateUserSettings } from "../src/repositories/user_settings_repository";
 import { activities, gears } from "../src/schema";
+import { progressService } from "../src/services/progress_service";
 import { stravaApiService } from "../src/services/strava_api_service";
 import { closePool, createTestUser, deleteTestUser, getDb } from "./helpers/db";
 import { insertActivity } from "./helpers/fixtures";
+import { analysisServiceMock } from "./setup";
 
 const realModuleSpecifier = "../src/services/process_strava_event.ts?real=1";
 const { processStravaWebhook } = (await import(
@@ -61,8 +64,8 @@ function createEvent(objectId: number, ownerId: number, aspect: "create" | "upda
   };
 }
 
-async function createStravaUser(opts?: { lastSeenDaysAgo?: number }) {
-  const user = await createTestUser({ role: "premium" });
+async function createStravaUser(opts?: { lastSeenDaysAgo?: number; processHeartRate?: boolean }) {
+  const user = await createTestUser({ role: "premium", processHeartRate: opts?.processHeartRate });
   const athleteId = nextAthleteId();
   const lastSeenAt =
     opts?.lastSeenDaysAgo != null ? new Date(Date.now() - opts.lastSeenDaysAgo * DAY_MS) : null;
@@ -88,6 +91,7 @@ beforeEach(() => {
 
 afterEach(() => {
   stravaApiService.getActivity = realGetActivity;
+  analysisServiceMock.reset();
 });
 
 afterAll(async () => {
@@ -314,6 +318,49 @@ describe("processStravaWebhook (real implementation)", () => {
     }
   });
 
+  it("emits an `updated` progress event on a title change even when the analysis restart is skipped", async () => {
+    const user = await createStravaUser();
+    const captured: { event: string; data: Record<string, unknown> }[] = [];
+    const unregister = progressService.register(user.id, {
+      writeSSE: async (msg) => {
+        captured.push({ event: msg.event, data: JSON.parse(msg.data) });
+      },
+    });
+    try {
+      const stravaActivityId = nextAthleteId() * 1000;
+      // A `completed` row is in SKIP_RESTART_STATUSES — the restart is skipped,
+      // but the app must still learn the title changed (the stale-title fix).
+      const seeded = await insertActivity(user.id, {
+        stravaActivityId,
+        title: "Original title",
+        analysisStatus: "completed",
+      });
+
+      // An update with NO relevant field change (empty `updates`) → no emission.
+      getActivityResult = stravaActivity(stravaActivityId, user.athleteId, { name: "Original title" });
+      await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "update"), context);
+      expect(captured.filter((e) => e.event === "progress" && e.data.phase === "updated")).toHaveLength(0);
+
+      // A title change → exactly one `updated` emission.
+      getActivityResult = stravaActivity(stravaActivityId, user.athleteId, { name: "Renamed for real" });
+      const titleEvent = {
+        ...createEvent(stravaActivityId, user.athleteId, "update"),
+        updates: { title: "Renamed for real" },
+      };
+      await processStravaWebhook(titleEvent, context);
+
+      const updated = captured.filter((e) => e.event === "progress" && e.data.phase === "updated");
+      expect(updated).toHaveLength(1);
+      expect(updated[0].data.kind).toBe("strava_ingest");
+      expect(updated[0].data.id).toBe(seeded.id);
+      expect(updated[0].data.title).toBe("Renamed for real");
+      expect(updated[0].data.analysisStatus).toBe("completed");
+    } finally {
+      unregister();
+      await deleteTestUser(user.id);
+    }
+  });
+
   it("fuzzy-merges a Strava create into an intervals-sourced twin lacking a strava id (one row)", async () => {
     // Device dual-sync: the workout landed from intervals.icu first (no
     // strava_id known, so intervalsStravaId is null → the exact join can't
@@ -356,5 +403,187 @@ describe("processStravaWebhook (real implementation)", () => {
     } finally {
       await deleteTestUser(user.id);
     }
+  });
+
+  // Reader migration (analysis-settings wave 2): userHasHeartRateConsent now
+  // reads user_settings instead of users.processHeartRate directly — the
+  // ingest gate's ON/OFF behavior must be unchanged.
+  it("nulls HR on ingest when the user has not consented to HR processing", async () => {
+    const user = await createStravaUser({ processHeartRate: false });
+    try {
+      const stravaActivityId = nextAthleteId() * 1000;
+      getActivityResult = stravaActivity(stravaActivityId, user.athleteId, {
+        has_heartrate: true,
+        average_heartrate: 150,
+      });
+
+      await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "create"), context);
+
+      const [row] = await activitiesFor(user.id);
+      expect(row.hasHeartrate).toBe(false);
+      expect(row.averageHeartRate).toBeNull();
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  it("stores HR on ingest when the user has consented to HR processing", async () => {
+    const user = await createStravaUser({ processHeartRate: true });
+    try {
+      const stravaActivityId = nextAthleteId() * 1000;
+      getActivityResult = stravaActivity(stravaActivityId, user.athleteId, {
+        has_heartrate: true,
+        average_heartrate: 150,
+      });
+
+      await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "create"), context);
+
+      const [row] = await activitiesFor(user.id);
+      expect(row.hasHeartrate).toBe(true);
+      expect(row.averageHeartRate).toBe(150);
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  describe("immediate analysis start (D3: waitForStravaUpdate = false)", () => {
+    function countTriggerCalls() {
+      const state = { count: 0 };
+      analysisServiceMock.triggerAnalysisByStravaId = async () => {
+        state.count += 1;
+      };
+      return state;
+    }
+
+    const insertIntervalsTwin = async (userId: string, stravaActivityId: number) => {
+      const [row] = await db
+        .insert(activities)
+        .values({
+          userId,
+          stravaActivityId: null,
+          intervalsStravaId: null,
+          intervalsIcuId: `i-${stravaActivityId}`,
+          title: "Intervals import",
+          sportType: "Run",
+          distance: 8000,
+          movingTime: 2400,
+          startDateLocal: new Date("2026-07-01T10:00:00Z"),
+          indoor: false,
+          analysisStatus: "completed",
+        })
+        .returning();
+      return row;
+    };
+
+    it("does NOT trigger with default/explicit-true settings, on both create paths", async () => {
+      const user = await createStravaUser();
+      const calls = countTriggerCalls();
+      try {
+        // Fresh-insert path, no settings row created (default wait=true).
+        const stravaActivityId = nextAthleteId() * 1000;
+        getActivityResult = stravaActivity(stravaActivityId, user.athleteId);
+        await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "create"), context);
+        expect(calls.count).toBe(0);
+
+        // Twin-merge path, explicit wait=true.
+        await updateUserSettings(db, user.id, { waitForStravaUpdate: true });
+        const twinStravaId = nextAthleteId() * 1000;
+        const twin = await insertIntervalsTwin(user.id, twinStravaId);
+        getActivityResult = stravaActivity(twinStravaId, user.athleteId, {
+          distance: 8000,
+          start_date_local: "2026-07-01T10:00:00Z",
+        });
+        await processStravaWebhook(createEvent(twinStravaId, user.athleteId, "create"), context);
+        const [merged] = await db.select().from(activities).where(eq(activities.id, twin.id));
+        expect(merged.stravaActivityId).toBe(twinStravaId);
+        expect(calls.count).toBe(0);
+      } finally {
+        await deleteTestUser(user.id);
+      }
+    });
+
+    it("triggers exactly once on the fresh-insert path when waitForStravaUpdate=false", async () => {
+      const user = await createStravaUser();
+      await updateUserSettings(db, user.id, { waitForStravaUpdate: false });
+      const calls = countTriggerCalls();
+      try {
+        const stravaActivityId = nextAthleteId() * 1000;
+        getActivityResult = stravaActivity(stravaActivityId, user.athleteId);
+        await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "create"), context);
+        expect(calls.count).toBe(1);
+      } finally {
+        await deleteTestUser(user.id);
+      }
+    });
+
+    it("triggers exactly once on the twin-merge path when waitForStravaUpdate=false", async () => {
+      const user = await createStravaUser();
+      await updateUserSettings(db, user.id, { waitForStravaUpdate: false });
+      const calls = countTriggerCalls();
+      try {
+        const stravaActivityId = nextAthleteId() * 1000;
+        const twin = await insertIntervalsTwin(user.id, stravaActivityId);
+        getActivityResult = stravaActivity(stravaActivityId, user.athleteId, {
+          distance: 8000,
+          start_date_local: "2026-07-01T10:00:00Z",
+        });
+        await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "create"), context);
+
+        const [merged] = await db.select().from(activities).where(eq(activities.id, twin.id));
+        expect(merged.stravaActivityId).toBe(stravaActivityId);
+        expect(calls.count).toBe(1);
+      } finally {
+        await deleteTestUser(user.id);
+      }
+    });
+
+    it("fires at most once across a retried/duplicate create webhook when waitForStravaUpdate=false", async () => {
+      const user = await createStravaUser();
+      await updateUserSettings(db, user.id, { waitForStravaUpdate: false });
+      const calls = countTriggerCalls();
+      try {
+        const stravaActivityId = nextAthleteId() * 1000;
+        getActivityResult = stravaActivity(stravaActivityId, user.athleteId);
+
+        await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "create"), context);
+        await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "create"), context);
+
+        expect(calls.count).toBe(1);
+      } finally {
+        await deleteTestUser(user.id);
+      }
+    });
+
+    it("does NOT trigger for a skip-class (inactive) user even with waitForStravaUpdate=false", async () => {
+      const user = await createStravaUser({ lastSeenDaysAgo: 70 });
+      await updateUserSettings(db, user.id, { waitForStravaUpdate: false });
+      const calls = countTriggerCalls();
+      try {
+        const stravaActivityId = nextAthleteId() * 1000;
+        getActivityResult = stravaActivity(stravaActivityId, user.athleteId);
+        await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "create"), context);
+
+        const [row] = await activitiesFor(user.id);
+        expect(row.analysisStatus).toBe("skipped_inactive");
+        expect(calls.count).toBe(0);
+      } finally {
+        await deleteTestUser(user.id);
+      }
+    });
+
+    it("does NOT trigger once settings are toggled back to waitForStravaUpdate=true", async () => {
+      const user = await createStravaUser();
+      await updateUserSettings(db, user.id, { waitForStravaUpdate: false });
+      await updateUserSettings(db, user.id, { waitForStravaUpdate: true });
+      const calls = countTriggerCalls();
+      try {
+        const stravaActivityId = nextAthleteId() * 1000;
+        getActivityResult = stravaActivity(stravaActivityId, user.athleteId);
+        await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "create"), context);
+        expect(calls.count).toBe(0);
+      } finally {
+        await deleteTestUser(user.id);
+      }
+    });
   });
 });
