@@ -79,6 +79,9 @@ export const PendingActivitySchema = z
     intervalStructureId: z.number().nullable(),
     suggestedGearId: z.number().nullable(),
     gearSuggestions: z.array(z.number()),
+    // Compact proposed-structure badge (e.g. "10×1000m"); null when the draft has
+    // no structure. Lets the list distinguish quick-complete from open-and-review.
+    structureSummary: z.string().nullable(),
   })
   .openapi({ ref: "PendingActivity" });
 

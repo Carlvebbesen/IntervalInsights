@@ -5,7 +5,7 @@ import type { SegmentBoundary } from "../agent/graph_state";
 import { type Logger, logger } from "../logger";
 import { assignActivityToGear } from "../repositories/gear_repository";
 import { findOrCreateUserSettings } from "../repositories/user_settings_repository";
-import { activities, users } from "../schema";
+import { activities, type DraftAnalysisResult, users } from "../schema";
 import type { AnalysisReviewMode, AnalysisStatus, TrainingType } from "../schema/enums";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
@@ -240,6 +240,10 @@ type AutoResumeActivity = {
   intervalStructureId: number | null;
 };
 
+type AutoCompleteActivity = AutoResumeActivity & {
+  draftAnalysisResult: DraftAnalysisResult | null;
+};
+
 // Auto-assign gear from the default-rules engine before an auto-resume, but only
 // when Strava tagged none (ingest already linked the tagged case). A suggestion
 // failure must never block the resume.
@@ -269,6 +273,42 @@ async function maybeAutoAssignGear(
   } catch (err) {
     log.warn({ err, activityId }, "auto gear suggestion failed — resuming without gear");
   }
+}
+
+/**
+ * Mode-agnostic auto-complete core: assign the suggested gear when Strava tagged
+ * none, carry any text-declared paces into the draft structure, and resume with
+ * an empty payload (the draft structure hydrates with null paces). Shared by the
+ * review-mode auto-resume hook (`maybeAutoResumeAnalysis`) and the manual
+ * quick-complete endpoint (`POST /agents/auto-complete`). Throws on failure
+ * (`NoPendingInterruptError` / `ResumeValidationError` / a genuine mid-graph
+ * error) — callers map those to their own success/error semantics.
+ */
+export async function autoCompleteAnalysis(
+  db: IGlobalBindings["db"],
+  stravaAccessToken: string,
+  activityId: number,
+  userId: string,
+  activity: AutoCompleteActivity,
+  log: Logger,
+): Promise<void> {
+  const draftType = activity.draftAnalysisResult?.training_type ?? null;
+
+  await maybeAutoAssignGear(db, userId, activityId, activity, draftType, log);
+
+  // Carry text-declared paces into the resumed analysis. Only when the draft's
+  // structure came from the title/description (`structureSource === "text"`) and
+  // at least one work step had an explicitly-stated pace — otherwise resume with
+  // empty sets (the draft structure hydrates with null paces).
+  const draft = activity.draftAnalysisResult;
+  const declaredPaces = draft?.structureSource === "text" ? draft.declaredPaces : null;
+  const draftStructure = draft?.structure;
+  const autoSets: ExpandedIntervalSet[] =
+    declaredPaces && draftStructure?.length && declaredPaces.some((p) => p != null)
+      ? applyDeclaredPacesPositionally(generateCompleteIntervalSet(draftStructure), declaredPaces)
+      : [];
+
+  await resumeAnalysis(db, stravaAccessToken, activityId, "", autoSets, null, null, []);
 }
 
 /**
@@ -310,27 +350,11 @@ export async function maybeAutoResumeAnalysis(
   const settings = await findOrCreateUserSettings(db, userId);
   if (!settings) return;
 
-  const draftType =
-    (activity.draftAnalysisResult as { training_type?: TrainingType } | null)?.training_type ??
-    null;
+  const draftType = activity.draftAnalysisResult?.training_type ?? null;
   if (!computeShouldAutoResume(settings.analysisReviewMode, draftType)) return;
 
-  await maybeAutoAssignGear(db, userId, activityId, activity, draftType, log);
-
-  // D6: carry text-declared paces into the auto-resumed analysis. Only when the
-  // draft's structure came from the title/description (`structureSource === "text"`)
-  // and at least one work step had an explicitly-stated pace — otherwise resume
-  // with empty sets exactly as before (the draft structure hydrates with null paces).
-  const draft = activity.draftAnalysisResult;
-  const declaredPaces = draft?.structureSource === "text" ? draft.declaredPaces : null;
-  const draftStructure = draft?.structure;
-  const autoSets: ExpandedIntervalSet[] =
-    declaredPaces && draftStructure?.length && declaredPaces.some((p) => p != null)
-      ? applyDeclaredPacesPositionally(generateCompleteIntervalSet(draftStructure), declaredPaces)
-      : [];
-
   try {
-    await resumeAnalysis(db, stravaAccessToken, activityId, "", autoSets, null, null, []);
+    await autoCompleteAnalysis(db, stravaAccessToken, activityId, userId, activity, log);
     log.info({ activityId, mode: settings.analysisReviewMode }, "auto-resume completed analysis");
   } catch (err) {
     if (err instanceof NoPendingInterruptError) {

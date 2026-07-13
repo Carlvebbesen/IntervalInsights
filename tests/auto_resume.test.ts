@@ -13,7 +13,11 @@ import { activities, gears } from "../src/schema";
 import { intervalSegments } from "../src/schema/interval_segments";
 import * as deterministic from "../src/services/deterministic_segmenter";
 import * as paceService from "../src/services/pace_service";
-import { maybeAutoResumeAnalysis, resumeAnalysis } from "../src/services/resume_analysis";
+import {
+  autoCompleteAnalysis,
+  maybeAutoResumeAnalysis,
+  resumeAnalysis,
+} from "../src/services/resume_analysis";
 import * as segmentMapping from "../src/services/segment_mapping_service";
 import { stravaApiService } from "../src/services/strava_api_service";
 import { generateCompleteIntervalSet } from "../src/services/utils";
@@ -359,6 +363,44 @@ describe("auto-resume (review-mode bypass) — end-to-end on the real graph", ()
 
     // No error status, no throw: the auto path lost the race gracefully.
     expect(await statusOf(id)).not.toBe("error");
+
+    await resetAnalysisThread(id);
+  });
+
+  it("auto-complete (mode-agnostic): an EASY activity at initial completes with suggested gear + null paces", async () => {
+    // `all` is the review mode that would NOT auto-resume — the quick-complete
+    // endpoint's shared core must complete regardless of the user's review mode.
+    await setMode("all");
+    const { id, strava } = await seedActivity("easy quick complete");
+    await driveToInitial(id, strava);
+    expect(await statusOf(id)).toBe("initial");
+
+    const activity = await db().query.activities.findFirst({
+      where: eq(activities.id, id),
+      columns: {
+        localGearId: true,
+        sportType: true,
+        indoor: true,
+        gearUpdatedFromStrava: true,
+        intervalStructureId: true,
+        draftAnalysisResult: true,
+      },
+    });
+    if (!activity) throw new Error("seeded activity vanished");
+    await autoCompleteAnalysis(db(), TOKEN, id, userId, activity, logger);
+
+    const row = await db().query.activities.findFirst({
+      where: eq(activities.id, id),
+      columns: { analysisStatus: true, localGearId: true },
+    });
+    expect(row?.analysisStatus).toBe("completed");
+    expect(row?.localGearId).toBe(shoeId);
+
+    const segs = await db()
+      .select()
+      .from(intervalSegments)
+      .where(eq(intervalSegments.activityId, id));
+    for (const s of segs) expect(s.targetPace).toBeNull();
 
     await resetAnalysisThread(id);
   });

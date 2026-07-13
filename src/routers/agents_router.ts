@@ -135,6 +135,50 @@ agentsRouter.post(
   },
 );
 
+const autoCompleteSchema = z.object({
+  activityId: z.number(),
+});
+
+agentsRouter.post(
+  "/auto-complete",
+  stravaMiddleware,
+  dailyQuota(ANALYSIS_START_QUOTA, ANALYSIS_START_DAILY_MAX),
+  describeRoute({
+    description:
+      "Quick-complete an activity paused at `initial`: resume with an empty payload (suggested gear + any text-declared paces), regardless of the user's review mode.",
+    responses: {
+      200: {
+        description: "Analysis completed (or a raced concurrent resume already claimed it).",
+        content: { "application/json": { schema: resolver(z.object({ success: z.boolean() })) } },
+      },
+      400: {
+        description: "Bad request (e.g. a structureless interval draft).",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      409: {
+        description: "Activity is not in the `initial` (ready-to-complete) state.",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("json", autoCompleteSchema),
+  async (c) => {
+    const { activityId } = c.req.valid("json");
+    const result = await analysisController.autoCompleteActivity(
+      c.env.db,
+      c.get("stravaAccessToken"),
+      c.get("userId"),
+      activityId,
+      c.var.logger,
+    );
+    return c.json(result, 200);
+  },
+);
+
 const parseIntervalsSchema = z.object({
   text: z.string().min(3).max(2000),
   trainingType: z.enum(trainingTypeEnum.enumValues).nullable().optional(),

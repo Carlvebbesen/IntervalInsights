@@ -95,8 +95,10 @@ mock.module("../src/services/intervals_wellness_service.ts", () => ({
 // and MUST call reset() when done — the mock is global across files.
 export const analysisServiceMock = {
   triggerAnalysisByStravaId: async (..._args: unknown[]) => {},
+  autoCompleteAnalysis: async (..._args: unknown[]) => {},
   reset() {
     this.triggerAnalysisByStravaId = async (..._args: unknown[]) => {};
+    this.autoCompleteAnalysis = async (..._args: unknown[]) => {};
   },
 };
 
@@ -118,6 +120,8 @@ mock.module("../src/services/analysis_service.ts", () => {
     NoPendingInterruptError,
     startAnalysis: async () => {},
     resumeAnalysis: async () => {},
+    autoCompleteAnalysis: (...args: unknown[]) =>
+      analysisServiceMock.autoCompleteAnalysis(...args),
     triggerAnalysisByStravaId: (...args: unknown[]) =>
       analysisServiceMock.triggerAnalysisByStravaId(...args),
   };

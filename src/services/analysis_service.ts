@@ -18,6 +18,7 @@ import {
 } from "./resume_analysis";
 
 export {
+  autoCompleteAnalysis,
   NoPendingInterruptError,
   ResumeValidationError,
   resumeAnalysis,

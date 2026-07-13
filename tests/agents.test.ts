@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { NoPendingInterruptError } from "../src/services/analysis_service";
 import { closePool, createTestUser, deleteTestUser, getPool } from "./helpers/db";
 import { insertActivity } from "./helpers/fixtures";
 import { buildTestApp, withIdentity } from "./helpers/test_app";
+import { analysisServiceMock } from "./setup";
 
 const app = buildTestApp(getPool());
 
@@ -71,6 +73,45 @@ describe("/api/agents", () => {
         }),
       );
       expect(res.status).toBe(200);
+    }));
+
+  it("POST /auto-complete rejects a non-initial activity with the error envelope", () =>
+    withIdentity(identity(), async () => {
+      // The seeded activity is `pending`, not `initial` (ready to complete).
+      const res = await app.fetch(
+        new Request("http://test/api/v1/agents/auto-complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ activityId }),
+        }),
+      );
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(typeof body.error).toBe("string");
+    }));
+
+  it("POST /auto-complete treats a raced concurrent resume (NoPendingInterrupt) as success", () =>
+    withIdentity(identity(), async () => {
+      const seeded = await insertActivity(user.id, {
+        title: "Ready run",
+        analysisStatus: "initial",
+      });
+      analysisServiceMock.autoCompleteAnalysis = async () => {
+        throw new NoPendingInterruptError("thread has no pending interrupt");
+      };
+      try {
+        const res = await app.fetch(
+          new Request("http://test/api/v1/agents/auto-complete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ activityId: seeded.id }),
+          }),
+        );
+        expect(res.status).toBe(200);
+        expect((await res.json()).success).toBe(true);
+      } finally {
+        analysisServiceMock.reset();
+      }
     }));
 
   it("POST /parse-intervals returns [] for stub agent", () =>
