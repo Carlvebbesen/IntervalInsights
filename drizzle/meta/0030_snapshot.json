@@ -1,5 +1,5 @@
 {
-  "id": "b7cc8500-bdd9-4f63-9ba2-7a2081833c3d",
+  "id": "8e99e24f-06bb-4397-9410-1e600e5b6829",
   "prevId": "cd701926-8203-4f95-8a6f-5878bb8e714c",
   "version": "7",
   "dialect": "postgresql",
@@ -930,6 +930,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "chat_message_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
         },
         "artifacts": {
           "name": "artifacts",
@@ -2183,37 +2190,6 @@
           "notNull": true,
           "default": false
         },
-        "threshold_pace_mps": {
-          "name": "threshold_pace_mps",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "lthr": {
-          "name": "lthr",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "resting_hr": {
-          "name": "resting_hr",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "ftp": {
-          "name": "ftp",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "sex": {
-          "name": "sex",
-          "type": "sex",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -2444,6 +2420,14 @@
         "number_list"
       ]
     },
+    "public.chat_message_status": {
+      "name": "chat_message_status",
+      "schema": "public",
+      "values": [
+        "interrupted",
+        "error"
+      ]
+    },
     "public.chat_role": {
       "name": "chat_role",
       "schema": "public",
@@ -2523,14 +2507,6 @@
         "running",
         "completed",
         "failed"
-      ]
-    },
-    "public.sex": {
-      "name": "sex",
-      "schema": "public",
-      "values": [
-        "male",
-        "female"
       ]
     },
     "public.target_type_enum": {

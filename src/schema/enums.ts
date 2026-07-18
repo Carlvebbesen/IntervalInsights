@@ -119,6 +119,10 @@ export const chatRoleEnum = pgEnum("chat_role", ["user", "assistant"]);
 
 export type ChatRole = (typeof chatRoleEnum.enumValues)[number];
 
+export const chatMessageStatusEnum = pgEnum("chat_message_status", ["interrupted", "error"]);
+
+export type ChatMessageStatus = (typeof chatMessageStatusEnum.enumValues)[number];
+
 export const attributeValueTypeEnum = pgEnum("attribute_value_type", [
   "string",
   "number",

@@ -1,5 +1,6 @@
 import { SystemMessage } from "@langchain/core/messages";
 import type { TrainingState } from "../graph_state";
+import { windowMessages } from "../message_window";
 import { metaTools } from "../meta_tools";
 import { coachModel } from "../model";
 import { buildSystemPrompt } from "../prompts";
@@ -17,6 +18,10 @@ export async function agentNode(state: TrainingState): Promise<Partial<TrainingS
       ]
     : [];
 
-  const ai = await model.invoke([new SystemMessage(SYSTEM_PROMPT), ...revision, ...state.messages]);
+  const ai = await model.invoke([
+    new SystemMessage(SYSTEM_PROMPT),
+    ...revision,
+    ...windowMessages(state.messages),
+  ]);
   return { messages: [ai] };
 }

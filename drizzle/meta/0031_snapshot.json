@@ -1,6 +1,6 @@
 {
-  "id": "5d7a27fc-ad95-4ba8-a68e-c601627f8c9e",
-  "prevId": "b7cc8500-bdd9-4f63-9ba2-7a2081833c3d",
+  "id": "20b12cb2-47a7-4da1-9533-1b567b969ffb",
+  "prevId": "8e99e24f-06bb-4397-9410-1e600e5b6829",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -936,6 +936,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "chat_message_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
         },
         "artifacts": {
           "name": "artifacts",
@@ -2448,6 +2455,14 @@
         "datetime",
         "string_list",
         "number_list"
+      ]
+    },
+    "public.chat_message_status": {
+      "name": "chat_message_status",
+      "schema": "public",
+      "values": [
+        "interrupted",
+        "error"
       ]
     },
     "public.chat_role": {

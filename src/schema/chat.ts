@@ -1,7 +1,7 @@
 import { type InferInsertModel, type InferSelectModel, relations } from "drizzle-orm";
 import { index, jsonb, pgTable, serial, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { CoachArtifact } from "../schemas/api_schemas";
-import { chatRoleEnum } from "./enums";
+import { chatMessageStatusEnum, chatRoleEnum } from "./enums";
 import { users } from "./users";
 
 export const chatConversations = pgTable(
@@ -27,6 +27,7 @@ export const chatMessages = pgTable(
       .notNull(),
     role: chatRoleEnum("role").notNull(),
     content: text("content").notNull(),
+    status: chatMessageStatusEnum("status"),
     artifacts: jsonb("artifacts").$type<CoachArtifact[]>(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

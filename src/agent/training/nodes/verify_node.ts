@@ -1,4 +1,4 @@
-import { type AIMessage, isAIMessage } from "@langchain/core/messages";
+import { type AIMessage, isAIMessage, RemoveMessage } from "@langchain/core/messages";
 import { z } from "zod";
 import { logger } from "../../../logger";
 import type { CoachArtifact } from "../../../schemas/api_schemas";
@@ -90,12 +90,16 @@ export async function verifyNode(state: TrainingState): Promise<TrainingUpdate> 
 
   if (state.verifyAttempts < MAX_VERIFY_ATTEMPTS) {
     logger.info({ reason: verdict.reason }, "coach verify node: requesting regeneration");
-    return {
+    // Drop the rejected draft so it never accumulates in the checkpointed thread.
+    // The reducer removes by id; skip removal (rather than crash) if it has none.
+    const update: TrainingUpdate = {
       verdict: "regenerate",
       verifyFeedback: verdict.feedback,
       verifyAttempts: state.verifyAttempts + 1,
       pendingArtifacts: null,
     };
+    if (lastAi?.id) update.messages = [new RemoveMessage({ id: lastAi.id })];
+    return update;
   }
 
   logger.warn({ reason: verdict.reason }, "coach verify node: blocked after retry, safe refusal");
