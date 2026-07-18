@@ -164,6 +164,33 @@ mock.module("../src/agent/parse_intervals_agent.ts", () => ({
   invokeParseIntervalsAgent: async () => ({ sets: [] }),
 }));
 
+// Training coach graph: the real graph calls OpenAI + a Postgres checkpointer.
+// Stub `buildTrainingGraph` to a fake compiled graph. Mutable delegates let a
+// test file drive the streamed answer or force an error/abort — call reset()
+// when done (the mock is global across files).
+type StreamEvent = [string, unknown];
+async function* defaultStream(): AsyncGenerator<StreamEvent> {
+  yield ["values", { finalAnswer: "Here is your training answer.", pendingArtifacts: null }];
+}
+export const trainingGraphMock = {
+  stream: defaultStream as (...args: unknown[]) => AsyncGenerator<StreamEvent>,
+  getState: (async () => ({ values: { messages: [] } })) as (...args: unknown[]) => Promise<unknown>,
+  updateState: (async () => {}) as (...args: unknown[]) => Promise<unknown>,
+  reset() {
+    this.stream = defaultStream;
+    this.getState = async () => ({ values: { messages: [] } });
+    this.updateState = async () => {};
+  },
+};
+
+mock.module("../src/agent/training/training_graph.ts", () => ({
+  buildTrainingGraph: async () => ({
+    stream: (...args: unknown[]) => trainingGraphMock.stream(...args),
+    getState: (...args: unknown[]) => trainingGraphMock.getState(...args),
+    updateState: (...args: unknown[]) => trainingGraphMock.updateState(...args),
+  }),
+}));
+
 // Clerk: the real client makes HTTPS calls. Stub it. Provider OAuth tokens live
 // in Postgres (`oauth_provider_tokens`, seeded by tests/helpers/db.ts), so the
 // only remaining `getUser` consumer is the dual-auth guard's identity
