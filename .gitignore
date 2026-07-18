@@ -33,4 +33,5 @@ lerna-debug.log*
 .DS_Store
 
 # test-generated
-tests/fixtures/
+tests/fixtures/*
+!tests/fixtures/met_locationforecast_complete.json
