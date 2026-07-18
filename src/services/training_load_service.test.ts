@@ -323,3 +323,28 @@ describe("stream-length mismatch", () => {
     expect(load).toBeCloseTo((100 * (n - 1)) / 3600, 3);
   });
 });
+
+describe("mutation-gap regression fixtures", () => {
+  test("creeping samples (0 < v < 0.3) count as stopped when no moving stream", () => {
+    // 1s samples; hr held exactly at LTHR so HRSS = moving_seconds/3600*100.
+    // i=1..4 move at 4 m/s (4 s), i=5..9 creep at 0.25 m/s and must be excluded.
+    const time = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+    const velocity = [4, 4, 4, 4, 4, 0.25, 0.25, 0.25, 0.25, 0.25];
+    const heartrate = Array.from({ length: 10 }, () => 170);
+    const load = hrss(
+      { time, velocity, heartrate },
+      { lthr: 170, restingHr: 50, maxHr: 190, sex: "male" },
+    );
+    expect(load).toBeCloseTo((4 / 3600) * 100, 4);
+  });
+
+  test("NP trailing window is exactly 30s (30s-spaced samples average current + previous)", () => {
+    // 30s spacing: each trailing-30s window holds exactly the current and
+    // previous sample, so rolling = pairwise mean -> [., 200, 200, 100, 100].
+    // NP = ((2*200^4 + 2*100^4)/4)^(1/4); with ftp=100 and 120 moving seconds,
+    // TSS = NP^2/3000 = sqrt(8.5e8)/3000 = 9.71825.
+    const time = [0, 30, 60, 90, 120];
+    const watts = [100, 300, 100, 100, 100];
+    expect(powerTss({ time, watts }, 100)).toBeCloseTo(9.71825, 4);
+  });
+});
