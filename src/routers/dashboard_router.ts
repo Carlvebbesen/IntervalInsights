@@ -112,8 +112,14 @@ dashboardRouter.get(
   }),
   validator("query", WellnessQuerySchema),
   async (c) => {
-    const { oldest, newest } = c.req.valid("query");
-    const result = await dashboardController.getFitnessSeries(c.get("userId"), oldest, newest);
+    const { oldest, newest, sport } = c.req.valid("query");
+    const result = await dashboardController.getFitnessSeries(
+      c.env.db,
+      c.get("userId"),
+      oldest,
+      newest,
+      sport,
+    );
     return c.json(result);
   },
 );

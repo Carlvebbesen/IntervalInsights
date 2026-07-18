@@ -1,6 +1,5 @@
-import { IntervalsError } from "../error";
 import { logger } from "../logger";
-import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
+import type { IGlobalBindings } from "../types/IRouters";
 import type {
   IIntervalsMetricStats,
   IIntervalsTrainingSummaryResult,
@@ -11,108 +10,169 @@ import type {
   IIntervalsWellnessSummary,
   NumericMetric,
 } from "../types/intervals/IIntervalsWellness";
+import {
+  computeFitnessDay,
+  computeFitnessSeries,
+  type FitnessMetricsPoint,
+} from "./fitness_metrics_service";
 import { intervalsApiService } from "./intervals_api_service";
 import { withIntervalsToken } from "./intervals_token_helper";
 import { toISODate } from "./utils";
 
+type Db = IGlobalBindings["db"];
+
+const DAY_MS = 86_400_000;
+
+interface WellnessLoad {
+  /** True when the intervals.icu token resolved (regardless of records). */
+  linked: boolean;
+  records: IIntervalsWellness[];
+}
+
+// Wellness now supplies only pure data points (HRV, sleep, resting HR, weight,
+// …). A fetch failure must not sink the self-computed fitness half, so it
+// degrades to no records rather than throwing.
+async function loadWellness(userId: string, oldest: string, newest: string): Promise<WellnessLoad> {
+  try {
+    const result = await withIntervalsToken(userId, (accessToken) =>
+      intervalsApiService.getWellness(accessToken, oldest, newest),
+    );
+    if (result.status === "not_linked") return { linked: false, records: [] };
+    return { linked: true, records: result.data };
+  } catch (err) {
+    logger.error({ err }, "Intervals.icu wellness fetch failed");
+    return { linked: true, records: [] };
+  }
+}
+
+// P3 parallel-run signal: while intervals.icu is still linked, emit the computed
+// CTL/ATL against intervals' own values so the deltas can be watched before the
+// cutover. Only fires when a wellness record is present (i.e. linked with data).
+function logFitnessParallelDelta(
+  userId: string,
+  source: string,
+  computed: FitnessMetricsPoint | null,
+  wellness: IIntervalsWellness | null,
+): void {
+  if (!wellness) return;
+  const { ctl: icuCtl, atl: icuAtl } = wellness;
+  logger.info(
+    {
+      userId,
+      source,
+      computedCtl: computed?.ctl ?? null,
+      computedAtl: computed?.atl ?? null,
+      icuCtl,
+      icuAtl,
+      deltaCtl: computed && icuCtl != null ? computed.ctl - icuCtl : null,
+      deltaAtl: computed && icuAtl != null ? computed.atl - icuAtl : null,
+    },
+    "fitness parallel-run delta",
+  );
+}
+
 export async function fetchWellnessSummary(
+  db: Db,
   userId: string,
   oldest: string,
   newest: string,
 ): Promise<IIntervalsWellnessSummary | null> {
-  let accessToken: string;
-  try {
-    accessToken = await getIntervalsAccessToken(userId);
-  } catch {
-    return null;
-  }
+  const metricsPoint = await computeFitnessDay(db, userId, newest);
+  const { records } = await loadWellness(userId, oldest, newest);
+  const latest = records.length > 0 ? records[records.length - 1] : null;
 
-  try {
-    const wellnessData = await intervalsApiService.getWellness(accessToken, oldest, newest);
-    const latest = wellnessData.length > 0 ? wellnessData[wellnessData.length - 1] : null;
+  logFitnessParallelDelta(userId, "wellness_summary", metricsPoint, latest);
 
-    let hrvSum = 0;
-    let hrvCount = 0;
-    let sleepSum = 0;
-    let sleepCount = 0;
-    for (const w of wellnessData) {
-      if (w.hrv != null) {
-        hrvSum += w.hrv;
-        hrvCount++;
-      }
-      if (w.sleepQuality != null) {
-        sleepSum += w.sleepQuality;
-        sleepCount++;
-      }
+  if (!metricsPoint && records.length === 0) return null;
+
+  let hrvSum = 0;
+  let hrvCount = 0;
+  let sleepSum = 0;
+  let sleepCount = 0;
+  for (const w of records) {
+    if (w.hrv != null) {
+      hrvSum += w.hrv;
+      hrvCount++;
     }
-
-    const ctl = latest?.ctl ?? null;
-    const atl = latest?.atl ?? null;
-
-    return {
-      ctl,
-      atl,
-      tsb: ctl != null && atl != null ? ctl - atl : null,
-      avgHrv: hrvCount > 0 ? hrvSum / hrvCount : null,
-      avgSleepQuality: sleepCount > 0 ? sleepSum / sleepCount : null,
-      restingHr: latest?.restingHR ?? null,
-    };
-  } catch (err) {
-    logger.error({ err }, "Intervals.icu wellness fetch failed");
-    return null;
+    if (w.sleepQuality != null) {
+      sleepSum += w.sleepQuality;
+      sleepCount++;
+    }
   }
+
+  return {
+    ctl: metricsPoint?.ctl ?? null,
+    atl: metricsPoint?.atl ?? null,
+    tsb: metricsPoint?.tsb ?? null,
+    avgHrv: hrvCount > 0 ? hrvSum / hrvCount : null,
+    avgSleepQuality: sleepCount > 0 ? sleepSum / sleepCount : null,
+    restingHr: latest?.restingHR ?? null,
+  };
 }
 
 export async function fetchTrainingSummary(
+  db: Db,
   userId: string,
+  date?: string,
 ): Promise<IIntervalsTrainingSummaryResult> {
-  let accessToken: string;
-  try {
-    accessToken = await getIntervalsAccessToken(userId);
-  } catch (err) {
-    if (err instanceof IntervalsError && err.status === 403) {
-      return { status: "not_linked", data: null };
-    }
-    throw err;
+  const newestDate = date ? new Date(`${date}T00:00:00Z`) : new Date();
+  const newest = toISODate(newestDate);
+  const oldest = toISODate(new Date(newestDate.getTime() - 7 * DAY_MS));
+
+  const metricsPoint = await computeFitnessDay(db, userId, newest);
+  const { linked, records } = await loadWellness(userId, oldest, newest);
+  const latest = records.length > 0 ? records[records.length - 1] : null;
+
+  logFitnessParallelDelta(userId, "training_summary", metricsPoint, latest);
+
+  if (!metricsPoint) {
+    return { status: linked ? "no_recent_data" : "not_linked", data: null };
   }
-
-  const now = new Date();
-  const newest = toISODate(now);
-  const oldest = toISODate(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
-
-  const records = await intervalsApiService.getWellness(accessToken, oldest, newest);
-  if (records.length === 0) return { status: "no_recent_data", data: null };
-  const latest = records[records.length - 1];
 
   return {
     status: "ok",
     data: {
-      date: latest.id,
+      date: metricsPoint.date,
       fitness: {
-        ctl: latest.ctl,
-        atl: latest.atl,
-        rampRate: latest.rampRate,
-        ctlLoad: latest.ctlLoad,
-        atlLoad: latest.atlLoad,
+        ctl: metricsPoint.ctl,
+        atl: metricsPoint.atl,
+        rampRate: metricsPoint.rampRate,
+        ctlLoad: metricsPoint.load,
+        atlLoad: metricsPoint.load,
       },
       sleep: {
-        sleepSecs: latest.sleepSecs,
-        sleepScore: latest.sleepScore,
+        sleepSecs: latest?.sleepSecs ?? null,
+        sleepScore: latest?.sleepScore ?? null,
       },
       recovery: {
-        restingHR: latest.restingHR,
-        hrv: latest.hrv,
-        readiness: latest.readiness,
-        baevskySI: latest.baevskySI,
-        spO2: latest.spO2,
-        respiration: latest.respiration,
+        restingHR: latest?.restingHR ?? null,
+        hrv: latest?.hrv ?? null,
+        readiness: latest?.readiness ?? null,
+        baevskySI: latest?.baevskySI ?? null,
+        spO2: latest?.spO2 ?? null,
+        respiration: latest?.respiration ?? null,
       },
       body: {
-        weight: latest.weight,
-        vo2max: latest.vo2max,
+        weight: latest?.weight ?? null,
+        vo2max: latest?.vo2max ?? null,
       },
     },
   };
+}
+
+const COMPUTED_METRIC_READERS = {
+  ctl: (m: FitnessMetricsPoint) => m.ctl,
+  atl: (m: FitnessMetricsPoint) => m.atl,
+  tsb: (m: FitnessMetricsPoint) => m.tsb,
+  rampRate: (m: FitnessMetricsPoint) => m.rampRate,
+  ctlLoad: (m: FitnessMetricsPoint) => m.load,
+  atlLoad: (m: FitnessMetricsPoint) => m.load,
+} satisfies Partial<Record<NumericMetric, (m: FitnessMetricsPoint) => number | null>>;
+
+type ComputedMetric = keyof typeof COMPUTED_METRIC_READERS;
+
+function isComputedMetric(key: NumericMetric): key is ComputedMetric {
+  return key in COMPUTED_METRIC_READERS;
 }
 
 const METRIC_READERS: Record<NumericMetric, (w: IIntervalsWellness) => number | null> = {
@@ -145,78 +205,80 @@ const METRIC_READERS: Record<NumericMetric, (w: IIntervalsWellness) => number | 
 
 const NUMERIC_METRICS = Object.keys(METRIC_READERS) as NumericMetric[];
 
-function buildPoint(w: IIntervalsWellness): IIntervalsWellnessPoint {
+// The six fitness metrics read from the computed fold; everything else from the
+// wellness record for that day.
+function readMetric(
+  key: NumericMetric,
+  m: FitnessMetricsPoint | undefined,
+  w: IIntervalsWellness | undefined,
+): number | null {
+  if (isComputedMetric(key)) return m ? COMPUTED_METRIC_READERS[key](m) : null;
+  return w ? METRIC_READERS[key](w) : null;
+}
+
+function buildMergedPoint(
+  date: string,
+  m: FitnessMetricsPoint | undefined,
+  w: IIntervalsWellness | undefined,
+): IIntervalsWellnessPoint {
   return {
-    date: w.id,
+    date,
     fitness: {
-      ctl: w.ctl,
-      atl: w.atl,
-      tsb: w.ctl != null && w.atl != null ? w.ctl - w.atl : null,
-      rampRate: w.rampRate,
-      ctlLoad: w.ctlLoad,
-      atlLoad: w.atlLoad,
+      ctl: m?.ctl ?? null,
+      atl: m?.atl ?? null,
+      tsb: m?.tsb ?? null,
+      rampRate: m?.rampRate ?? null,
+      ctlLoad: m?.load ?? null,
+      atlLoad: m?.load ?? null,
     },
     sleep: {
-      sleepSecs: w.sleepSecs,
-      sleepScore: w.sleepScore,
-      sleepQuality: w.sleepQuality,
+      sleepSecs: w?.sleepSecs ?? null,
+      sleepScore: w?.sleepScore ?? null,
+      sleepQuality: w?.sleepQuality ?? null,
     },
     recovery: {
-      restingHR: w.restingHR,
-      hrv: w.hrv,
-      readiness: w.readiness,
-      baevskySI: w.baevskySI,
-      spO2: w.spO2,
-      respiration: w.respiration,
+      restingHR: w?.restingHR ?? null,
+      hrv: w?.hrv ?? null,
+      readiness: w?.readiness ?? null,
+      baevskySI: w?.baevskySI ?? null,
+      spO2: w?.spO2 ?? null,
+      respiration: w?.respiration ?? null,
     },
     subjective: {
-      soreness: w.soreness,
-      fatigue: w.fatigue,
-      stress: w.stress,
-      mood: w.mood,
-      motivation: w.motivation,
+      soreness: w?.soreness ?? null,
+      fatigue: w?.fatigue ?? null,
+      stress: w?.stress ?? null,
+      mood: w?.mood ?? null,
+      motivation: w?.motivation ?? null,
     },
     health: {
-      injury: w.injury,
-      sickness: w.sickness,
+      injury: w?.injury ?? null,
+      sickness: w?.sickness ?? null,
     },
     body: {
-      weight: w.weight,
-      bodyFat: w.bodyFat,
-      vo2max: w.vo2max,
+      weight: w?.weight ?? null,
+      bodyFat: w?.bodyFat ?? null,
+      vo2max: w?.vo2max ?? null,
     },
-    comments: w.comments,
+    comments: w?.comments ?? null,
   };
 }
 
 export async function fetchWeekWellnessStats(
+  db: Db,
   userId: string,
   oldest: string,
   newest: string,
 ): Promise<IIntervalsWeekWellness | null> {
-  let accessToken: string;
-  try {
-    accessToken = await getIntervalsAccessToken(userId);
-  } catch {
-    return null;
-  }
+  const series = await computeFitnessSeries(db, userId, { oldest, newest });
+  const { records } = await loadWellness(userId, oldest, newest);
 
-  let records: IIntervalsWellness[];
-  try {
-    records = await intervalsApiService.getWellness(accessToken, oldest, newest);
-  } catch (err) {
-    logger.error({ err }, "Intervals.icu week wellness fetch failed");
-    return null;
-  }
-
-  if (records.length === 0) return null;
+  if (series.length === 0 && records.length === 0) return null;
 
   let sleepSum = 0;
   let sleepCount = 0;
   let fatigueSum = 0;
   let fatigueCount = 0;
-  let loadSum = 0;
-  let loadCount = 0;
   for (const r of records) {
     if (r.sleepScore != null) {
       sleepSum += r.sleepScore;
@@ -226,43 +288,50 @@ export async function fetchWeekWellnessStats(
       fatigueSum += r.fatigue;
       fatigueCount++;
     }
-    if (r.atlLoad != null) {
-      loadSum += r.atlLoad;
-      loadCount++;
-    }
   }
 
-  const latest = records[records.length - 1];
-  const fitness = latest.ctl;
-  const form = latest.ctl != null && latest.atl != null ? latest.ctl - latest.atl : null;
+  const lastPoint = series.length > 0 ? series[series.length - 1] : null;
+  const totalLoad = series.reduce((sum, p) => sum + p.load, 0);
+
+  logFitnessParallelDelta(
+    userId,
+    "week_wellness",
+    lastPoint,
+    records.length > 0 ? records[records.length - 1] : null,
+  );
 
   return {
     avgSleepScore: sleepCount > 0 ? sleepSum / sleepCount : null,
     avgFatigue: fatigueCount > 0 ? fatigueSum / fatigueCount : null,
-    fitness,
-    form,
-    totalLoad: loadCount > 0 ? loadSum : null,
+    fitness: lastPoint?.ctl ?? null,
+    form: lastPoint?.tsb ?? null,
+    totalLoad: series.length > 0 ? totalLoad : null,
   };
 }
 
 export async function fetchWellnessSeries(
+  db: Db,
   userId: string,
   oldest: string,
   newest: string,
 ): Promise<IIntervalsWellnessSeriesResult> {
-  const result = await withIntervalsToken(userId, (accessToken) =>
-    fetchWellnessSeriesWithToken(accessToken, oldest, newest),
-  );
-  return result.status === "not_linked" ? { status: "not_linked", data: null } : result.data;
-}
+  const metrics = await computeFitnessSeries(db, userId, { oldest, newest });
+  const { linked, records } = await loadWellness(userId, oldest, newest);
 
-async function fetchWellnessSeriesWithToken(
-  accessToken: string,
-  oldest: string,
-  newest: string,
-): Promise<IIntervalsWellnessSeriesResult> {
-  const records = await intervalsApiService.getWellness(accessToken, oldest, newest);
-  if (records.length === 0) return { status: "no_data", data: null };
+  if (metrics.length === 0 && records.length === 0) {
+    return { status: linked ? "no_data" : "not_linked", data: null };
+  }
+
+  logFitnessParallelDelta(
+    userId,
+    "wellness_series",
+    metrics.length > 0 ? metrics[metrics.length - 1] : null,
+    records.length > 0 ? records[records.length - 1] : null,
+  );
+
+  const computedByDate = new Map(metrics.map((m) => [m.date, m]));
+  const wellnessByDate = new Map(records.map((r) => [r.id, r]));
+  const allDates = [...new Set([...computedByDate.keys(), ...wellnessByDate.keys()])].sort();
 
   type Acc = { min: number | null; max: number | null; sum: number; count: number };
   const acc = {} as Record<NumericMetric, Acc>;
@@ -270,9 +339,11 @@ async function fetchWellnessSeriesWithToken(
     acc[key] = { min: null, max: null, sum: 0, count: 0 };
   }
 
-  for (const record of records) {
+  for (const date of allDates) {
+    const m = computedByDate.get(date);
+    const w = wellnessByDate.get(date);
     for (const key of NUMERIC_METRICS) {
-      const value = METRIC_READERS[key](record);
+      const value = readMetric(key, m, w);
       if (value == null) continue;
       const a = acc[key];
       if (a.min == null || value < a.min) a.min = value;
@@ -282,13 +353,14 @@ async function fetchWellnessSeriesWithToken(
     }
   }
 
-  const lastRecord = records[records.length - 1];
+  const lastComputed = metrics.length > 0 ? metrics[metrics.length - 1] : undefined;
+  const lastWellness = records.length > 0 ? records[records.length - 1] : undefined;
   const summary = {} as Record<NumericMetric, IIntervalsMetricStats>;
   const metricsAvailable: NumericMetric[] = [];
   for (const key of NUMERIC_METRICS) {
     const a = acc[key];
     summary[key] = {
-      latest: METRIC_READERS[key](lastRecord),
+      latest: readMetric(key, lastComputed, lastWellness),
       min: a.min,
       max: a.max,
       avg: a.count > 0 ? a.sum / a.count : null,
@@ -302,7 +374,9 @@ async function fetchWellnessSeriesWithToken(
       range: { oldest, newest },
       metricsAvailable,
       summary,
-      points: records.map(buildPoint),
+      points: allDates.map((d) =>
+        buildMergedPoint(d, computedByDate.get(d), wellnessByDate.get(d)),
+      ),
     },
   };
 }

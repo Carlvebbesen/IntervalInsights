@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FITNESS_SPORT_VALUES } from "../../../schemas/dashboard_schemas";
 import { fetchFitnessDayBlock, fetchFitnessSeries } from "../../../services/fitness_service";
 import {
   fetchTrainingSummary,
@@ -26,9 +27,9 @@ const getFitnessToday = defineTool({
     "hrv",
     "sleep",
   ],
-  requires: "intervals",
+  requires: "activity-source",
   params: z.object({}),
-  handler: (ctx) => fetchTrainingSummary(ctx.userId),
+  handler: (ctx) => fetchTrainingSummary(ctx.db, ctx.userId, ctxToday(ctx)),
 });
 
 const getFitnessDay = defineTool({
@@ -36,9 +37,9 @@ const getFitnessDay = defineTool({
   description:
     "Fitness block for a single day: CTL, ATL, TSB (form), HRV (+ Garmin-style balanced/unbalanced status), and sleep score.",
   keywords: ["ctl", "atl", "tsb", "form", "hrv", "sleep", "day", "date"],
-  requires: "intervals",
+  requires: "activity-source",
   params: z.object({ date: z.string().optional().describe("ISO date; defaults to today") }),
-  handler: (ctx, args) => fetchFitnessDayBlock(ctx.userId, args.date ?? ctxToday(ctx)),
+  handler: (ctx, args) => fetchFitnessDayBlock(ctx.db, ctx.userId, args.date ?? ctxToday(ctx)),
 });
 
 const getFitnessSeries = defineTool({
@@ -58,16 +59,24 @@ const getFitnessSeries = defineTool({
     "sleep",
     "taper",
   ],
-  requires: "intervals",
+  requires: "activity-source",
   params: z.object({
     oldest: z.string().optional().describe("ISO date; default 42 days ago"),
     newest: z.string().optional().describe("ISO date; default today"),
+    sport: z
+      .enum(FITNESS_SPORT_VALUES)
+      .optional()
+      .describe(
+        "Per-sport series ('running' or an exact sport type). Omit for the combined series.",
+      ),
   }),
   handler: (ctx, args) =>
     fetchFitnessSeries(
+      ctx.db,
       ctx.userId,
       args.oldest ?? isoDaysAgo(ctx, 42),
       args.newest ?? ctxToday(ctx),
+      args.sport,
     ),
 });
 
@@ -83,6 +92,7 @@ const getWellnessSummary = defineTool({
   }),
   handler: (ctx, args) =>
     fetchWellnessSummary(
+      ctx.db,
       ctx.userId,
       args.oldest ?? isoDaysAgo(ctx, 7),
       args.newest ?? ctxToday(ctx),
@@ -101,6 +111,7 @@ const getWeekWellness = defineTool({
   }),
   handler: (ctx, args) =>
     fetchWeekWellnessStats(
+      ctx.db,
       ctx.userId,
       args.oldest ?? isoDaysAgo(ctx, 7),
       args.newest ?? ctxToday(ctx),
@@ -132,6 +143,7 @@ const getWellnessSeries = defineTool({
   }),
   handler: (ctx, args) =>
     fetchWellnessSeries(
+      ctx.db,
       ctx.userId,
       args.oldest ?? isoDaysAgo(ctx, 30),
       args.newest ?? ctxToday(ctx),
