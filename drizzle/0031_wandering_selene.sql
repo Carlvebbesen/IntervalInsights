@@ -1,0 +1,2 @@
+CREATE TYPE "public"."pace_progression" AS ENUM('off', 'mild', 'aggressive');--> statement-breakpoint
+ALTER TABLE "user_settings" ADD COLUMN "pace_progression" "pace_progression" DEFAULT 'mild' NOT NULL;

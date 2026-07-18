@@ -36,6 +36,7 @@ export const WorkoutStructureStepSchema = z
     recovery_type: z.enum(["DISTANCE", "TIME"]).nullable().optional(),
     recovery_value: z.number().nullable().optional(),
     target_pace: z.number().nullable(),
+    target_paces: z.array(z.number()).nullable().optional(),
   })
   .openapi({ ref: "WorkoutStructureStep" });
 

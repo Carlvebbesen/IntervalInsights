@@ -9,7 +9,6 @@ import type {
   SuggestSessionResponseSchema,
   Weather,
 } from "../schemas/api_schemas";
-import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import { buildAthleteProfileBlock } from "./athlete_profile_service";
 import { fetchFitnessDayBlock } from "./fitness_service";
@@ -21,6 +20,7 @@ import {
   type ReadinessSignals,
 } from "./pace_service";
 import { toISODate } from "./utils";
+import { toWorkoutStructure } from "./workout_structure_format";
 
 type Db = IGlobalBindings["db"];
 type WorkoutSet = z.infer<typeof workoutSet>;
@@ -54,38 +54,6 @@ function cacheKey(
   const w = weather ? `|w:${Math.round(weather.temperatureC)}:${Math.round(weather.humidity)}` : "";
   const r = recentlySuggested.length > 0 ? `|r:${recentlySuggested.join("~")}` : "";
   return `${userId}|${date}|${shape}|m:${mode}${w}${r}`;
-}
-
-function toWorkoutStructure(
-  sets: WorkoutSet[],
-  paced: ExpandedIntervalSet[] | null,
-): ProposedTraining["structure"] {
-  let setCursor = 0;
-  return sets.map((set) => {
-    const group = paced ? paced.slice(setCursor, setCursor + set.set_reps) : [];
-    setCursor += set.set_reps;
-    let stepOffset = 0;
-    const steps = set.steps.map((step) => {
-      const paces: number[] = [];
-      for (const expandedSet of group) {
-        for (let rep = 0; rep < step.reps; rep++) {
-          const p = expandedSet.steps[stepOffset + rep]?.target_pace;
-          if (typeof p === "number") paces.push(p);
-        }
-      }
-      stepOffset += step.reps;
-      const mean = paces.length > 0 ? paces.reduce((a, b) => a + b, 0) / paces.length : null;
-      return {
-        reps: step.reps,
-        work_type: step.work_type,
-        work_value: step.work_value,
-        recovery_type: step.recovery_type ?? null,
-        recovery_value: step.recovery_value ?? null,
-        target_pace: mean === null ? null : Math.round(mean * 100) / 100,
-      };
-    });
-    return { set_reps: set.set_reps, set_recovery: set.set_recovery ?? null, steps };
-  });
 }
 
 function fmtPaceSecPerKm(mps: number | null | undefined): string {

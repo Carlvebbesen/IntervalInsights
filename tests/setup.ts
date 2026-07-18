@@ -142,6 +142,7 @@ mock.module("../src/services/process_intervals_event.ts", () => ({
 mock.module("../src/services/pace_service.ts", () => ({
   getProposedPaceForStructure: async () => [],
   getProposedPaceFromLaps: () => null,
+  applyPaceProgression: (sets: unknown) => sets,
   easePace: (mps: number | null | undefined) => mps ?? null,
   applyReadinessAdjustment: (basePaces: unknown) => ({
     paces: basePaces,

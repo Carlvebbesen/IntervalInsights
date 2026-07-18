@@ -2,8 +2,10 @@ import { and, desc, eq } from "drizzle-orm";
 import type z from "zod";
 import type { workoutSet } from "../agent/initial_analysis_agent";
 import { logger } from "../logger";
+import { findOrCreateUserSettings } from "../repositories/user_settings_repository";
 import { activities, intervalStructures } from "../schema";
-import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
+import type { PaceProgression } from "../schema/enums";
+import type { ExpandedIntervalSet, ExpandedIntervalStep } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { Lap } from "../types/strava/IDetailedActivity";
 import {
@@ -79,8 +81,10 @@ export const getProposedPaceForStructure = async (
   }
 
   log.info({ rows: history.length }, "collected history rows total");
-  if (history.length === 0) return completeIntervalSet;
-  return interpolatePaces(history, completeIntervalSet);
+  const interpolated =
+    history.length === 0 ? completeIntervalSet : interpolatePaces(history, completeIntervalSet);
+  const settings = await findOrCreateUserSettings(db, userId);
+  return applyPaceProgression(interpolated, settings?.paceProgression ?? "mild");
 };
 
 const getEffectivePace = (row: HistoryRow): number | null => {
@@ -117,6 +121,61 @@ function interpolatePaces(rows: HistoryRow[], sets: ExpandedIntervalSet[]): Expa
       return { ...step, target_pace: meanOf(pool.map(getEffectivePace)) };
     }),
   }));
+}
+
+const PROGRESSION_SPREAD_SEC_PER_KM: Record<PaceProgression, number> = {
+  off: 0,
+  mild: 6,
+  aggressive: 12,
+};
+
+function sameWorkTarget(a: ExpandedIntervalStep, b: ExpandedIntervalStep): boolean {
+  return a.work_type === b.work_type && a.work_value === b.work_value;
+}
+
+function progressSteps(steps: ExpandedIntervalStep[], spread: number): ExpandedIntervalStep[] {
+  const out = steps.map((s) => ({ ...s }));
+  let i = 0;
+  while (i < out.length) {
+    let j = i + 1;
+    while (
+      j < out.length &&
+      out[i].target_pace != null &&
+      out[j].target_pace != null &&
+      sameWorkTarget(out[j], out[i])
+    ) {
+      j++;
+    }
+    const n = j - i;
+    if (n >= 2) {
+      // Curve lives in the sec/km domain (a linear negative split); mps is the
+      // stored unit, so convert at the boundary exactly like easePace does.
+      const secPerKm = out.slice(i, j).map((s) => 1000 / (s.target_pace as number));
+      const mean = secPerKm.reduce((a, b) => a + b, 0) / n;
+      for (let k = 0; k < n; k++) {
+        const eased = mean + spread / 2 - (spread * k) / (n - 1);
+        out[i + k].target_pace = 1000 / eased;
+      }
+    }
+    i = j;
+  }
+  return out;
+}
+
+/**
+ * Turn the flat per-rep paces from `interpolatePaces` into a deterministic
+ * negative split: within each contiguous run of ≥2 same-target work reps that
+ * carry a pace, the mean is preserved but the run opens `spread/2` s/km slower
+ * and closes `spread/2` s/km faster. `off` returns the input unchanged; N=1 and
+ * null-pace runs are untouched. Runs never cross a set boundary.
+ */
+export function applyPaceProgression(
+  sets: ExpandedIntervalSet[],
+  mode: PaceProgression,
+): ExpandedIntervalSet[] {
+  const spread = PROGRESSION_SPREAD_SEC_PER_KM[mode];
+  if (spread <= 0) return sets;
+  return sets.map((set) => ({ ...set, steps: progressSteps(set.steps, spread) }));
 }
 
 export type HrvStatusSignal = "balanced" | "unbalanced" | "low" | null;

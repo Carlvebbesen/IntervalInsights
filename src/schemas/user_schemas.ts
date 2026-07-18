@@ -1,6 +1,6 @@
 import "zod-openapi/extend";
 import { z } from "zod";
-import { analysisReviewModeEnum, userRoleEnum } from "../schema/enums";
+import { analysisReviewModeEnum, paceProgressionEnum, userRoleEnum } from "../schema/enums";
 
 export const UserSettingsSchema = z
   .object({
@@ -8,6 +8,7 @@ export const UserSettingsSchema = z
     analysisReviewMode: z.enum(analysisReviewModeEnum.enumValues),
     maxHeartRate: z.number().nullable(),
     processHeartRate: z.boolean(),
+    paceProgression: z.enum(paceProgressionEnum.enumValues),
   })
   .openapi({ ref: "UserSettings" });
 
@@ -17,6 +18,7 @@ export const UpdateUserSettingsSchema = z
     analysisReviewMode: z.enum(analysisReviewModeEnum.enumValues).optional(),
     maxHeartRate: z.number().int().positive().max(250).nullable().optional(),
     processHeartRate: z.boolean().optional(),
+    paceProgression: z.enum(paceProgressionEnum.enumValues).optional(),
   })
   .openapi({ ref: "UpdateUserSettings" });
 

@@ -5,11 +5,9 @@ import { z } from "zod";
 import { getProposedPace } from "../../controllers/analysis_controller";
 import { trainingTypeEnum } from "../../schema/enums";
 import type { CoachArtifact } from "../../schemas/api_schemas";
-import type { ExpandedIntervalSet } from "../../types/ExpandedIntervalSet";
+import { toWorkoutStructure } from "../../services/workout_structure_format";
 import { workoutSet } from "../initial_analysis_agent";
 import type { CoachCtx } from "./tool_types";
-
-type ProposedTraining = Extract<CoachArtifact, { type: "proposed_training" }>;
 
 function getCtx(config: ToolRunnableConfig): CoachCtx {
   const ctx = config.context as CoachCtx | undefined;
@@ -38,38 +36,6 @@ function formatPace(mps: number | null | undefined): string | null {
   const m = Math.floor(secPerKm / 60);
   const s = Math.round(secPerKm % 60);
   return `${m}:${s.toString().padStart(2, "0")}/km`;
-}
-
-function toWorkoutStructure(
-  sets: z.infer<typeof workoutSet>[],
-  paced: ExpandedIntervalSet[] | null,
-): ProposedTraining["structure"] {
-  let setCursor = 0;
-  return sets.map((set) => {
-    const group = paced ? paced.slice(setCursor, setCursor + set.set_reps) : [];
-    setCursor += set.set_reps;
-    let stepOffset = 0;
-    const steps = set.steps.map((step) => {
-      const paces: number[] = [];
-      for (const expandedSet of group) {
-        for (let rep = 0; rep < step.reps; rep++) {
-          const p = expandedSet.steps[stepOffset + rep]?.target_pace;
-          if (typeof p === "number") paces.push(p);
-        }
-      }
-      stepOffset += step.reps;
-      const mean = paces.length > 0 ? paces.reduce((a, b) => a + b, 0) / paces.length : null;
-      return {
-        reps: step.reps,
-        work_type: step.work_type,
-        work_value: step.work_value,
-        recovery_type: step.recovery_type ?? null,
-        recovery_value: step.recovery_value ?? null,
-        target_pace: mean === null ? null : Math.round(mean * 100) / 100,
-      };
-    });
-    return { set_reps: set.set_reps, set_recovery: set.set_recovery ?? null, steps };
-  });
 }
 
 export const createTrainingTool = tool(

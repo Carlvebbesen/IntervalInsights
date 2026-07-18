@@ -41,6 +41,8 @@ export const analysisReviewModeEnum = pgEnum("analysis_review_mode", [
   "none",
 ]);
 export type AnalysisReviewMode = (typeof analysisReviewModeEnum.enumValues)[number];
+export const paceProgressionEnum = pgEnum("pace_progression", ["off", "mild", "aggressive"]);
+export type PaceProgression = (typeof paceProgressionEnum.enumValues)[number];
 export const oauthProviderEnum = pgEnum("oauth_provider", ["strava", "intervals"]);
 export type OAuthProvider = (typeof oauthProviderEnum.enumValues)[number];
 export const targetTypeEnum = pgEnum("target_type_enum", ["time", "distance", "custom"]);
