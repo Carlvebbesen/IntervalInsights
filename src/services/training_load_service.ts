@@ -160,7 +160,7 @@ export function paceLoad(streams: LoadStreams, thresholdPaceMps: number, useGrad
   for (const { i, dtSec } of movingSamples(streams)) {
     const v = streams.velocity?.[i];
     if (v == null || v <= 0) continue;
-    const factor = grades ? gradeFactor(grades[i]) : 1;
+    const factor = grades ? gradeFactor(grades[i] ?? 0) : 1;
     const vGap = v * factor;
     load += (dtSec * vGap * (vGap / thresholdPaceMps) * 100) / (thresholdPaceMps * 3600);
   }

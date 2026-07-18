@@ -310,3 +310,16 @@ describe("computeActivityLoad — source-priority picker", () => {
     ).toBeNull();
   });
 });
+
+describe("stream-length mismatch", () => {
+  test("altitude/distance shorter than time does not produce NaN", () => {
+    const n = 600;
+    const time = Array.from({ length: n }, (_, i) => i);
+    const velocity = Array.from({ length: n }, () => 3.6);
+    const altitude = Array.from({ length: 100 }, () => 10);
+    const distance = Array.from({ length: 100 }, (_, i) => i * 3.6);
+    const load = paceLoad({ time, velocity, altitude, distance }, 3.6);
+    expect(Number.isFinite(load)).toBe(true);
+    expect(load).toBeCloseTo((100 * (n - 1)) / 3600, 3);
+  });
+});
