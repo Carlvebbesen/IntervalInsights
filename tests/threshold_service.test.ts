@@ -33,12 +33,16 @@ afterAll(async () => {
   await closePool();
 });
 
-function anchorAt(criticalSpeedMps: number | null, source: "critical_speed" | "vdot" | "none"): PaceAnchorResult {
+function anchorAt(
+  criticalSpeedMps: number | null,
+  source: "critical_speed" | "vdot" | "none",
+  confidence: "high" | "medium" | "low" = "high",
+): PaceAnchorResult {
   return {
     status: "ok",
     data: {
       anchorSource: source,
-      confidence: "high",
+      confidence,
       criticalSpeedMps,
       dPrimeM: null,
       vdot: null,
@@ -285,6 +289,26 @@ describe("buildHistoricalThresholdResolver", () => {
       const resolver = await buildHistoricalThresholdResolver(db, user.id);
       const past = await resolver(new Date("2012-01-01T00:00:00Z"));
       expect(past.thresholdPaceMps).toBe(4.1); // current-day fallback
+      expect(past.thresholdPaceSource).toBe("pace_anchor");
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  it("rejects medium-confidence historical anchors, falling back to the current-day pace", async () => {
+    const user = await createTestUser({ role: "premium" });
+    try {
+      const db = getDb();
+      await updateUserSettings(db, user.id, { lthr: 160, restingHr: 45 });
+      // Current day: high-confidence 4.2; historical windows: medium-confidence 3.2.
+      anchorByDate = (now) =>
+        now.getUTCFullYear() >= 2026
+          ? anchorAt(4.2, "critical_speed", "high")
+          : anchorAt(3.2, "critical_speed", "medium");
+
+      const resolver = await buildHistoricalThresholdResolver(db, user.id);
+      const past = await resolver(new Date("2020-06-01T00:00:00Z"));
+      expect(past.thresholdPaceMps).toBe(4.2);
       expect(past.thresholdPaceSource).toBe("pace_anchor");
     } finally {
       await deleteTestUser(user.id);

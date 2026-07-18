@@ -212,10 +212,15 @@ export async function buildHistoricalThresholdResolver(
     let thresholdPaceSource: ThresholdPaceSource = manualPaceMps != null ? "manual" : null;
     if (manualPaceMps == null) {
       const anchor = await fetchPaceAnchor(db, userId, asOf);
+      // Historical windows only trust HIGH-confidence anchors: a sparse effort
+      // window yields a medium-confidence critical speed that can sit far below
+      // the athlete's real threshold, and load scales with (v/threshold)² —
+      // observed +70% pace-load inflation on medium windows during calibration.
       if (
         anchor.status === "ok" &&
         anchor.data.anchorSource === "critical_speed" &&
-        anchor.data.criticalSpeedMps != null
+        anchor.data.criticalSpeedMps != null &&
+        anchor.data.confidence === "high"
       ) {
         thresholdPaceMps = anchor.data.criticalSpeedMps;
         thresholdPaceSource = "pace_anchor";
