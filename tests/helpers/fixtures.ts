@@ -1,6 +1,15 @@
 // Small factories for inserting common test rows under a given test user.
 
-import { activityEvents, activities, events, intervalStructures } from "../../src/schema";
+import {
+  activities,
+  activityEvents,
+  events,
+  intervalStructures,
+  plannedSessions,
+  raceEvents,
+  trainingPlans,
+  trainingPlanWeeks,
+} from "../../src/schema";
 import { getDb } from "./db";
 
 export type SeededActivity = {
@@ -130,4 +139,124 @@ export async function linkEventToActivity(activityId: number, eventId: number) {
     .insert(activityEvents)
     .values({ activityId, eventId })
     .onConflictDoNothing();
+}
+
+export async function insertRaceEvent(
+  userId: string,
+  overrides: Partial<{
+    name: string;
+    date: string;
+    distanceMeters: number;
+    targetTimeSeconds: number | null;
+    priority: "A" | "B" | "C";
+    status: "upcoming" | "completed" | "cancelled";
+  }> = {},
+) {
+  const db = getDb();
+  const [row] = await db
+    .insert(raceEvents)
+    .values({
+      userId,
+      name: overrides.name ?? "Test Race",
+      date: overrides.date ?? "2026-12-01",
+      distanceMeters: overrides.distanceMeters ?? 10000,
+      targetTimeSeconds: overrides.targetTimeSeconds ?? null,
+      priority: overrides.priority ?? "A",
+      status: overrides.status ?? "upcoming",
+    })
+    .returning();
+  return row;
+}
+
+export async function insertTrainingPlan(
+  userId: string,
+  overrides: Partial<{
+    name: string;
+    startDate: string;
+    endDate: string;
+    raceEventId: number | null;
+    goalText: string | null;
+    status: "draft" | "active" | "completed" | "archived";
+  }> = {},
+) {
+  const db = getDb();
+  const [row] = await db
+    .insert(trainingPlans)
+    .values({
+      userId,
+      name: overrides.name ?? "Test Plan",
+      startDate: overrides.startDate ?? "2026-01-01",
+      endDate: overrides.endDate ?? "2026-03-01",
+      raceEventId: overrides.raceEventId ?? null,
+      goalText: overrides.goalText ?? null,
+      status: overrides.status ?? "draft",
+    })
+    .returning();
+  return row;
+}
+
+export async function insertTrainingPlanWeek(
+  planId: number,
+  overrides: Partial<{
+    weekIndex: number;
+    startDate: string;
+    phase: "base" | "build" | "peak" | "taper" | "race" | null;
+    targetDistanceMeters: number | null;
+    targetLoad: number | null;
+    notes: string | null;
+  }> = {},
+) {
+  const db = getDb();
+  const [row] = await db
+    .insert(trainingPlanWeeks)
+    .values({
+      planId,
+      weekIndex: overrides.weekIndex ?? 0,
+      startDate: overrides.startDate ?? "2026-01-01",
+      phase: overrides.phase ?? null,
+      targetDistanceMeters: overrides.targetDistanceMeters ?? null,
+      targetLoad: overrides.targetLoad ?? null,
+      notes: overrides.notes ?? null,
+    })
+    .returning();
+  return row;
+}
+
+export async function insertPlannedSession(
+  planId: number,
+  weekId: number,
+  overrides: Partial<{
+    date: string;
+    sessionType:
+      | "LONG"
+      | "EASY"
+      | "RECOVERY"
+      | "SHORT_INTERVALS"
+      | "HILL_SPRINTS"
+      | "LONG_INTERVALS"
+      | "SPRINTS"
+      | "FARTLEK"
+      | "PROGRESSIVE_LONG"
+      | "RACE"
+      | "TEMPO"
+      | "OTHER";
+    title: string;
+    description: string | null;
+    sortOrder: number;
+  }> = {},
+) {
+  const db = getDb();
+  const [row] = await db
+    .insert(plannedSessions)
+    .values({
+      planId,
+      weekId,
+      date: overrides.date ?? "2026-01-02",
+      sessionType: overrides.sessionType ?? "EASY",
+      title: overrides.title ?? "Test Session",
+      description: overrides.description ?? null,
+      sortOrder: overrides.sortOrder ?? 0,
+    })
+    .returning();
+  return row;
 }

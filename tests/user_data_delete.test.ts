@@ -16,7 +16,14 @@ import {
   users,
 } from "../src/schema";
 import { closePool, createTestUser, deleteTestUser, getDb, getPool } from "./helpers/db";
-import { insertActivity, insertEvent } from "./helpers/fixtures";
+import {
+  insertActivity,
+  insertEvent,
+  insertPlannedSession,
+  insertRaceEvent,
+  insertTrainingPlan,
+  insertTrainingPlanWeek,
+} from "./helpers/fixtures";
 import { buildTestApp, withIdentity } from "./helpers/test_app";
 
 const app = buildTestApp(getPool());
@@ -45,6 +52,13 @@ async function seedOwnedRows(userId: string) {
   });
   await insertEvent(userId, { description: "GDPR seed event" });
   await db.insert(gears).values({ userId, model: "GDPR Shoe", surface: "ROAD" });
+  const raceEvent = await insertRaceEvent(userId, { name: "GDPR seed race" });
+  const plan = await insertTrainingPlan(userId, {
+    name: "GDPR seed plan",
+    raceEventId: raceEvent.id,
+  });
+  const week = await insertTrainingPlanWeek(plan.id);
+  await insertPlannedSession(plan.id, week.id);
   const [conversation] = await db
     .insert(chatConversations)
     .values({ id: crypto.randomUUID(), userId, title: "GDPR chat" })
@@ -72,6 +86,14 @@ async function countOwnedRows(userId: string) {
       `SELECT COUNT(*) FROM chat_messages m JOIN chat_conversations c ON c.id = m.conversation_id WHERE c.user_id = $1`,
     ),
     userSettings: await one(`SELECT COUNT(*) FROM user_settings WHERE user_id = $1`),
+    raceEvents: await one(`SELECT COUNT(*) FROM race_events WHERE user_id = $1`),
+    trainingPlans: await one(`SELECT COUNT(*) FROM training_plans WHERE user_id = $1`),
+    trainingPlanWeeks: await one(
+      `SELECT COUNT(*) FROM training_plan_weeks w JOIN training_plans p ON p.id = w.plan_id WHERE p.user_id = $1`,
+    ),
+    plannedSessions: await one(
+      `SELECT COUNT(*) FROM planned_sessions s JOIN training_plans p ON p.id = s.plan_id WHERE p.user_id = $1`,
+    ),
   };
 }
 
@@ -112,6 +134,10 @@ describe("DELETE /api/v1/user/data", () => {
           conversations: 1,
           messages: 1,
           userSettings: 1,
+          raceEvents: 1,
+          trainingPlans: 1,
+          trainingPlanWeeks: 1,
+          plannedSessions: 1,
         });
 
         const res = await app.fetch(
@@ -131,6 +157,10 @@ describe("DELETE /api/v1/user/data", () => {
           conversations: 0,
           messages: 0,
           userSettings: 0,
+          raceEvents: 0,
+          trainingPlans: 0,
+          trainingPlanWeeks: 0,
+          plannedSessions: 0,
         });
 
         // The other user's data survives in full.
@@ -144,6 +174,10 @@ describe("DELETE /api/v1/user/data", () => {
           conversations: 1,
           messages: 1,
           userSettings: 1,
+          raceEvents: 1,
+          trainingPlans: 1,
+          trainingPlanWeeks: 1,
+          plannedSessions: 1,
         });
 
         // Strava OAuth revocation was attempted…

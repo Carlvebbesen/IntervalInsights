@@ -31,8 +31,10 @@ import intervalStructureRouter from "../../src/routers/interval_structure_router
 import intervalsEntryRouter from "../../src/routers/intervals/intervals_entry_router";
 import progressRouter from "../../src/routers/progress_router";
 import publicRouter from "../../src/routers/public_router";
+import raceEventsRouter from "../../src/routers/race_events_router";
 import stravaEntryRouter from "../../src/routers/strava/strava_entry_router";
 import suggestSessionRouter from "../../src/routers/suggest_session_router";
+import trainingPlansRouter from "../../src/routers/training_plans_router";
 import userRouter from "../../src/routers/user_router";
 import * as schema from "../../src/schema";
 import type { TGlobalEnv } from "../../src/types/IRouters";
@@ -111,6 +113,8 @@ registerOAuthCallbackPages(app);
   v1.route("/user", userRouter);
   v1.route("/intervals", intervalsEntryRouter);
   v1.route("/progress", progressRouter);
+  v1.route("/race-events", raceEventsRouter);
+  v1.route("/training-plans", trainingPlansRouter);
   // Mirrors src/index.ts transitional dual-mount: authed routers served at both the
   // legacy /api/* and the new /api/v1/* during the rollout.
   app.route("/api", v1);

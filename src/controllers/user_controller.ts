@@ -7,6 +7,8 @@ import { toUserDto, toUserSettingsDto, type UserDto, type UserSettingsDto } from
 import { AppError } from "../error";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import * as activityRepo from "../repositories/activity_repository";
+import * as raceEventRepo from "../repositories/race_event_repository";
+import * as trainingPlanRepo from "../repositories/training_plan_repository";
 import * as userRepo from "../repositories/user_repository";
 import type { UpdateUserSettingsInput } from "../repositories/user_settings_repository";
 import * as userSettingsRepo from "../repositories/user_settings_repository";
@@ -107,6 +109,8 @@ export async function deleteAccount(
     });
   } catch {}
 
+  await trainingPlanRepo.deleteAllForUser(db, userId);
+  await raceEventRepo.deleteAllForUser(db, userId);
   await activityRepo.deleteAllForUser(db, userId);
   await db.delete(events).where(eq(events.userId, userId));
   await db.delete(gears).where(eq(gears.userId, userId));
