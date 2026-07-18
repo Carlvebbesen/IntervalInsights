@@ -111,10 +111,10 @@ function frameReader(reader: ReadableStreamDefaultReader<Uint8Array>) {
     }
   }
 
-  return async function next(timeoutMs = 10000) {
+  return async function next(timeoutMs = 10000, includePings = false) {
     while (true) {
       const frame = await readOne(timeoutMs);
-      if (frame.event === "ping") continue;
+      if (!includePings && frame.event === "ping") continue;
       return frame;
     }
   };
@@ -142,14 +142,17 @@ function postJson(path: string, body: unknown) {
   );
 }
 
-async function startWizard(identity: { userId: string; clerkUserId: string; role: "premium" }) {
+async function startWizard(
+  identity: { userId: string; clerkUserId: string; role: "premium" },
+  body: Record<string, unknown> = {
+    name: "My 5k plan",
+    startDate: "2026-01-05",
+    endDate: "2026-01-18",
+    goalText: "sub-20 5k",
+  },
+) {
   return withIdentity(identity, async () => {
-    const res = await postJson("/api/v1/training-plans/generate", {
-      name: "My 5k plan",
-      startDate: "2026-01-05",
-      endDate: "2026-01-18",
-      goalText: "sub-20 5k",
-    });
+    const res = await postJson("/api/v1/training-plans/generate", body);
     expect(res.status).toBe(200);
     if (!res.body) throw new Error("expected a streaming body");
     const reader = res.body.getReader();
@@ -229,6 +232,48 @@ describe("POST /api/v1/training-plans/generate + /generate/resume", () => {
     expect(detailRes.status).toBe(200);
     const detail = (await detailRes.json()) as { status: string };
     expect(detail.status).toBe("active");
+  });
+
+  it("surfaces generateSessions batch progress as status events and keeps the stream alive with pings", async () => {
+    const { threadId, terminal } = await startWizard(identityA(), {
+      name: "6-week plan",
+      startDate: "2026-01-05",
+      endDate: "2026-02-15",
+      goalText: "build base",
+    });
+    expect(terminal.event).toBe("interrupt");
+
+    const res = await resumeWizard(identityA(), threadId, { action: "accept" });
+    expect(res.status).toBe(200);
+    if (!res.body) throw new Error("expected a streaming body");
+    const reader = res.body.getReader();
+    const next = frameReader(reader);
+
+    const frames: { event: string; data: string }[] = [];
+    while (true) {
+      const f = await next(10000, true); // include pings
+      frames.push(f);
+      if (f.event === "interrupt" || f.event === "done" || f.event === "error") break;
+    }
+    await reader.cancel();
+
+    // Heartbeat keeps the connection producing bytes even while a node is
+    // mid-LLM-call.
+    expect(frames.some((f) => f.event === "ping")).toBe(true);
+
+    const progress = frames
+      .filter((f) => f.event === "status")
+      .map(
+        (f) =>
+          JSON.parse(f.data) as {
+            node?: string;
+            completedWeeks?: number;
+            totalWeeks?: number;
+          },
+      )
+      .filter((s) => s.node === "generateSessions" && typeof s.completedWeeks === "number");
+    expect(progress.length).toBeGreaterThan(0);
+    expect(progress.at(-1)).toMatchObject({ completedWeeks: 6, totalWeeks: 6 });
   });
 
   it("404s when another user tries to resume a thread they don't own, without opening an SSE stream", async () => {

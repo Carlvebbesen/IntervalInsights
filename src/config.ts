@@ -28,6 +28,7 @@ const envSchema = z
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
     LOG_LEVEL: z.string().optional(),
     PROGRESS_HEARTBEAT_MS: z.coerce.number().default(25000),
+    SSE_HEARTBEAT_MS: z.coerce.number().default(15000),
     BRAIN_DIR: z.string().optional(),
     MCP_ENFORCE_AUDIENCE: z
       .string()

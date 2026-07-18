@@ -15,6 +15,7 @@ import * as chatRepo from "../repositories/chat_repository";
 import * as userRepo from "../repositories/user_repository";
 import type { CoachArtifact, CoachChatRequest } from "../schemas/api_schemas";
 import type { IGlobalBindings, TStravaEnv } from "../types/IRouters";
+import { startSseHeartbeat } from "./sse_heartbeat";
 
 type Db = IGlobalBindings["db"];
 
@@ -92,14 +93,20 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
     stream.onAbort(() => abort.abort());
 
     let clientGone = false;
-    const safeWrite = async (event: string, data: string) => {
-      if (clientGone) return;
-      try {
-        await stream.writeSSE({ event, data });
-      } catch {
-        clientGone = true;
-        abort.abort();
-      }
+    // Serialize writes so the concurrent heartbeat can't interleave a `ping`
+    // into the middle of another SSE event.
+    let chain: Promise<void> = Promise.resolve();
+    const safeWrite = (event: string, data: string) => {
+      chain = chain.then(async () => {
+        if (clientGone) return;
+        try {
+          await stream.writeSSE({ event, data });
+        } catch {
+          clientGone = true;
+          abort.abort();
+        }
+      });
+      return chain;
     };
 
     let ctx: CoachCtx;
@@ -176,6 +183,7 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
 
       let finalAnswer = SAFE_REFUSAL;
       let artifacts: CoachArtifact[] = [];
+      const stopHeartbeat = startSseHeartbeat(safeWrite);
       try {
         const events = await graph.stream(input, {
           configurable: { thread_id: body.conversationId },
@@ -204,6 +212,8 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
           JSON.stringify({ error: "The coach hit an error answering that." }),
         );
         return;
+      } finally {
+        stopHeartbeat();
       }
 
       let messageId: number | null = null;

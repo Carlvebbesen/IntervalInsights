@@ -22,6 +22,7 @@ const ENV_DEFAULTS: Record<string, string> = {
   APP_BASE_URL: "http://localhost:3000/",
   OPENAI_API_KEY: "sk-test-openai-dummy",
   PROGRESS_HEARTBEAT_MS: "200",
+  SSE_HEARTBEAT_MS: "40",
   TOKEN_ENC_KEY: "test-token-enc-key-0123456789-abcdefghij",
   BETTER_AUTH_SECRET: "test-better-auth-secret-0123456789-abcdef",
   BETTER_AUTH_URL: "http://localhost:3000",

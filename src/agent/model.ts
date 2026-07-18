@@ -84,7 +84,7 @@ export function getPlanBuilderModel(): ChatOpenAI {
   return new ChatOpenAI({
     model,
     maxRetries: 2,
-    timeout: 90_000,
+    timeout: 300_000,
     callbacks: [new TokenUsageCallback(model)],
   });
 }

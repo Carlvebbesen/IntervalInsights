@@ -11,6 +11,7 @@ import type { PlanBuilderInput } from "../agent/planning/plan_builder_state";
 import { AppError } from "../error";
 import type { Logger } from "../logger";
 import type { TGlobalEnv } from "../types/IRouters";
+import { startSseHeartbeat } from "./sse_heartbeat";
 
 type Db = TGlobalEnv["Bindings"]["db"];
 type PlanBuilderGraph = Awaited<ReturnType<typeof buildPlanBuilderGraph>>;
@@ -45,14 +46,20 @@ async function emitTerminalEvent(
 
 function buildSafeWrite(stream: SSEStreamingApi, abort: AbortController) {
   let clientGone = false;
-  return async (event: string, data: string) => {
-    if (clientGone) return;
-    try {
-      await stream.writeSSE({ event, data });
-    } catch {
-      clientGone = true;
-      abort.abort();
-    }
+  // Serialize every write onto one chain so the concurrent heartbeat can never
+  // interleave a `ping` frame into the middle of another SSE event.
+  let chain: Promise<void> = Promise.resolve();
+  return (event: string, data: string) => {
+    chain = chain.then(async () => {
+      if (clientGone) return;
+      try {
+        await stream.writeSSE({ event, data });
+      } catch {
+        clientGone = true;
+        abort.abort();
+      }
+    });
+    return chain;
   };
 }
 
@@ -65,15 +72,34 @@ async function runStream(
   safeWrite: (event: string, data: string) => Promise<void>,
   log: Logger,
 ): Promise<boolean> {
+  const stopHeartbeat = startSseHeartbeat(safeWrite);
   try {
     const events = await graph.stream(runInput, {
       ...threadConfig(threadId, db),
-      streamMode: ["updates"],
+      streamMode: ["updates", "custom"],
       signal,
     });
     for await (const event of events) {
-      const [, update] = event as [string, Record<string, unknown>];
-      const nodeName = Object.keys(update)[0];
+      const [mode, data] = event as [string, Record<string, unknown>];
+      if (mode === "custom") {
+        const chunk = data as {
+          phase?: string;
+          completedWeeks?: number;
+          totalWeeks?: number;
+        };
+        if (chunk.phase === "sessions_progress") {
+          await safeWrite(
+            "status",
+            JSON.stringify({
+              node: "generateSessions",
+              completedWeeks: chunk.completedWeeks,
+              totalWeeks: chunk.totalWeeks,
+            }),
+          );
+        }
+        continue;
+      }
+      const nodeName = Object.keys(data)[0];
       if (nodeName) await safeWrite("status", JSON.stringify({ node: nodeName }));
     }
     return true;
@@ -85,6 +111,8 @@ async function runStream(
     log.error({ err }, "plan-builder: graph stream failed");
     await safeWrite("error", JSON.stringify({ error: "Failed to generate the plan." }));
     return false;
+  } finally {
+    stopHeartbeat();
   }
 }
 

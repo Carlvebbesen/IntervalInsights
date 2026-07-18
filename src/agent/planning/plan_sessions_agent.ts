@@ -3,12 +3,12 @@ import { getPlanBuilderModel, invokeStructured } from "../model";
 import {
   type GenerateSessionsOutput,
   GenerateSessionsOutputSchema,
-  type PlanMacro,
+  type PlanMacroWeek,
 } from "./plan_builder_schemas";
 import type { AthleteContext } from "./plan_builder_state";
 
-function weeksBlock(macro: PlanMacro): string {
-  return macro.weeks
+function weeksBlock(weeks: PlanMacroWeek[]): string {
+  return weeks
     .map((w) => {
       const keys = w.keySessions.length ? w.keySessions.join(", ") : "(none)";
       return `- Week ${w.weekIndex} (${w.startDate}, ${w.phase}): target ${(w.targetDistanceMeters / 1000).toFixed(1)} km — key sessions: ${keys}`;
@@ -16,9 +16,14 @@ function weeksBlock(macro: PlanMacro): string {
     .join("\n");
 }
 
+// Session generation is chunked into batches of at most this many weeks per
+// structured LLM call — a single all-weeks call on a long plan blows the
+// planner model's request budget (see getPlanBuilderModel timeout).
+export const SESSION_BATCH_WEEKS = 4;
+
 export async function invokeGenerateSessionsAgent(
   context: AthleteContext,
-  macro: PlanMacro,
+  weeks: PlanMacroWeek[],
   feedback: string[],
   model: ChatOpenAI = getPlanBuilderModel(),
 ): Promise<GenerateSessionsOutput | null> {
@@ -31,7 +36,7 @@ export async function invokeGenerateSessionsAgent(
   sessions for an athlete whose max HR is ${context.maxHeartRate ?? "unknown"}.
 
   ### MACRO PLAN
-${weeksBlock(macro)}
+${weeksBlock(weeks)}
 ${feedbackBlock}
 
   ### TASK
