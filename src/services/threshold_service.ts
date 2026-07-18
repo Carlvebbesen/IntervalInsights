@@ -138,3 +138,101 @@ export async function resolveThresholds(
     sex: settings.sex,
   };
 }
+
+const HISTORY_OLDEST_ISO = "2010-01-01";
+
+interface RestingHrPoint {
+  /** intervals.icu wellness `id` is the calendar date, `YYYY-MM-DD`. */
+  date: string;
+  restingHr: number;
+}
+
+/**
+ * Nearest wellness restingHR at-or-before `asOfISO` (forward-fill). `history`
+ * must be sorted ascending by date. ISO date strings compare chronologically
+ * under lexicographic order, so no Date parsing is needed. Returns null when no
+ * record exists at-or-before the date (caller falls back to the current value).
+ */
+export function nearestRestingHrAtOrBefore(
+  history: RestingHrPoint[],
+  asOfISO: string,
+): number | null {
+  let value: number | null = null;
+  for (const point of history) {
+    if (point.date <= asOfISO) value = point.restingHr;
+    else break;
+  }
+  return value;
+}
+
+async function fetchRestingHrHistory(userId: string): Promise<RestingHrPoint[]> {
+  try {
+    const result = await withIntervalsToken(userId, (accessToken) =>
+      intervalsApiService.getWellness(accessToken, HISTORY_OLDEST_ISO, toISODate(new Date())),
+    );
+    if (result.status === "not_linked") return [];
+    const points: RestingHrPoint[] = [];
+    for (const w of result.data) {
+      if (w.restingHR != null) points.push({ date: w.id, restingHr: w.restingHR });
+    }
+    points.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    return points;
+  } catch (err) {
+    logger.warn({ err, userId }, "wellness restingHR history fetch failed");
+    return [];
+  }
+}
+
+/**
+ * Build a resolver that answers thresholds "as of" any historical date, for the
+ * load backfill. It resolves the current-day thresholds ONCE (the deliberate
+ * seed-once write with present-day values — see `resolveThresholds`) and uses
+ * them as the fallback; it NEVER calls `resolveThresholds` with a historical
+ * window, so a stale HR value can never be persisted into `user_settings`.
+ *
+ * Per historical `asOf` the resolver forward-fills `restingHr` from the full
+ * wellness history (one API call, fetched once here) and re-derives
+ * `thresholdPaceMps` from the pace-anchor as-of that date — unless a manual pace
+ * override is set, which wins for every date. `lthr`/`maxHr`/`ftp`/`sex` have no
+ * history and pass through the current values.
+ */
+export async function buildHistoricalThresholdResolver(
+  db: Db,
+  userId: string,
+): Promise<(asOf: Date) => Promise<ResolvedThresholds>> {
+  const current = await resolveThresholds(db, userId);
+  const restingHrHistory = await fetchRestingHrHistory(userId);
+  const manualPaceMps = current.thresholdPaceSource === "manual" ? current.thresholdPaceMps : null;
+
+  return async (asOf: Date): Promise<ResolvedThresholds> => {
+    const restingHr =
+      nearestRestingHrAtOrBefore(restingHrHistory, toISODate(asOf)) ?? current.restingHr;
+
+    let thresholdPaceMps = manualPaceMps;
+    let thresholdPaceSource: ThresholdPaceSource = manualPaceMps != null ? "manual" : null;
+    if (manualPaceMps == null) {
+      const anchor = await fetchPaceAnchor(db, userId, asOf);
+      if (
+        anchor.status === "ok" &&
+        anchor.data.anchorSource === "critical_speed" &&
+        anchor.data.criticalSpeedMps != null
+      ) {
+        thresholdPaceMps = anchor.data.criticalSpeedMps;
+        thresholdPaceSource = "pace_anchor";
+      } else {
+        thresholdPaceMps = current.thresholdPaceMps;
+        thresholdPaceSource = current.thresholdPaceSource;
+      }
+    }
+
+    return {
+      thresholdPaceMps,
+      thresholdPaceSource,
+      lthr: current.lthr,
+      restingHr,
+      maxHr: current.maxHr,
+      ftp: current.ftp,
+      sex: current.sex,
+    };
+  };
+}
