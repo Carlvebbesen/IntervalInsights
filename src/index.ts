@@ -31,6 +31,7 @@ import stravaEntryRouter from "./routers/strava/strava_entry_router";
 import suggestSessionRouter from "./routers/suggest_session_router";
 import trainingRouter from "./routers/training_router";
 import userRouter from "./routers/user_router";
+import weatherRouter from "./routers/weather_router";
 import type { TGlobalEnv } from "./types/IRouters";
 import { registerOAuthCallbackPages } from "./web/oauth_callback_page";
 import { registerWebPages } from "./web/pages";
@@ -159,6 +160,7 @@ v1.route("/user", userRouter);
 v1.route("/intervals", intervalsEntryRouter);
 v1.route("/chat", trainingRouter);
 v1.route("/progress", progressRouter);
+v1.route("/weather", weatherRouter);
 app.route("/api", v1);
 app.route("/api/v1", v1);
 
