@@ -58,6 +58,42 @@ describe("selectMcpTools", () => {
     const tools = selectMcpTools({ stravaLinked: true, intervalsConnected: false });
     expect(tools.some((t) => t.name === "get_activity_streams_summary")).toBe(true);
   });
+
+  it("includes the db-only training plan tools with nothing connected", () => {
+    const tools = selectMcpTools({ stravaLinked: false, intervalsConnected: false });
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("list_training_plans");
+    expect(names).toContain("create_training_plan");
+    expect(names).toContain("link_planned_session");
+  });
+});
+
+describe("training plan tools in the registry", () => {
+  const expectedNames = [
+    "list_training_plans",
+    "get_training_plan",
+    "list_race_events",
+    "create_race_event",
+    "update_race_event",
+    "delete_race_event",
+    "create_training_plan",
+    "update_training_plan",
+    "delete_training_plan",
+    "add_planned_session",
+    "update_planned_session",
+    "delete_planned_session",
+    "link_planned_session",
+    "unlink_planned_session",
+  ];
+
+  it("registers every training plan tool, all db-only", () => {
+    for (const name of expectedNames) {
+      const tool = registry.find((t) => t.name === name);
+      expect(tool).toBeDefined();
+      expect(tool?.requires).toBe("db");
+      expect(tool?.llmBacked).toBeFalsy();
+    }
+  });
 });
 
 describe("isToolAvailable", () => {

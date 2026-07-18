@@ -10,6 +10,7 @@ import {
   trainingPlans,
   trainingPlanWeeks,
 } from "../../src/schema";
+import type { WorkoutStructureSet } from "../../src/schemas/agent_schemas";
 import { getDb } from "./db";
 
 export type SeededActivity = {
@@ -242,6 +243,8 @@ export async function insertPlannedSession(
       | "OTHER";
     title: string;
     description: string | null;
+    structure: WorkoutStructureSet[] | null;
+    status: "planned" | "completed" | "skipped" | "moved";
     sortOrder: number;
   }> = {},
 ) {
@@ -255,6 +258,8 @@ export async function insertPlannedSession(
       sessionType: overrides.sessionType ?? "EASY",
       title: overrides.title ?? "Test Session",
       description: overrides.description ?? null,
+      structure: overrides.structure ?? null,
+      status: overrides.status ?? "planned",
       sortOrder: overrides.sortOrder ?? 0,
     })
     .returning();

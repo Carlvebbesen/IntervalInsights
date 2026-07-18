@@ -22,6 +22,8 @@ import type {
   TrainingType,
 } from "../schema";
 import type { WorkoutStructureSet } from "../schemas/agent_schemas";
+import { sweepOverduePlannedSessions } from "../services/planned_session_matcher";
+import { toISODate } from "../services/utils";
 import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
@@ -40,6 +42,7 @@ export async function getTrainingPlan(
   userId: string,
   id: number,
 ): Promise<TrainingPlanDetailDto> {
+  await sweepOverduePlannedSessions(db, userId, toISODate(new Date()));
   const detail = await planRepo.getWithDetailForUser(db, userId, id);
   if (!detail) throw new AppError(404, "Training plan not found or unauthorized");
   return toTrainingPlanDetailDto(detail);
