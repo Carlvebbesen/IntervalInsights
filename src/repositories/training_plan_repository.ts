@@ -143,6 +143,7 @@ export interface CreateTrainingPlanInput {
   raceEventId?: number | null;
   goalText?: string | null;
   status?: TrainingPlanStatus;
+  meta?: Record<string, unknown>;
   weeks?: CreateWeekInput[];
 }
 
@@ -162,6 +163,7 @@ export async function createWithChildren(
         raceEventId: input.raceEventId ?? null,
         goalText: input.goalText ?? null,
         status: input.status ?? "draft",
+        meta: input.meta ?? {},
       })
       .returning(trainingPlanColumns);
 
