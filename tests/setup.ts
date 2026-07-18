@@ -191,6 +191,44 @@ mock.module("../src/agent/training/training_graph.ts", () => ({
   }),
 }));
 
+// Chat coach-thread deletion: the real helper builds a Postgres checkpointer.
+// Stub it so DELETE can assert the thread was dropped without a live
+// checkpointer (and without mocking the whole analysis graph, which the
+// real-graph tests need). Mutable delegate — call reset() when done.
+export const checkpointerMock = {
+  deletedThreads: [] as string[],
+  deleteCoachThread: (async () => {}) as (conversationId: string) => Promise<void>,
+  reset() {
+    this.deletedThreads = [];
+    this.deleteCoachThread = async () => {};
+  },
+};
+
+mock.module("../src/agent/chat_thread.ts", () => ({
+  deleteCoachThread: (conversationId: string) => {
+    checkpointerMock.deletedThreads.push(conversationId);
+    return checkpointerMock.deleteCoachThread(conversationId);
+  },
+}));
+
+// Chat title generation: the real helper calls the LLM. Stub it so the first
+// clean turn deterministically upgrades the title. Mutable delegate — a test
+// may swap it (e.g. to fail) and MUST call reset() when done.
+export const chatTitleMock = {
+  generateConversationTitle: (async () => "AI generated title") as (
+    question: string,
+    answer: string,
+  ) => Promise<string | null>,
+  reset() {
+    this.generateConversationTitle = async () => "AI generated title";
+  },
+};
+
+mock.module("../src/agent/chat_title.ts", () => ({
+  generateConversationTitle: (question: string, answer: string) =>
+    chatTitleMock.generateConversationTitle(question, answer),
+}));
+
 // Clerk: the real client makes HTTPS calls. Stub it. Provider OAuth tokens live
 // in Postgres (`oauth_provider_tokens`, seeded by tests/helpers/db.ts), so the
 // only remaining `getUser` consumer is the dual-auth guard's identity

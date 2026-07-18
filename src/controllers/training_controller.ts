@@ -7,6 +7,8 @@ import {
 } from "@langchain/core/messages";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
+import { deleteCoachThread } from "../agent/chat_thread";
+import { generateConversationTitle } from "../agent/chat_title";
 import { SAFE_REFUSAL } from "../agent/training/prompts";
 import type { CoachCtx } from "../agent/training/tool_types";
 import { buildTrainingGraph } from "../agent/training/training_graph";
@@ -271,6 +273,19 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
           createdAt: messageCreatedAt,
         }),
       );
+
+      // After `done` (never blocking it): on the first clean assistant message
+      // of a conversation, upgrade the derived-truncation title to an LLM one.
+      // Any failure keeps the derived title.
+      try {
+        const cleanCount = await chatRepo.countCleanAssistantMessages(db, body.conversationId);
+        if (cleanCount === 1) {
+          const title = await generateConversationTitle(body.message, finalAnswer);
+          if (title) await chatRepo.updateConversationTitle(db, body.conversationId, title);
+        }
+      } catch (err) {
+        log.warn({ err }, "coach: title generation failed — keeping derived title");
+      }
     } finally {
       clearTurnActive(body.conversationId);
     }
@@ -282,15 +297,24 @@ export async function listConversations(db: Db, userId: string, page: number) {
   return { data, meta: { page, pageSize: chatRepo.CONVERSATIONS_PAGE_SIZE } };
 }
 
-export async function getConversation(db: Db, userId: string, conversationId: string) {
+export async function getConversation(
+  db: Db,
+  userId: string,
+  conversationId: string,
+  opts: { limit: number; before?: number },
+) {
   const conversation = await chatRepo.getConversationForUser(db, userId, conversationId);
   if (!conversation) throw new AppError(404, "Conversation not found");
-  let messages = await chatRepo.listMessages(db, conversationId);
+  let page = await chatRepo.listMessagesPage(db, conversationId, opts.limit, opts.before);
 
-  const last = messages[messages.length - 1];
-  if (last && last.role === "user" && !isTurnActive(conversationId)) {
-    await chatRepo.insertMessage(db, conversationId, "assistant", "", null, "interrupted");
-    messages = await chatRepo.listMessages(db, conversationId);
+  // Backfill a dangling trailing user turn only on the newest window (no cursor),
+  // where the window's last message is the conversation's true last message.
+  if (opts.before === undefined) {
+    const last = page.messages[page.messages.length - 1];
+    if (last && last.role === "user" && !isTurnActive(conversationId)) {
+      await chatRepo.insertMessage(db, conversationId, "assistant", "", null, "interrupted");
+      page = await chatRepo.listMessagesPage(db, conversationId, opts.limit, opts.before);
+    }
   }
 
   return {
@@ -298,6 +322,30 @@ export async function getConversation(db: Db, userId: string, conversationId: st
     title: conversation.title,
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
-    messages,
+    messages: page.messages,
+    meta: { hasMore: page.hasMore, nextBefore: page.nextBefore },
   };
+}
+
+export async function renameConversation(
+  db: Db,
+  userId: string,
+  conversationId: string,
+  title: string,
+) {
+  const conversation = await chatRepo.getConversationForUser(db, userId, conversationId);
+  if (!conversation) throw new AppError(404, "Conversation not found");
+  return chatRepo.renameConversation(db, conversationId, title);
+}
+
+export async function deleteConversation(db: Db, userId: string, conversationId: string) {
+  const conversation = await chatRepo.getConversationForUser(db, userId, conversationId);
+  if (!conversation) throw new AppError(404, "Conversation not found");
+
+  // Drop the LangGraph checkpointer thread FIRST: if this fails we surface the
+  // error (500) with the conversation still intact, rather than leaving a
+  // deleted conversation with a live thread.
+  await deleteCoachThread(conversationId);
+
+  await chatRepo.deleteConversation(db, conversationId);
 }
