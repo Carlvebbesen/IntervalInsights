@@ -11,11 +11,7 @@ import type { InsertEvent } from "../../schema/events";
 import type { InsertGear } from "../../schema/gears";
 import type { InsertIntervalSegment } from "../../schema/interval_segments";
 import type { HrZoneSchema } from "../../schemas/dashboard_schemas";
-import type {
-  HrvStatus,
-  IFitnessPoint,
-  IHrvBaseline,
-} from "../../types/intervals/IFitness";
+import type { HrvStatus, IFitnessPoint, IHrvBaseline } from "../../types/intervals/IFitness";
 import type {
   IIntervalsMetricStats,
   IIntervalsTrainingSummary,
@@ -514,11 +510,7 @@ function classify(rollingAvg: number, b: IHrvBaseline): "balanced" | "unbalanced
   return rollingAvg < b.lowerBalanced || rollingAvg > b.upperBalanced ? "unbalanced" : "balanced";
 }
 
-function buildDaily(
-  now: Date,
-  loadByOffset: Map<number, number>,
-  rng: () => number,
-): Daily[] {
+function buildDaily(now: Date, loadByOffset: Map<number, number>, rng: () => number): Daily[] {
   const daily: Daily[] = [];
   let ctl = 35;
   let atl = 35;
@@ -545,7 +537,11 @@ function buildDaily(
       const window = hrvHistory.slice(-90);
       const mean = window.reduce((a, c) => a + c, 0) / window.length;
       const sd = Math.sqrt(window.reduce((a, c) => a + (c - mean) ** 2, 0) / window.length);
-      hrvBaseline = { mean: round1(mean), lowerBalanced: round1(mean - sd), upperBalanced: round1(mean + sd) };
+      hrvBaseline = {
+        mean: round1(mean),
+        lowerBalanced: round1(mean - sd),
+        upperBalanced: round1(mean + sd),
+      };
       hrvStatus = classify(hrv7dAvg, hrvBaseline);
     }
 
@@ -611,10 +607,30 @@ const NUMERIC_METRICS = Object.keys(METRIC_READERS) as NumericMetric[];
 function toWellnessPoint(d: Daily): IIntervalsWellnessPoint {
   return {
     date: d.date,
-    fitness: { ctl: d.ctl, atl: d.atl, tsb: d.ctl - d.atl, rampRate: d.rampRate, ctlLoad: d.ctlLoad, atlLoad: d.atlLoad },
+    fitness: {
+      ctl: d.ctl,
+      atl: d.atl,
+      tsb: d.ctl - d.atl,
+      rampRate: d.rampRate,
+      ctlLoad: d.ctlLoad,
+      atlLoad: d.atlLoad,
+    },
     sleep: { sleepSecs: d.sleepSecs, sleepScore: d.sleepScore, sleepQuality: d.sleepQuality },
-    recovery: { restingHR: d.restingHR, hrv: d.hrv, readiness: d.readiness, baevskySI: null, spO2: null, respiration: null },
-    subjective: { soreness: d.soreness, fatigue: d.fatigue, stress: d.stress, mood: d.mood, motivation: d.motivation },
+    recovery: {
+      restingHR: d.restingHR,
+      hrv: d.hrv,
+      readiness: d.readiness,
+      baevskySI: null,
+      spO2: null,
+      respiration: null,
+    },
+    subjective: {
+      soreness: d.soreness,
+      fatigue: d.fatigue,
+      stress: d.stress,
+      mood: d.mood,
+      motivation: d.motivation,
+    },
     health: { injury: null, sickness: null },
     body: { weight: d.weight, bodyFat: null, vo2max: d.vo2max },
     comments: null,
@@ -638,7 +654,12 @@ function buildWellnessSeries(daily: Daily[]): IIntervalsWellnessSeries {
       sum += v;
       count++;
     }
-    summary[key] = { latest: METRIC_READERS[key](last), min, max, avg: count > 0 ? round1(sum / count) : null };
+    summary[key] = {
+      latest: METRIC_READERS[key](last),
+      min,
+      max,
+      avg: count > 0 ? round1(sum / count) : null,
+    };
     if (count > 0) metricsAvailable.push(key);
   }
   return {
@@ -736,7 +757,14 @@ export function buildDemoCorpus(now: Date): DemoCorpus {
 
     const startDate = new Date(now.getTime() - dayOffset * DAY_MS);
     const startDateLocal = new Date(
-      Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate(), 7, 0, 0),
+      Date.UTC(
+        startDate.getUTCFullYear(),
+        startDate.getUTCMonth(),
+        startDate.getUTCDate(),
+        7,
+        0,
+        0,
+      ),
     );
     const isoStart = startDateLocal.toISOString();
     const stravaLikeId = 900_000 + idx; // stable id used only inside laps
@@ -840,9 +868,22 @@ export function buildDemoCorpus(now: Date): DemoCorpus {
 
   const trainingSummary: IIntervalsTrainingSummary = {
     date: last.date,
-    fitness: { ctl: last.ctl, atl: last.atl, rampRate: last.rampRate, ctlLoad: last.ctlLoad, atlLoad: last.atlLoad },
+    fitness: {
+      ctl: last.ctl,
+      atl: last.atl,
+      rampRate: last.rampRate,
+      ctlLoad: last.ctlLoad,
+      atlLoad: last.atlLoad,
+    },
     sleep: { sleepSecs: last.sleepSecs, sleepScore: last.sleepScore },
-    recovery: { restingHR: last.restingHR, hrv: last.hrv, readiness: last.readiness, baevskySI: null, spO2: null, respiration: null },
+    recovery: {
+      restingHR: last.restingHR,
+      hrv: last.hrv,
+      readiness: last.readiness,
+      baevskySI: null,
+      spO2: null,
+      respiration: null,
+    },
     body: { weight: last.weight, vo2max: last.vo2max },
   };
 
@@ -871,7 +912,9 @@ export function buildDemoCorpus(now: Date): DemoCorpus {
           bodyLocation: "left calf",
           description: "Mild left calf tightness after a hard session — eased off for a few days.",
           startTime: new Date(now.getTime() - injuryActs[0].dayOffset * DAY_MS),
-          lastOccurrence: new Date(now.getTime() - injuryActs[injuryActs.length - 1].dayOffset * DAY_MS),
+          lastOccurrence: new Date(
+            now.getTime() - injuryActs[injuryActs.length - 1].dayOffset * DAY_MS,
+          ),
           status: "resolved",
           resolvedAt: new Date(now.getTime() - 25 * DAY_MS),
         },
