@@ -94,6 +94,32 @@ export function estimateStructureDistanceMeters(
   return Math.round(meters);
 }
 
+/**
+ * Parse the `~X.X km` volume hint the plan-builder appends to a structureless
+ * session's description (see `appendDistanceHint`) back into meters. Returns 0
+ * when there is no parsable hint.
+ */
+export function parseDistanceHintMeters(description: string | null | undefined): number {
+  if (!description) return 0;
+  const m = description.match(/~\s*([\d.]+)\s*km/i);
+  if (!m) return 0;
+  const km = Number.parseFloat(m[1]);
+  return Number.isFinite(km) ? Math.round(km * 1000) : 0;
+}
+
+/**
+ * A planned session's estimated distance (meters): structure-bearing sessions
+ * use the deterministic structure estimator; structureless sessions fall back
+ * to the `~X.X km` description hint the plan-builder wrote.
+ */
+export function estimatePlannedSessionDistanceMeters(
+  structure: WorkoutStructureSet[] | null | undefined,
+  description: string | null | undefined,
+): number {
+  if (structure && structure.length > 0) return estimateStructureDistanceMeters(structure);
+  return parseDistanceHintMeters(description);
+}
+
 function repairPhases(weeks: PlanMacroWeek[], raceAnchored: boolean): PlanMacroWeek[] {
   const n = weeks.length;
   return weeks.map((w, i) => {

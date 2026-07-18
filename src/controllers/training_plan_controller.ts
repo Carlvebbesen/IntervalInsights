@@ -1,4 +1,5 @@
 import {
+  type PlanDetailAggregates,
   type PlannedSessionDto,
   type TrainingPlanDetailDto,
   type TrainingPlanDto,
@@ -28,6 +29,31 @@ import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
 
+function daysUntil(fromISO: string, targetISO: string): number {
+  const ms = Date.parse(`${targetISO}T00:00:00Z`) - Date.parse(`${fromISO}T00:00:00Z`);
+  return Math.round(ms / 86_400_000);
+}
+
+async function computePlanAggregates(
+  db: Db,
+  userId: string,
+  detail: planRepo.TrainingPlanDetail,
+): Promise<PlanDetailAggregates> {
+  const actuals = await planRepo.actualAggregatesByWeek(db, detail.plan.id);
+  const actualByWeekId = new Map(actuals.map((a) => [a.weekId, a]));
+
+  let raceCountdownDays: number | null = null;
+  if (detail.plan.raceEventId != null) {
+    const raceEvent = await raceEventRepo.findByIdForUser(db, userId, detail.plan.raceEventId);
+    if (raceEvent) {
+      const days = daysUntil(toISODate(new Date()), raceEvent.date);
+      raceCountdownDays = days >= 0 ? days : null;
+    }
+  }
+
+  return { actualByWeekId, raceCountdownDays };
+}
+
 export async function listTrainingPlans(
   db: Db,
   userId: string,
@@ -45,7 +71,7 @@ export async function getTrainingPlan(
   await sweepOverduePlannedSessions(db, userId, toISODate(new Date()));
   const detail = await planRepo.getWithDetailForUser(db, userId, id);
   if (!detail) throw new AppError(404, "Training plan not found or unauthorized");
-  return toTrainingPlanDetailDto(detail);
+  return toTrainingPlanDetailDto(detail, await computePlanAggregates(db, userId, detail));
 }
 
 export interface CreateTrainingPlanInput {
@@ -79,7 +105,7 @@ export async function createTrainingPlan(
   await assertRaceEventOwned(db, userId, input.raceEventId);
 
   const detail = await planRepo.createWithChildren(db, userId, input);
-  return toTrainingPlanDetailDto(detail);
+  return toTrainingPlanDetailDto(detail, await computePlanAggregates(db, userId, detail));
 }
 
 export interface UpdateTrainingPlanInput {

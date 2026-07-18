@@ -1,9 +1,11 @@
 import type { z } from "zod";
+import { estimatePlannedSessionDistanceMeters } from "../agent/planning/guards";
 import type {
   PlannedSessionDao,
   TrainingPlanDao,
   TrainingPlanDetail,
   TrainingPlanWeekDao,
+  WeekActualAggregate,
 } from "../repositories/training_plan_repository";
 import type {
   DeleteTrainingPlanResponseSchema,
@@ -71,6 +73,7 @@ export function toPlannedSessionDto(dao: PlannedSessionDao): PlannedSessionDto {
 function toTrainingPlanWeekWithSessionsDto(
   dao: TrainingPlanWeekDao,
   sessions: PlannedSessionDao[],
+  actual: WeekActualAggregate | undefined,
 ): TrainingPlanWeekWithSessionsDto {
   return {
     id: dao.id,
@@ -84,10 +87,27 @@ function toTrainingPlanWeekWithSessionsDto(
     createdAt: dao.createdAt.toISOString(),
     updatedAt: dao.updatedAt.toISOString(),
     sessions: sessions.map(toPlannedSessionDto),
+    plannedDistanceMeters: sessions.reduce(
+      (sum, s) => sum + estimatePlannedSessionDistanceMeters(s.structure, s.description),
+      0,
+    ),
+    actualDistanceMeters: actual?.actualDistanceMeters ?? 0,
+    actualTrainingLoad: actual?.actualTrainingLoad ?? 0,
+    sessionCount: sessions.length,
+    completedCount: sessions.filter((s) => s.status === "completed").length,
+    skippedCount: sessions.filter((s) => s.status === "skipped").length,
   };
 }
 
-export function toTrainingPlanDetailDto(detail: TrainingPlanDetail): TrainingPlanDetailDto {
+export interface PlanDetailAggregates {
+  actualByWeekId: Map<number, WeekActualAggregate>;
+  raceCountdownDays: number | null;
+}
+
+export function toTrainingPlanDetailDto(
+  detail: TrainingPlanDetail,
+  aggregates: PlanDetailAggregates,
+): TrainingPlanDetailDto {
   const sessionsByWeekId = new Map<number, PlannedSessionDao[]>();
   for (const session of detail.sessions) {
     const bucket = sessionsByWeekId.get(session.weekId);
@@ -95,10 +115,20 @@ export function toTrainingPlanDetailDto(detail: TrainingPlanDetail): TrainingPla
     else sessionsByWeekId.set(session.weekId, [session]);
   }
 
+  const nonSkipped = detail.sessions.filter((s) => s.status !== "skipped").length;
+  const completed = detail.sessions.filter((s) => s.status === "completed").length;
+  const completionPct = nonSkipped === 0 ? 0 : Math.round((completed / nonSkipped) * 100);
+
   return {
     ...toTrainingPlanDto(detail.plan),
     weeks: detail.weeks.map((week) =>
-      toTrainingPlanWeekWithSessionsDto(week, sessionsByWeekId.get(week.id) ?? []),
+      toTrainingPlanWeekWithSessionsDto(
+        week,
+        sessionsByWeekId.get(week.id) ?? [],
+        aggregates.actualByWeekId.get(week.id),
+      ),
     ),
+    raceCountdownDays: aggregates.raceCountdownDays,
+    completionPct,
   };
 }

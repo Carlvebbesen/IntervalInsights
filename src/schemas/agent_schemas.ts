@@ -132,22 +132,18 @@ export const SuggestSessionRequestSchema = z
       "Optional device weather snapshot; when present, target paces are also heat-adjusted by session type.",
     ),
     mode: z
-      .enum(["signature", "recommended"])
+      .enum(["plan", "signature", "ai"])
       .optional()
-      .default("signature")
       .describe(
-        "'signature' keeps the picked structure's shape (only modest readiness tweaks). 'recommended' lets the coach recommend the best-fitting session for today from the athlete's training context, free to reshape it.",
+        "Absent = auto: a planned session due today/tomorrow in an active plan is used as the default suggestion, otherwise 'signature'. 'plan' forces the due planned session (404 if none). 'signature' keeps the picked structure's shape (only modest readiness tweaks). 'ai' lets the coach recommend the best-fitting session for today, free to reshape it.",
       ),
     recentlySuggested: z
       .array(z.string().max(200))
       .max(10)
       .optional()
       .describe(
-        "Titles of sessions already suggested to the athlete in this sitting (client-held state). Passed back on a 'suggest another' tap so the coach proposes something different and the brief response cache is bypassed. Recommended mode only.",
+        "Titles of sessions already suggested to the athlete in this sitting (client-held state). Passed back on a 'suggest another' tap so the coach proposes something different and the brief response cache is bypassed. AI mode only.",
       ),
-  })
-  .refine((b) => b.structureId != null || (b.structure != null && b.structure.length > 0), {
-    message: "Provide either structureId or a non-empty structure.",
   })
   .openapi({ ref: "SuggestSessionRequest" });
 
@@ -168,5 +164,18 @@ export const SuggestSessionResponseSchema = z
     paces: z.array(ExpandedIntervalSetSchema),
     readiness: ReadinessSignalsSchema,
     advisory: z.string(),
+    mode: z
+      .enum(["plan", "signature", "ai"])
+      .describe("The resolved suggestion mode this response was built with."),
+    plannedSessionId: z
+      .number()
+      .nullable()
+      .optional()
+      .describe("In plan mode, the planned session this suggestion was built from."),
+    planId: z
+      .number()
+      .nullable()
+      .optional()
+      .describe("In plan mode, the training plan the session belongs to."),
   })
   .openapi({ ref: "SuggestSessionResponse" });

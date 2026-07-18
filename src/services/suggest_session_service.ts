@@ -4,22 +4,27 @@ import { invokeSuggestSessionAgent } from "../agent/suggest_session_agent";
 import { AppError } from "../error";
 import type { Logger } from "../logger";
 import * as structureRepo from "../repositories/interval_structure_repository";
+import * as planRepo from "../repositories/training_plan_repository";
+import type { TrainingType } from "../schema/enums";
+import type { WorkoutStructureSet } from "../schemas/agent_schemas";
 import type {
   ProposedTrainingArtifactSchema,
   SuggestSessionResponseSchema,
   Weather,
 } from "../schemas/api_schemas";
+import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import { buildAthleteProfileBlock } from "./athlete_profile_service";
 import { fetchFitnessDayBlock } from "./fitness_service";
 import { applyHeatAdjustment, heatZoneForTrainingType } from "./heat_service";
 import { fetchTrainingSummary } from "./intervals_wellness_service";
+import { fetchPaceAnchor, fillPacesFromAnchor } from "./pace_anchor_service";
 import {
   applyReadinessAdjustment,
   getProposedPaceForStructure,
   type ReadinessSignals,
 } from "./pace_service";
-import { toISODate } from "./utils";
+import { generateCompleteIntervalSet, toISODate } from "./utils";
 import { toWorkoutStructure } from "./workout_structure_format";
 
 type Db = IGlobalBindings["db"];
@@ -27,6 +32,8 @@ type WorkoutSet = z.infer<typeof workoutSet>;
 type SuggestSessionResponse = z.infer<typeof SuggestSessionResponseSchema>;
 type ProposedTraining = z.infer<typeof ProposedTrainingArtifactSchema>;
 type SuggestionMode = "signature" | "recommended";
+export type RequestMode = "plan" | "signature" | "ai";
+type ResponseMode = "plan" | "signature" | "ai";
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const cache = new Map<string, { at: number; value: SuggestSessionResponse }>();
@@ -47,10 +54,16 @@ function cacheKey(
   structureId: number | undefined,
   sets: WorkoutSet[],
   weather: Weather | undefined,
-  mode: SuggestionMode,
+  mode: ResponseMode,
   recentlySuggested: string[],
+  plannedSessionId: number | null,
 ): string {
-  const shape = structureId != null ? `id:${structureId}` : `h:${hashStructure(sets)}`;
+  const shape =
+    plannedSessionId != null
+      ? `ps:${plannedSessionId}`
+      : structureId != null
+        ? `id:${structureId}`
+        : `h:${hashStructure(sets)}`;
   const w = weather ? `|w:${Math.round(weather.temperatureC)}:${Math.round(weather.humidity)}` : "";
   const r = recentlySuggested.length > 0 ? `|r:${recentlySuggested.join("~")}` : "";
   return `${userId}|${date}|${shape}|m:${mode}${w}${r}`;
@@ -268,6 +281,148 @@ async function resolveReadiness(userId: string, date: string): Promise<Readiness
   };
 }
 
+function writeCache(key: string, value: SuggestSessionResponse): void {
+  const nowMs = Date.now();
+  for (const [staleKey, entry] of cache) {
+    if (nowMs - entry.at >= CACHE_TTL_MS) cache.delete(staleKey);
+  }
+  cache.set(key, { at: nowMs, value });
+}
+
+function shiftDateISO(dateISO: string, days: number): string {
+  const d = new Date(`${dateISO}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return toISODate(d);
+}
+
+/** Drop the pace fields from a stored plan structure to get the pace-agnostic input shape. */
+function structureToWorkoutSets(structure: WorkoutStructureSet[]): WorkoutSet[] {
+  return structure.map((set) => ({
+    set_reps: set.set_reps,
+    set_recovery: set.set_recovery ?? null,
+    steps: set.steps.map((step) => ({
+      reps: step.reps,
+      work_type: step.work_type,
+      work_value: step.work_value,
+      recovery_type: step.recovery_type ?? null,
+      recovery_value: step.recovery_value ?? null,
+    })),
+  }));
+}
+
+/** Lay the history paces (same expanded shape) onto the skeleton; shape mismatches pass through. */
+function mergeHistoryPaces(
+  skeleton: ExpandedIntervalSet[],
+  history: ExpandedIntervalSet[],
+): ExpandedIntervalSet[] {
+  if (history.length !== skeleton.length) return skeleton;
+  return skeleton.map((set, i) => {
+    const h = history[i];
+    if (!h || h.steps.length !== set.steps.length) return set;
+    return {
+      ...set,
+      steps: set.steps.map((step, j) => ({
+        ...step,
+        target_pace: h.steps[j]?.target_pace ?? step.target_pace,
+      })),
+    };
+  });
+}
+
+interface ResolvedRequestMode {
+  mode: ResponseMode;
+  due: planRepo.DuePlannedSession | null;
+}
+
+async function resolveRequestMode(
+  db: Db,
+  userId: string,
+  requested: RequestMode | undefined,
+  date: string,
+): Promise<ResolvedRequestMode> {
+  if (requested === "signature" || requested === "ai") return { mode: requested, due: null };
+
+  const tomorrow = shiftDateISO(date, 1);
+  const due = await planRepo.findDuePlannedSession(db, userId, date, tomorrow);
+
+  if (requested === "plan") {
+    if (!due) {
+      throw new AppError(404, "No planned session is due today or tomorrow in an active plan.");
+    }
+    return { mode: "plan", due };
+  }
+  // auto: plan when a session is due, otherwise the legacy signature path.
+  return { mode: due ? "plan" : "signature", due };
+}
+
+async function buildPlanSuggestion(
+  db: Db,
+  userId: string,
+  due: planRepo.DuePlannedSession,
+  date: string,
+  weather: Weather | undefined,
+  log: Logger,
+): Promise<SuggestSessionResponse> {
+  const session = due.session;
+  const structure = session.structure ?? [];
+  if (structure.length === 0) {
+    throw new AppError(
+      422,
+      "This planned session has no structured workout to build a suggestion from.",
+    );
+  }
+  const sets = structureToWorkoutSets(structure);
+  const sessionType = session.sessionType as TrainingType;
+
+  const readiness = await resolveReadiness(userId, date);
+  const skeleton: ExpandedIntervalSet[] = generateCompleteIntervalSet(sets);
+  const historyPaced = await getProposedPaceForStructure(db, userId, sets);
+  const merged = mergeHistoryPaces(skeleton, historyPaced);
+
+  const anchor = await fetchPaceAnchor(db, userId).catch(() => null);
+  const filled =
+    anchor && anchor.status === "ok"
+      ? fillPacesFromAnchor(merged, anchor.data.paces, sessionType)
+      : merged;
+
+  const { paces: readinessPaces, advisory } = applyReadinessAdjustment(filled, readiness);
+
+  let finalPaces = readinessPaces;
+  let heatAdvisory = "";
+  if (weather) {
+    const heat = applyHeatAdjustment(finalPaces, weather, heatZoneForTrainingType(sessionType));
+    finalPaces = heat.paces;
+    heatAdvisory = heat.advisory;
+  }
+
+  const combinedAdvisory = [advisory, heatAdvisory].filter(Boolean).join(" ");
+  const notes: string | null = session.description || combinedAdvisory || null;
+
+  const proposedTraining: ProposedTraining = {
+    type: "proposed_training",
+    id: crypto.randomUUID(),
+    title: session.title,
+    trainingType: sessionType,
+    notes,
+    structure: toWorkoutStructure(sets, finalPaces),
+  };
+
+  log.info(
+    { plannedSessionId: session.id, planId: due.planId },
+    "suggest-session built from planned session (plan mode)",
+  );
+
+  return {
+    proposedTraining,
+    paces: finalPaces,
+    readiness,
+    advisory: combinedAdvisory,
+    mode: "plan",
+    plannedSessionId: session.id,
+    planId: due.planId,
+  };
+}
+
 export async function suggestSession(
   db: Db,
   userId: string,
@@ -276,22 +431,38 @@ export async function suggestSession(
     structure?: WorkoutSet[];
     date?: string;
     weather?: Weather;
-    mode?: SuggestionMode;
+    mode?: RequestMode;
     recentlySuggested?: string[];
   },
   logger: Logger,
 ): Promise<SuggestSessionResponse> {
   const now = new Date();
   const date = input.date ?? toISODate(now);
-  const mode: SuggestionMode = input.mode ?? "signature";
   const recentlySuggested = input.recentlySuggested ?? [];
+
+  const resolved = await resolveRequestMode(db, userId, input.mode, date);
   const log = logger.child({
     route: "suggest-session",
     date,
     structureId: input.structureId,
-    mode,
+    mode: resolved.mode,
   });
 
+  if (resolved.mode === "plan" && resolved.due) {
+    const plannedSessionId = resolved.due.session.id;
+    const key = cacheKey(userId, date, undefined, [], input.weather, "plan", [], plannedSessionId);
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
+      log.info("suggest-session cache hit");
+      return hit.value;
+    }
+    const value = await buildPlanSuggestion(db, userId, resolved.due, date, input.weather, log);
+    writeCache(key, value);
+    return value;
+  }
+
+  // signature / ai: the athlete-driven LLM path.
+  const agentMode: SuggestionMode = resolved.mode === "ai" ? "recommended" : "signature";
   let baseStructure: WorkoutSet[] | null = input.structure ?? null;
   let structureName: string | null = null;
 
@@ -331,8 +502,9 @@ export async function suggestSession(
     input.structureId,
     baseStructure,
     input.weather,
-    mode,
+    resolved.mode,
     recentlySuggested,
+    null,
   );
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
@@ -344,7 +516,7 @@ export async function suggestSession(
   const basePaces = await getProposedPaceForStructure(db, userId, baseStructure);
   const { paces, advisory } = applyReadinessAdjustment(basePaces, readiness);
   const [historySummary, athleteProfile] = await Promise.all([
-    mode === "recommended"
+    agentMode === "recommended"
       ? buildTrainingHistorySummary(db, userId)
       : buildHistorySummary(db, userId, input.structureId),
     buildAthleteProfileBlock(db, userId, now).catch(() => ""),
@@ -359,7 +531,7 @@ export async function suggestSession(
     recentlySuggested,
     readiness,
     advisory,
-    mode,
+    mode: agentMode,
   });
 
   let finalSets = baseStructure;
@@ -413,11 +585,10 @@ export async function suggestSession(
     paces: finalPaces,
     readiness,
     advisory: combinedAdvisory,
+    mode: resolved.mode,
+    plannedSessionId: null,
+    planId: null,
   };
-  const nowMs = Date.now();
-  for (const [staleKey, entry] of cache) {
-    if (nowMs - entry.at >= CACHE_TTL_MS) cache.delete(staleKey);
-  }
-  cache.set(key, { at: nowMs, value });
+  writeCache(key, value);
   return value;
 }

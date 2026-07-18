@@ -1,6 +1,7 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { AppError } from "../error";
 import {
+  activities,
   type InsertPlannedSession,
   type InsertTrainingPlan,
   type InsertTrainingPlanWeek,
@@ -115,6 +116,73 @@ export async function getWithDetailForUser(
     .orderBy(asc(plannedSessions.date), asc(plannedSessions.sortOrder));
 
   return { plan, weeks, sessions };
+}
+
+export interface WeekActualAggregate {
+  weekId: number;
+  actualDistanceMeters: number;
+  actualTrainingLoad: number;
+}
+
+/**
+ * One grouped pass over a plan's completed sessions and their linked activities:
+ * summed actual distance + training load per week (no N+1). Weeks with no linked
+ * activity simply don't appear in the result.
+ */
+export async function actualAggregatesByWeek(
+  db: Db,
+  planId: number,
+): Promise<WeekActualAggregate[]> {
+  const rows = await db
+    .select({
+      weekId: plannedSessions.weekId,
+      actualDistanceMeters: sql<number>`coalesce(sum(${activities.distance}), 0)`,
+      actualTrainingLoad: sql<number>`coalesce(sum(${activities.trainingLoad}), 0)`,
+    })
+    .from(plannedSessions)
+    .innerJoin(activities, eq(activities.id, plannedSessions.completedActivityId))
+    .where(eq(plannedSessions.planId, planId))
+    .groupBy(plannedSessions.weekId);
+
+  return rows.map((r) => ({
+    weekId: r.weekId,
+    actualDistanceMeters: Math.round(Number(r.actualDistanceMeters)),
+    actualTrainingLoad: Math.round(Number(r.actualTrainingLoad)),
+  }));
+}
+
+export interface DuePlannedSession {
+  session: PlannedSessionDao;
+  planId: number;
+}
+
+/**
+ * The planned session due today/tomorrow in one of the user's ACTIVE plans, used
+ * to make suggest-session plan-aware (D8): only `planned`-status sessions count;
+ * today is preferred over tomorrow, ties broken by earliest sortOrder.
+ */
+export async function findDuePlannedSession(
+  db: Db,
+  userId: string,
+  today: string,
+  tomorrow: string,
+): Promise<DuePlannedSession | null> {
+  const rows = await db
+    .select({ session: plannedSessions, planId: plannedSessions.planId })
+    .from(plannedSessions)
+    .innerJoin(trainingPlans, eq(trainingPlans.id, plannedSessions.planId))
+    .where(
+      and(
+        eq(trainingPlans.userId, userId),
+        eq(trainingPlans.status, "active"),
+        eq(plannedSessions.status, "planned"),
+        inArray(plannedSessions.date, [today, tomorrow]),
+      ),
+    )
+    .orderBy(asc(plannedSessions.date), asc(plannedSessions.sortOrder))
+    .limit(1);
+  const row = rows[0];
+  return row ? { session: row.session, planId: row.planId } : null;
 }
 
 export interface CreateSessionInput {

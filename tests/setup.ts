@@ -151,6 +151,27 @@ mock.module("../src/services/pace_service.ts", () => ({
   }),
 }));
 
+// Mutable delegate: the suggest-session LLM seam. Defaults to a no-op that
+// returns null (service then uses the athlete's own structure). A test file may
+// swap the delegate and read `calls` to assert the LLM was / wasn't invoked —
+// call reset() when done (global across files).
+export const suggestSessionAgentMock = {
+  calls: 0,
+  invoke: async (..._args: unknown[]): Promise<unknown> => null,
+  reset() {
+    this.calls = 0;
+    this.invoke = async () => null;
+  },
+};
+
+mock.module("../src/agent/suggest_session_agent.ts", () => ({
+  suggestSessionOutput: z.object({ structure: z.array(z.unknown()) }),
+  invokeSuggestSessionAgent: (...args: unknown[]) => {
+    suggestSessionAgentMock.calls++;
+    return suggestSessionAgentMock.invoke(...args);
+  },
+}));
+
 mock.module("../src/services/lap_derivation_service.ts", () => ({
   getSegmentsForActivity: async () => [],
   matchLapsToExpandedSteps: () => [],

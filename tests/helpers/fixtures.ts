@@ -57,6 +57,7 @@ export async function insertActivity(
     localGearId: number | null;
     gearUpdatedFromStrava: boolean;
     intervalStructureId: number | null;
+    trainingLoad: number | null;
   }> = {},
 ): Promise<SeededActivity> {
   const db = getDb();
@@ -73,6 +74,7 @@ export async function insertActivity(
       startDateLocal: overrides.startDateLocal ?? new Date(),
       analysisStatus: overrides.analysisStatus ?? "completed",
       trainingType: overrides.trainingType ?? "EASY",
+      trainingLoad: overrides.trainingLoad ?? null,
       indoor: overrides.indoor ?? false,
       description: overrides.description ?? null,
       notes: overrides.notes ?? null,

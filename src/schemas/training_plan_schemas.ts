@@ -43,6 +43,18 @@ export const TrainingPlanWeekSchema = z
 
 export const TrainingPlanWeekWithSessionsSchema = TrainingPlanWeekSchema.extend({
   sessions: z.array(PlannedSessionSchema),
+  plannedDistanceMeters: z
+    .number()
+    .describe("Sum of the week's session distance estimates (structure estimate or ~X km hint)."),
+  actualDistanceMeters: z
+    .number()
+    .describe("Sum of distance over the week's linked completed activities."),
+  actualTrainingLoad: z
+    .number()
+    .describe("Sum of training load over the week's linked completed activities."),
+  sessionCount: z.number(),
+  completedCount: z.number(),
+  skippedCount: z.number(),
 }).openapi({ ref: "TrainingPlanWeekWithSessions" });
 
 export const TrainingPlanSchema = z
@@ -61,6 +73,15 @@ export const TrainingPlanSchema = z
 
 export const TrainingPlanDetailSchema = TrainingPlanSchema.extend({
   weeks: z.array(TrainingPlanWeekWithSessionsSchema),
+  raceCountdownDays: z
+    .number()
+    .nullable()
+    .describe(
+      "Whole days until the linked race event; null for timeframe-only plans or once past.",
+    ),
+  completionPct: z
+    .number()
+    .describe("Completed sessions as a percentage of non-skipped sessions (0-100 integer)."),
 }).openapi({ ref: "TrainingPlanDetail" });
 
 export const TrainingPlanListResponseSchema = z
