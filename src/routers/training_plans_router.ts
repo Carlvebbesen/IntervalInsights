@@ -1,7 +1,13 @@
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
+import * as planBuilderController from "../controllers/plan_builder_controller";
 import * as trainingPlanController from "../controllers/training_plan_controller";
+import {
+  dailyQuota,
+  PLAN_BUILDER_DAILY_MAX,
+  PLAN_BUILDER_QUOTA,
+} from "../middlewares/quota_middleware";
 import {
   plannedSessionStatusEnum,
   planWeekPhaseEnum,
@@ -132,6 +138,95 @@ trainingPlansRouter.post(
       c.req.valid("json"),
     );
     return c.json(created, 201);
+  },
+);
+
+const generatePlanSchema = z
+  .object({
+    name: z.string().optional(),
+    raceEventId: z.number().int().positive().optional(),
+    startDate: z.string().date(),
+    endDate: z.string().date(),
+    goalText: z.string().max(2000).optional(),
+  })
+  .refine((data) => data.endDate >= data.startDate, {
+    message: "endDate must be on or after startDate",
+    path: ["endDate"],
+  });
+
+trainingPlansRouter.post(
+  "/generate",
+  describeRoute({
+    description:
+      "Start the guided plan-builder wizard (Server-Sent Events). Streams `started`, `status` (node name), `interrupt` (macro_review / sessions_review, awaiting POST .../generate/resume), `done` (persisted planId), and `error`.",
+    responses: {
+      200: {
+        description: "SSE stream",
+        content: { "text/event-stream": { schema: { type: "string" } } },
+      },
+      400: {
+        description: "Bad request",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      429: {
+        description: "Daily plan-builder quota reached",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  dailyQuota(PLAN_BUILDER_QUOTA, PLAN_BUILDER_DAILY_MAX),
+  validator("json", generatePlanSchema),
+  (c) => planBuilderController.generateTrainingPlan(c, c.req.valid("json")),
+);
+
+const resumePlanSchema = z
+  .object({
+    threadId: z.string().regex(/^plan-builder:[0-9a-f-]{36}$/),
+    action: z.enum(["accept", "adjust"]),
+    feedback: z.string().min(1).max(2000).optional(),
+  })
+  .refine((data) => data.action !== "adjust" || !!data.feedback, {
+    message: "feedback is required when action is 'adjust'",
+    path: ["feedback"],
+  });
+
+trainingPlansRouter.post(
+  "/generate/resume",
+  describeRoute({
+    description:
+      "Resume a paused plan-builder wizard thread with the user's macro/sessions review decision. Streams the same SSE event framing as .../generate (no `started`).",
+    responses: {
+      200: {
+        description: "SSE stream",
+        content: { "text/event-stream": { schema: { type: "string" } } },
+      },
+      400: {
+        description: "Bad request",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      404: {
+        description: "Unknown thread or not owned by the authenticated user",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      409: {
+        description: "Thread has no pending plan-builder step",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      429: {
+        description: "Daily plan-builder quota reached",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  dailyQuota(PLAN_BUILDER_QUOTA, PLAN_BUILDER_DAILY_MAX),
+  validator("json", resumePlanSchema),
+  async (c) => {
+    const { threadId, action, feedback } = c.req.valid("json");
+    const resume =
+      action === "adjust"
+        ? ({ action, feedback: feedback as string } as const)
+        : ({ action } as const);
+    return planBuilderController.resumeTrainingPlan(c, threadId, resume);
   },
 );
 
