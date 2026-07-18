@@ -6,7 +6,11 @@ import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { eq } from "drizzle-orm";
 import { updateUserSettings } from "../src/repositories/user_settings_repository";
 import { activities } from "../src/schema";
-import { computeAndStoreActivityLoad } from "../src/services/activity_load_service";
+import {
+  computeAndStoreActivityLoad,
+  computeAndStoreActivityLoadWithThresholds,
+} from "../src/services/activity_load_service";
+import type { ActivityThresholds } from "../src/services/training_load_service";
 import { stravaApiService } from "../src/services/strava_api_service";
 import { closePool, createTestUser, deleteTestUser, getDb } from "./helpers/db";
 import { insertActivity } from "./helpers/fixtures";
@@ -116,6 +120,71 @@ describe("computeAndStoreActivityLoad", () => {
         .where(eq(activities.id, act.id));
       expect(row.load).toBe(77);
       expect(row.source).toBe("power");
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+});
+
+const PACE_THRESHOLDS: ActivityThresholds = {
+  thresholdPaceMps: 3.5,
+  lthr: null,
+  restingHr: null,
+  maxHr: null,
+  ftp: null,
+  sex: null,
+};
+
+describe("computeAndStoreActivityLoadWithThresholds", () => {
+  it("writes the computed load with injected thresholds", async () => {
+    const user = await createTestUser({ role: "premium" });
+    try {
+      const act = await insertActivity(user.id, { sportType: "Run" });
+      streamResult = constantRun(4.0, 60);
+      patchStreams();
+
+      const result = await computeAndStoreActivityLoadWithThresholds(
+        db,
+        user.id,
+        act.id,
+        PACE_THRESHOLDS,
+      );
+      expect(result?.source).toBe("pace");
+      expect(result?.load).toBeGreaterThan(0);
+
+      const [row] = await db
+        .select({ load: activities.trainingLoad, source: activities.trainingLoadSource })
+        .from(activities)
+        .where(eq(activities.id, act.id));
+      expect(row.load).toBe(result?.load ?? null);
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  it("dryRun computes and returns the load but writes nothing", async () => {
+    const user = await createTestUser({ role: "premium" });
+    try {
+      const act = await insertActivity(user.id, { sportType: "Run" });
+      streamResult = constantRun(4.0, 60);
+      patchStreams();
+
+      const result = await computeAndStoreActivityLoadWithThresholds(
+        db,
+        user.id,
+        act.id,
+        PACE_THRESHOLDS,
+        { dryRun: true },
+      );
+      expect(result?.source).toBe("pace");
+      expect(result?.load).toBeGreaterThan(0);
+
+      const [row] = await db
+        .select({ load: activities.trainingLoad, source: activities.trainingLoadSource })
+        .from(activities)
+        .where(eq(activities.id, act.id));
+      expect(row.load).toBeNull(); // never written
+      expect(row.source).toBeNull();
     } finally {
       await deleteTestUser(user.id);
     }

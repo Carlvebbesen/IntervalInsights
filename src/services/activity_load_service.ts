@@ -4,7 +4,11 @@ import { activities } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import { getStreamSet } from "./activity_source_service";
 import { resolveThresholds } from "./threshold_service";
-import { computeActivityLoad, type LoadStreams } from "./training_load_service";
+import {
+  type ActivityThresholds,
+  computeActivityLoad,
+  type LoadStreams,
+} from "./training_load_service";
 
 type Db = IGlobalBindings["db"];
 
@@ -52,6 +56,24 @@ export async function computeAndStoreActivityLoad(
   userId: string,
   activityId: number,
 ): Promise<{ load: number; source: string } | null> {
+  const thresholds = await resolveThresholds(db, userId);
+  return computeAndStoreActivityLoadWithThresholds(db, userId, activityId, thresholds);
+}
+
+/**
+ * The per-activity load step with thresholds injected instead of resolved — the
+ * one code path shared by the ingest wrapper (above) and the historical backfill
+ * script, which resolves thresholds as-of each activity's date. Same never-wipe
+ * invariant: a null result or stream-fetch failure returns null WITHOUT writing.
+ * `dryRun` computes and returns the result but skips the write (backfill preview).
+ */
+export async function computeAndStoreActivityLoadWithThresholds(
+  db: Db,
+  userId: string,
+  activityId: number,
+  thresholds: ActivityThresholds,
+  opts: { dryRun?: boolean } = {},
+): Promise<{ load: number; source: string } | null> {
   try {
     const row = await db.query.activities.findFirst({
       where: and(eq(activities.id, activityId), eq(activities.userId, userId)),
@@ -62,14 +84,15 @@ export async function computeAndStoreActivityLoad(
     const streams = await fetchLoadStreams(db, userId, activityId);
     if (!streams || streams.time.length === 0) return null;
 
-    const thresholds = await resolveThresholds(db, userId);
     const result = computeActivityLoad({ sportType: row.sportType, streams, thresholds });
     if (!result) return null;
 
-    await db
-      .update(activities)
-      .set({ trainingLoad: result.load, trainingLoadSource: result.source })
-      .where(and(eq(activities.id, activityId), eq(activities.userId, userId)));
+    if (!opts.dryRun) {
+      await db
+        .update(activities)
+        .set({ trainingLoad: result.load, trainingLoadSource: result.source })
+        .where(and(eq(activities.id, activityId), eq(activities.userId, userId)));
+    }
 
     return { load: result.load, source: result.source };
   } catch (err) {
