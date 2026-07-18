@@ -3,10 +3,14 @@ import { type ToolRunnableConfig, tool } from "@langchain/core/tools";
 import { Command } from "@langchain/langgraph";
 import { z } from "zod";
 import { getProposedPace } from "../../controllers/analysis_controller";
+import { AppError } from "../../error";
+import { getWithDetailForUser } from "../../repositories/training_plan_repository";
 import { trainingTypeEnum } from "../../schema/enums";
+import { type PlanRevisionChange, PlanRevisionChangeSchema } from "../../schemas/agent_schemas";
 import type { CoachArtifact } from "../../schemas/api_schemas";
 import { toWorkoutStructure } from "../../services/workout_structure_format";
 import { workoutSet } from "../initial_analysis_agent";
+import { stripPaces } from "../planning/guards";
 import type { CoachCtx } from "./tool_types";
 
 function getCtx(config: ToolRunnableConfig): CoachCtx {
@@ -277,10 +281,93 @@ export const createWeeklyPlanTool = tool(
   },
 );
 
+function stripChangeStructures(changes: PlanRevisionChange[]): PlanRevisionChange[] {
+  return changes.map((change) => {
+    if (change.kind === "update_session" && change.patch.structure) {
+      return {
+        ...change,
+        patch: { ...change.patch, structure: stripPaces(change.patch.structure) },
+      };
+    }
+    if (change.kind === "add_session" && change.session.structure) {
+      return {
+        ...change,
+        session: { ...change.session, structure: stripPaces(change.session.structure) },
+      };
+    }
+    return change;
+  });
+}
+
+async function assertRevisionReferentialIntegrity(
+  ctx: CoachCtx,
+  planId: number,
+  changes: PlanRevisionChange[],
+): Promise<void> {
+  const detail = await getWithDetailForUser(ctx.db, ctx.userId, planId);
+  if (!detail) throw new AppError(404, "Training plan not found or unauthorized");
+
+  const weekIds = new Set(detail.weeks.map((w) => w.id));
+  const sessionIds = new Set(detail.sessions.map((s) => s.id));
+  for (const change of changes) {
+    if (
+      (change.kind === "move_session" ||
+        change.kind === "update_session" ||
+        change.kind === "drop_session") &&
+      !sessionIds.has(change.sessionId)
+    ) {
+      throw new AppError(400, `Session ${change.sessionId} does not belong to plan ${planId}`);
+    }
+    if (
+      (change.kind === "add_session" || change.kind === "update_week") &&
+      !weekIds.has(change.weekId)
+    ) {
+      throw new AppError(400, `Week ${change.weekId} does not belong to plan ${planId}`);
+    }
+  }
+}
+
+export const createPlanRevisionTool = tool(
+  async (input, config: ToolRunnableConfig) => {
+    const ctx = getCtx(config);
+    await assertRevisionReferentialIntegrity(ctx, input.planId, input.changes);
+    const changes = stripChangeStructures(input.changes);
+
+    const artifact: CoachArtifact = {
+      type: "plan_revision",
+      id: crypto.randomUUID(),
+      planId: input.planId,
+      title: input.title,
+      rationale: input.rationale,
+      changes,
+    };
+    return renderArtifact(config, artifact, {
+      ok: true,
+      rendered: "plan_revision",
+      changeCount: changes.length,
+      note: "Plan revision proposal shown to the athlete. Nothing is applied yet — only call apply_plan_revision after the athlete explicitly confirms they want these exact changes made.",
+    });
+  },
+  {
+    name: "create_plan_revision",
+    description:
+      "Render a proposed set of changes to an existing training plan (move/update/drop a session, add a session, or update a week's targets) as a card the athlete reviews. This ONLY shows the proposal — nothing is saved. Validates that the plan and every referenced session/week belong to the athlete before rendering. Per policy, ALWAYS call this before apply_plan_revision, and only call apply_plan_revision afterward once the athlete has explicitly confirmed — never apply a revision silently.",
+    schema: z
+      .object({
+        planId: z.number().int().positive(),
+        title: z.string().min(1).describe("Short revision name, e.g. 'Move long run to Sunday'."),
+        rationale: z.string().min(1).describe("Coach's reasoning for the athlete."),
+        changes: z.array(PlanRevisionChangeSchema).min(1),
+      })
+      .strict(),
+  },
+);
+
 export const visualTools = [
   createTrainingTool,
   createChartTool,
   createTableTool,
   createStatCardsTool,
   createWeeklyPlanTool,
+  createPlanRevisionTool,
 ];

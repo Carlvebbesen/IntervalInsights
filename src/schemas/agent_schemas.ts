@@ -1,6 +1,11 @@
 import "zod-openapi/extend";
 import { z } from "zod";
-import { analysisStatusEnum, trainingTypeEnum, workoutPartEnum } from "../schema/enums";
+import {
+  analysisStatusEnum,
+  planWeekPhaseEnum,
+  trainingTypeEnum,
+  workoutPartEnum,
+} from "../schema/enums";
 import { WeatherSchema } from "./common_schemas";
 
 export const ExpandedIntervalStepSchema = z
@@ -60,6 +65,83 @@ export const ProposedTrainingArtifactSchema = z
     structure: z.array(WorkoutStructureSetSchema),
   })
   .openapi({ ref: "ProposedTrainingArtifact" });
+
+export const PlanRevisionMoveSessionSchema = z
+  .object({
+    kind: z.literal("move_session"),
+    sessionId: z.number().int().positive(),
+    toDate: z.string().date(),
+  })
+  .openapi({ ref: "PlanRevisionMoveSession" });
+
+export const PlanRevisionUpdateSessionSchema = z
+  .object({
+    kind: z.literal("update_session"),
+    sessionId: z.number().int().positive(),
+    patch: z.object({
+      title: z.string().min(1).optional(),
+      sessionType: z.enum(trainingTypeEnum.enumValues).optional(),
+      description: z.string().nullable().optional(),
+      structure: z.array(WorkoutStructureSetSchema).nullable().optional(),
+    }),
+  })
+  .openapi({ ref: "PlanRevisionUpdateSession" });
+
+export const PlanRevisionDropSessionSchema = z
+  .object({
+    kind: z.literal("drop_session"),
+    sessionId: z.number().int().positive(),
+  })
+  .openapi({ ref: "PlanRevisionDropSession" });
+
+export const PlanRevisionAddSessionSchema = z
+  .object({
+    kind: z.literal("add_session"),
+    weekId: z.number().int().positive(),
+    session: z.object({
+      date: z.string().date(),
+      sessionType: z.enum(trainingTypeEnum.enumValues),
+      title: z.string().min(1),
+      description: z.string().min(1).optional(),
+      structure: z.array(WorkoutStructureSetSchema).nullable().optional(),
+    }),
+  })
+  .openapi({ ref: "PlanRevisionAddSession" });
+
+export const PlanRevisionUpdateWeekSchema = z
+  .object({
+    kind: z.literal("update_week"),
+    weekId: z.number().int().positive(),
+    patch: z.object({
+      targetDistanceMeters: z.number().int().positive().nullable().optional(),
+      targetLoad: z.number().int().positive().nullable().optional(),
+      notes: z.string().nullable().optional(),
+      phase: z.enum(planWeekPhaseEnum.enumValues).nullable().optional(),
+    }),
+  })
+  .openapi({ ref: "PlanRevisionUpdateWeek" });
+
+export const PlanRevisionChangeSchema = z.discriminatedUnion("kind", [
+  PlanRevisionMoveSessionSchema,
+  PlanRevisionUpdateSessionSchema,
+  PlanRevisionDropSessionSchema,
+  PlanRevisionAddSessionSchema,
+  PlanRevisionUpdateWeekSchema,
+]);
+export type PlanRevisionChange = z.infer<typeof PlanRevisionChangeSchema>;
+
+export const PlanRevisionArtifactSchema = z
+  .object({
+    type: z.literal("plan_revision"),
+    id: z.string(),
+    planId: z.number().int().positive(),
+    title: z.string(),
+    rationale: z.string(),
+    changes: z.array(PlanRevisionChangeSchema).min(1),
+  })
+  .openapi({ ref: "PlanRevisionArtifact" });
+
+export type PlanRevisionArtifact = z.infer<typeof PlanRevisionArtifactSchema>;
 
 export const PendingActivitySchema = z
   .object({
