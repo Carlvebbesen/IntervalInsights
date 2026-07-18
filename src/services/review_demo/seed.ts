@@ -1,9 +1,10 @@
-// Boot-time seeder for the store-review demo account. Idempotent and
-// self-healing: it wipes and reinserts the review user's synthetic corpus on
-// every boot, keeping dates fresh and restoring anything a reviewer mutated.
+// Store-review demo account seeding. Split into a cheap per-boot part
+// (resolve + promote the review user, arm the in-memory isReviewUser cache) and
+// the expensive corpus delete+reinsert, which now runs on demand via
+// `scripts/seed_review_account.ts` and as a first-boot convenience.
 // No-ops entirely unless the REVIEW_ACCOUNT_* env pair is configured.
 
-import { eq, inArray } from "drizzle-orm";
+import { count, eq, inArray } from "drizzle-orm";
 import { config } from "../../config";
 import { db } from "../../db";
 import { logger } from "../../logger";
@@ -19,27 +20,42 @@ import {
 import { setReviewUserId } from "../review_account";
 import { buildDemoCorpus } from "./corpus";
 
-export async function seedReviewAccountData(): Promise<void> {
-  if (config.REVIEW_ACCOUNT_EMAIL === undefined) return;
+// Cheap, safe on every boot: resolve the review user, promote it (provider
+// sentinel + premium role so the app gate passes and coach chat works; consent
+// timestamps left null so the reviewer exercises them) and arm isReviewUser().
+// Returns the user id, or null when the env pair is unset or the row is missing.
+export async function prepareReviewAccount(): Promise<string | null> {
+  if (config.REVIEW_ACCOUNT_EMAIL === undefined) return null;
 
   const user = await db.query.users.findFirst({
     where: eq(users.email, config.REVIEW_ACCOUNT_EMAIL),
     columns: { id: true },
   });
-  if (!user) return;
-  const userId = user.id;
-  setReviewUserId(userId);
+  if (!user) return null;
 
+  await db
+    .update(users)
+    .set({ stravaId: "0", role: "premium", maxHeartRate: 190, processHeartRate: true })
+    .where(eq(users.id, user.id));
+  setReviewUserId(user.id);
+  return user.id;
+}
+
+export async function hasReviewDemoData(userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(activities)
+    .where(eq(activities.userId, userId));
+  return (row?.n ?? 0) > 0;
+}
+
+// Expensive delete+reinsert of the synthetic corpus. Idempotent and
+// self-healing: wipes and reinserts the review user's data, freshening dates and
+// restoring anything a reviewer mutated. Caller must have run prepareReviewAccount.
+export async function reseedReviewAccountData(userId: string): Promise<void> {
   const corpus = buildDemoCorpus(new Date());
 
   await db.transaction(async (tx) => {
-    // Provider sentinel + premium role so the app gate passes and coach chat
-    // works; leave consent timestamps null so the reviewer exercises them.
-    await tx
-      .update(users)
-      .set({ stravaId: "0", role: "premium", maxHeartRate: 190, processHeartRate: true })
-      .where(eq(users.id, userId));
-
     if (corpus.structures.length > 0) {
       await tx
         .insert(intervalStructures)
@@ -110,4 +126,10 @@ export async function seedReviewAccountData(): Promise<void> {
     },
     "seeded store-review demo data",
   );
+}
+
+// Full entry point for the on-demand script: prepare then force a reseed.
+export async function seedReviewAccountData(): Promise<void> {
+  const userId = await prepareReviewAccount();
+  if (userId) await reseedReviewAccountData(userId);
 }
