@@ -317,8 +317,8 @@ async function storedRunningEfforts(db: Db, userId: string, now: Date): Promise<
   since.setUTCDate(since.getUTCDate() - STORED_WINDOW_DAYS);
 
   const [reps, races] = await Promise.all([
-    intervalRepEfforts(db, userId, since),
-    raceEfforts(db, userId, since),
+    intervalRepEfforts(db, userId, since, now),
+    raceEfforts(db, userId, since, now),
   ]);
 
   return bestEffortsPerBucket([...reps, ...races]);

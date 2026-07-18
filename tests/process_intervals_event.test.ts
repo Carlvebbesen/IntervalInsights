@@ -10,6 +10,7 @@
 
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { eq } from "drizzle-orm";
+import { updateUserSettings } from "../src/repositories/user_settings_repository";
 import { activities, users } from "../src/schema";
 import { intervalsApiService } from "../src/services/intervals_api_service";
 import { progressService, type StreamHandle } from "../src/services/progress_service";
@@ -59,7 +60,26 @@ function activityEvent(
 
 // Monkeypatch the (mocked) intervalsApiService object; restore after each test.
 const realGetActivity = intervalsApiService.getActivity;
+const realGetActivityStreams = intervalsApiService.getActivityStreams;
 let getActivityResult: unknown = null;
+
+function constantRunStreams(velocityMps: number, seconds: number) {
+  const time: number[] = [];
+  const velocity: number[] = [];
+  for (let i = 0; i <= seconds; i++) {
+    time.push(i);
+    velocity.push(velocityMps);
+  }
+  return [
+    { type: "time", data: time },
+    { type: "velocity_smooth", data: velocity },
+  ];
+}
+
+function patchStreams(velocityMps: number, seconds: number) {
+  intervalsApiService.getActivityStreams = (async () =>
+    constantRunStreams(velocityMps, seconds)) as typeof intervalsApiService.getActivityStreams;
+}
 
 beforeEach(() => {
   intervalsApiService.getActivity = (async () =>
@@ -68,6 +88,7 @@ beforeEach(() => {
 
 afterEach(() => {
   intervalsApiService.getActivity = realGetActivity;
+  intervalsApiService.getActivityStreams = realGetActivityStreams;
   getActivityResult = null;
 });
 
@@ -346,6 +367,57 @@ describe("processIntervalsWebhook (real implementation)", () => {
         .find((d) => d.kind === "intervals_ingest");
       expect(ingest).toBeDefined();
       expect(ingest?.phase).toBe("received");
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  it("self-computes training load when a row is created from intervals.icu", async () => {
+    const user = await createIntervalsUser();
+    try {
+      await updateUserSettings(db, user.id, { thresholdPaceMps: 3.5 });
+      patchStreams(4.0, 300);
+      const act = synthIntervalsActivity({ distance: 6000, strava_id: null });
+      getActivityResult = act;
+
+      await processIntervalsWebhook(
+        activityEvent("ACTIVITY_UPLOADED", user.athleteId, act.id),
+        context,
+      );
+
+      const [row] = await activitiesFor(user.id);
+      expect(row.intervalsIcuId).toBe(act.id);
+      expect(row.trainingLoad).not.toBeNull();
+      expect(row.trainingLoadSource).toBe("pace");
+    } finally {
+      await deleteTestUser(user.id);
+    }
+  });
+
+  it("self-computes training load on refresh (UPDATED) of a linked row", async () => {
+    const user = await createIntervalsUser();
+    try {
+      await updateUserSettings(db, user.id, { thresholdPaceMps: 3.5 });
+      const act = synthIntervalsActivity({ distance: 6000, strava_id: null });
+      getActivityResult = act;
+
+      // First upload with no stream stub → getActivityStreams throws → load stays null.
+      await processIntervalsWebhook(
+        activityEvent("ACTIVITY_UPLOADED", user.athleteId, act.id),
+        context,
+      );
+      let [row] = await activitiesFor(user.id);
+      expect(row.trainingLoad).toBeNull();
+
+      // Refresh with streams available → load computed.
+      patchStreams(4.0, 300);
+      await processIntervalsWebhook(
+        activityEvent("ACTIVITY_UPDATED", user.athleteId, act.id),
+        context,
+      );
+      [row] = await activitiesFor(user.id);
+      expect(row.trainingLoad).not.toBeNull();
+      expect(row.trainingLoadSource).toBe("pace");
     } finally {
       await deleteTestUser(user.id);
     }

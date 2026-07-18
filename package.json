@@ -6,6 +6,7 @@
     "test": "bash scripts/test.sh",
     "check": "bash scripts/check.sh",
     "test:pace": "bash scripts/test-pace.sh",
+    "test:fitness": "bash scripts/test-fitness.sh",
     "test:bun": "bun test",
     "build": "bun build src/index.ts --compile --outfile server",
     "db:generate": "drizzle-kit generate",

@@ -1,0 +1,13 @@
+# Dedicated bun-test config for the REAL intervals_wellness_service tests
+# (tests/wellness_service_computed.test.ts ONLY).
+#
+# It REPLACES the default preload (tests/setup.ts, which globally mocks
+# intervals_wellness_service) with tests/setup.fitness.ts, which leaves that
+# service — and the fitness_service / fitness_metrics_service it now depends on —
+# REAL, mocking only leaf network modules. Same rationale as bunfig.pace.toml.
+#
+# Invoke with `bun --config=tests/bunfig.fitness.toml test ...` (the `--config=`
+# form, BEFORE the `test` subcommand). scripts/test-fitness.sh wraps this with a
+# disposable Postgres.
+[test]
+preload = ["./tests/setup.fitness.ts"]

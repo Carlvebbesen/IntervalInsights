@@ -282,10 +282,10 @@ async function buildTrainingHistorySummary(db: Db, userId: string): Promise<stri
   return lines.join("\n");
 }
 
-async function resolveReadiness(userId: string, date: string): Promise<ReadinessSignals> {
+async function resolveReadiness(db: Db, userId: string, date: string): Promise<ReadinessSignals> {
   const [day, summary] = await Promise.all([
-    fetchFitnessDayBlock(userId, date).catch(() => null),
-    fetchTrainingSummary(userId).catch(() => null),
+    fetchFitnessDayBlock(db, userId, date).catch(() => null),
+    fetchTrainingSummary(db, userId).catch(() => null),
   ]);
 
   const ramp = summary && summary.status === "ok" ? summary.data.fitness.rampRate : null;
@@ -372,7 +372,7 @@ export async function suggestSession(
     return hit.value;
   }
 
-  const readiness = await resolveReadiness(userId, date);
+  const readiness = await resolveReadiness(db, userId, date);
   const basePaces = await getProposedPaceForStructure(db, userId, baseStructure);
   const { paces, advisory } = applyReadinessAdjustment(basePaces, readiness);
   const [historySummary, athleteProfile] = await Promise.all([

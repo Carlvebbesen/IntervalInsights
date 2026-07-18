@@ -83,14 +83,16 @@ describe("streams/laps/splits short-circuit to the corpus", () => {
 
 describe("fitness series", () => {
   it("returns an ok series from the corpus for the review user", async () => {
-    const result = await fetchFitnessSeries(reviewUser.id, "2000-01-01", "2100-01-01");
+    const result = await fetchFitnessSeries(getDb(), reviewUser.id, "2000-01-01", "2100-01-01");
     expect(result.status).toBe("ok");
     expect(result.data?.points.length).toBe(corpus.fitnessSeries.length);
   });
 
-  it("returns not_linked for a normal token-less user", async () => {
-    const result = await fetchFitnessSeries(normalUser.id, "2000-01-01", "2100-01-01");
-    expect(result.status).toBe("not_linked");
+  // Post-P2: the calculated half is self-computed, so a token-less user with no
+  // activities gets an empty computed series (no_data), not the old not_linked.
+  it("returns no_data for a normal token-less user with no activities", async () => {
+    const result = await fetchFitnessSeries(getDb(), normalUser.id, "2000-01-01", "2100-01-01");
+    expect(result.status).toBe("no_data");
     expect(result.data).toBeNull();
   });
 });

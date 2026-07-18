@@ -35,6 +35,8 @@ export const intervalTypeEnum = pgEnum("interval_type", [
   "RECOVERY_INTERVALS",
 ]);
 export const userRoleEnum = pgEnum("user_role_enum", ["guest", "premium", "admin"]);
+export const sexEnum = pgEnum("sex", ["male", "female"]);
+export type Sex = (typeof sexEnum.enumValues)[number];
 export const analysisReviewModeEnum = pgEnum("analysis_review_mode", [
   "all",
   "intervals_only",

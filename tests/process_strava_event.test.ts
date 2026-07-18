@@ -82,7 +82,21 @@ const activitiesFor = (userId: string) =>
 
 // Monkeypatch the (mocked) stravaApiService object; restore after each test.
 const realGetActivity = stravaApiService.getActivity;
+const realGetActivityStreams = stravaApiService.getActivityStreams;
 let getActivityResult: unknown;
+
+function patchStreams(velocityMps: number, seconds: number) {
+  const time: number[] = [];
+  const velocity_smooth: number[] = [];
+  for (let i = 0; i <= seconds; i++) {
+    time.push(i);
+    velocity_smooth.push(velocityMps);
+  }
+  stravaApiService.getActivityStreams = (async () => ({
+    time: { data: time },
+    velocity_smooth: { data: velocity_smooth },
+  })) as typeof stravaApiService.getActivityStreams;
+}
 
 beforeEach(() => {
   stravaApiService.getActivity = (async () =>
@@ -91,6 +105,7 @@ beforeEach(() => {
 
 afterEach(() => {
   stravaApiService.getActivity = realGetActivity;
+  stravaApiService.getActivityStreams = realGetActivityStreams;
   analysisServiceMock.reset();
 });
 
@@ -581,6 +596,30 @@ describe("processStravaWebhook (real implementation)", () => {
         getActivityResult = stravaActivity(stravaActivityId, user.athleteId);
         await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "create"), context);
         expect(calls.count).toBe(0);
+      } finally {
+        await deleteTestUser(user.id);
+      }
+    });
+  });
+
+  describe("self-computed training load", () => {
+    it("computes and stores load + source when a create inserts a row", async () => {
+      const user = await createStravaUser();
+      await updateUserSettings(db, user.id, { thresholdPaceMps: 3.5 });
+      try {
+        const stravaActivityId = nextAthleteId() * 1000;
+        getActivityResult = stravaActivity(stravaActivityId, user.athleteId);
+        patchStreams(4.0, 300);
+
+        await processStravaWebhook(
+          createEvent(stravaActivityId, user.athleteId, "create"),
+          context,
+        );
+
+        const [row] = await activitiesFor(user.id);
+        expect(row.stravaActivityId).toBe(stravaActivityId);
+        expect(row.trainingLoad).not.toBeNull();
+        expect(row.trainingLoadSource).toBe("pace");
       } finally {
         await deleteTestUser(user.id);
       }

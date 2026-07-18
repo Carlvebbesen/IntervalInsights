@@ -150,7 +150,7 @@ export async function getDashboard(
 
   const todayStr = toISODate(now);
   const weekAgoStr = toISODate(sevenDaysAgo);
-  const wellness = await fetchWellnessSummary(userId, weekAgoStr, todayStr);
+  const wellness = await fetchWellnessSummary(db, userId, weekAgoStr, todayStr);
 
   return {
     summary: {

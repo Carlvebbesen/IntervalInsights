@@ -11,6 +11,9 @@ fail=0
 echo "==> bun run test"
 bash scripts/test.sh || fail=1
 
+echo "==> bun run test:fitness (real wellness-service suite)"
+bash scripts/test-fitness.sh || fail=1
+
 echo "==> tsc --noEmit (src/ only)"
 tsc_out=$(bunx tsc --noEmit 2>&1 | grep '^src/' || true)
 if [ -n "$tsc_out" ]; then

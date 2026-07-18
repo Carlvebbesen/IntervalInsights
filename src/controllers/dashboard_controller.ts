@@ -32,7 +32,7 @@ export async function getTrainingSummary(
 ): Promise<z.infer<typeof TrainingSummaryResponseSchema>> {
   const today = localDate ?? toISODate(new Date());
   const [summary, todayRows] = await Promise.all([
-    fetchTrainingSummary(userId),
+    fetchTrainingSummary(db, userId, today),
     dashboardRepo.activitiesOnDate(db, userId, today),
   ]);
   if (summary.status !== "ok") return summary;
@@ -41,7 +41,7 @@ export async function getTrainingSummary(
     sportType: a.sportType,
     trainingType: a.trainingType,
     movingTime: a.movingTime,
-    load: a.icuTrainingLoad ?? a.trainingLoad,
+    load: a.trainingLoad ?? a.icuTrainingLoad,
   }));
   return {
     status: "ok",
@@ -67,11 +67,13 @@ export async function getPaceAnchor(
 }
 
 export function getFitnessSeries(
+  db: Db,
   userId: string,
   oldest: string,
   newest: string,
+  sport?: string,
 ): Promise<z.infer<typeof FitnessSeriesResponseSchema>> {
-  return fetchFitnessSeries(userId, oldest, newest);
+  return fetchFitnessSeries(db, userId, oldest, newest, sport);
 }
 
 export async function getFitnessDay(
@@ -80,7 +82,7 @@ export async function getFitnessDay(
   date: string,
 ): Promise<z.infer<typeof FitnessDayResponseSchema>> {
   const [fitness, dayActivities] = await Promise.all([
-    fetchFitnessDayBlock(userId, date),
+    fetchFitnessDayBlock(db, userId, date),
     dashboardRepo.activitiesOnDate(db, userId, date),
   ]);
   return { date, fitness, activities: dayActivities };
@@ -177,6 +179,7 @@ export async function getWeekDetail(
   const lastDayOfWeek = new Date(weekEnd);
   lastDayOfWeek.setUTCDate(lastDayOfWeek.getUTCDate() - 1);
   const wellness = await fetchWeekWellnessStats(
+    db,
     userId,
     toISODate(weekStart),
     toISODate(lastDayOfWeek),
