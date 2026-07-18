@@ -17,6 +17,8 @@ import {
 } from "./fitness_metrics_service";
 import { intervalsApiService } from "./intervals_api_service";
 import { withIntervalsToken } from "./intervals_token_helper";
+import { isReviewUser } from "./review_account";
+import { getDemoCorpus } from "./review_demo/corpus_cache";
 import { toISODate } from "./utils";
 
 type Db = IGlobalBindings["db"];
@@ -77,6 +79,8 @@ export async function fetchWellnessSummary(
   oldest: string,
   newest: string,
 ): Promise<IIntervalsWellnessSummary | null> {
+  if (isReviewUser(userId)) return getDemoCorpus().wellnessSummary;
+
   const metricsPoint = await computeFitnessDay(db, userId, newest);
   const { records } = await loadWellness(userId, oldest, newest);
   const latest = records.length > 0 ? records[records.length - 1] : null;
@@ -115,6 +119,8 @@ export async function fetchTrainingSummary(
   userId: string,
   date?: string,
 ): Promise<IIntervalsTrainingSummaryResult> {
+  if (isReviewUser(userId)) return { status: "ok", data: getDemoCorpus().trainingSummary };
+
   const newestDate = date ? new Date(`${date}T00:00:00Z`) : new Date();
   const newest = toISODate(newestDate);
   const oldest = toISODate(new Date(newestDate.getTime() - 7 * DAY_MS));
@@ -270,6 +276,8 @@ export async function fetchWeekWellnessStats(
   oldest: string,
   newest: string,
 ): Promise<IIntervalsWeekWellness | null> {
+  if (isReviewUser(userId)) return getDemoCorpus().weekWellness;
+
   const series = await computeFitnessSeries(db, userId, { oldest, newest });
   const { records } = await loadWellness(userId, oldest, newest);
 
@@ -315,6 +323,20 @@ export async function fetchWellnessSeries(
   oldest: string,
   newest: string,
 ): Promise<IIntervalsWellnessSeriesResult> {
+  if (isReviewUser(userId)) {
+    const series = getDemoCorpus().wellnessSeries;
+    const points = series.points.filter((p) => p.date >= oldest && p.date <= newest);
+    return {
+      status: "ok",
+      data: {
+        range: { oldest, newest },
+        metricsAvailable: series.metricsAvailable,
+        summary: series.summary,
+        points,
+      },
+    };
+  }
+
   const metrics = await computeFitnessSeries(db, userId, { oldest, newest });
   const { linked, records } = await loadWellness(userId, oldest, newest);
 

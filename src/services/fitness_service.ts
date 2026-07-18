@@ -14,6 +14,8 @@ import {
 } from "./fitness_metrics_service";
 import { intervalsApiService } from "./intervals_api_service";
 import { withIntervalsToken } from "./intervals_token_helper";
+import { isReviewUser } from "./review_account";
+import { getDemoCorpus } from "./review_demo/corpus_cache";
 import { toISODate } from "./utils";
 
 type Db = IGlobalBindings["db"];
@@ -143,6 +145,13 @@ export async function fetchFitnessSeries(
   newest: string,
   sport?: string,
 ): Promise<IFitnessSeriesResult> {
+  if (isReviewUser(userId)) {
+    const points = getDemoCorpus().fitnessSeries.filter(
+      (p) => p.date >= oldest && p.date <= newest,
+    );
+    return { status: "ok", data: { range: { oldest, newest }, points } };
+  }
+
   const metrics = await computeFitnessSeries(db, userId, { oldest, newest, sport });
   if (metrics.length === 0) return { status: "no_data", data: null };
 
@@ -162,6 +171,10 @@ export async function fetchFitnessDayBlock(
   userId: string,
   date: string,
 ): Promise<IFitnessPoint | null> {
+  if (isReviewUser(userId)) {
+    return getDemoCorpus().fitnessSeries.find((p) => p.date === date) ?? null;
+  }
+
   const metrics = await computeFitnessDay(db, userId, date);
   if (!metrics) return null;
 

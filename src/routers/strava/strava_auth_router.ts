@@ -2,8 +2,10 @@ import { Hono } from "hono";
 import { describeRoute, validator } from "hono-openapi";
 import z from "zod";
 import { config } from "../../config";
+import { AppError } from "../../error";
 import { errJson, okJson } from "../../schemas/route_helpers";
 import { linkStravaAccount } from "../../services/oauth_link_service";
+import { isReviewUser } from "../../services/review_account";
 import type { TGlobalEnv } from "../../types/IRouters";
 
 const stravaAuthRouter = new Hono<TGlobalEnv>();
@@ -64,8 +66,14 @@ stravaAuthRouter.post(
   }),
   validator("json", StravaExchangeBodySchema),
   async (c) => {
+    const userId = c.get("userId");
+    // A disconnect/reconnect would null the demo user's stravaId sentinel and
+    // re-strand the app-store reviewer behind the connect gate — reject both.
+    if (isReviewUser(userId)) {
+      throw new AppError(403, "The demo account cannot link a Strava account.");
+    }
     const { code } = c.req.valid("json");
-    await linkStravaAccount(c.env.db, c.get("userId"), code, c.var.logger);
+    await linkStravaAccount(c.env.db, userId, code, c.var.logger);
 
     return c.json({
       success: true,

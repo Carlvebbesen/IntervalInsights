@@ -3,6 +3,7 @@ import { config } from "../config";
 import { StravaError } from "../error";
 import { getFreshOAuthTokens } from "../services/oauth_token_refresh";
 import type { StoredOAuthToken } from "../services/oauth_token_store";
+import { isReviewUser } from "../services/review_account";
 import type { TStravaEnv } from "../types/IRouters";
 
 interface StravaTokenResponse {
@@ -69,6 +70,9 @@ export const getStravaAccessTokens = (userId: string) =>
 
 export const stravaMiddleware = createMiddleware<TStravaEnv>(async (c, next) => {
   const userId = c.get("userId");
+  // The store-review demo user has no Strava link; provider-read services
+  // short-circuit to the demo corpus before ever touching the access token.
+  if (isReviewUser(userId)) return next();
   const tokens = await getStravaAccessTokens(userId);
   c.set("stravaAccessToken", tokens.access_token);
   c.set("stravaAthleteId", tokens.athlete_id);

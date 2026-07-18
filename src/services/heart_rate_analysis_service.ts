@@ -26,6 +26,8 @@ import {
 import { intervalsApiService } from "./intervals_api_service";
 import { mapIntervalsStreamsToStreamSet } from "./intervals_mappers";
 import { withIntervalsToken } from "./intervals_token_helper";
+import { isReviewUser } from "./review_account";
+import { getDemoCorpus } from "./review_demo/corpus_cache";
 
 type Db = IGlobalBindings["db"];
 type Result = z.infer<typeof HeartRateAnalysisResponseSchema>;
@@ -52,10 +54,39 @@ export async function getHeartRateAnalysis(
 ): Promise<Result> {
   const log = logger.child({ service: "heartRateAnalysis" });
 
+  if (isReviewUser(userId)) return analyzeForReview(db, userId, filters, log);
+
   const result = await withIntervalsToken(userId, (intervalsToken) =>
     analyzeWithToken(db, userId, intervalsToken, filters, log),
   );
   return result.status === "not_linked" ? { status: "not_linked" } : result.data;
+}
+
+// The demo user has no intervals.icu token: HR stats come from the seeded DB
+// rows (HR columns pre-filled) and zones from the corpus instead of the
+// intervals.icu athlete profile. The consent gate still applies.
+async function analyzeForReview(
+  db: Db,
+  userId: string,
+  filters: HeartRateAnalysisFilters,
+  log: Logger,
+): Promise<Result> {
+  const consent = await userHasHeartRateConsent(db, userId);
+  if (!consent) {
+    throw new AppError(403, "Heart-rate processing not enabled for this account");
+  }
+
+  const rows = await activityRepo.listForHrAnalysis(db, userId, filters);
+  if (rows.length === 0) return { status: "no_data" };
+
+  await fillMissingStats(db, userId, rows, log);
+
+  const intervalsOnly = filters.intervalsOnly === true;
+  const points = rows.map((row) => toPoint(row, intervalsOnly));
+  const zones = getDemoCorpus().hrZones;
+  const summaries = buildSummaries(points);
+
+  return { status: "ok", points, zones, summaries };
 }
 
 async function analyzeWithToken(
