@@ -34,8 +34,14 @@ export const trainingPlanColumns = {
 } as const;
 
 function isUniqueViolation(err: unknown, constraint?: string): boolean {
-  if (typeof err !== "object" || err === null || !("code" in err)) return false;
-  const pgErr = err as { code?: string; constraint?: string };
+  // drizzle wraps the driver error in DrizzleQueryError; the pg error with
+  // .code/.constraint lives on .cause.
+  const candidate =
+    typeof err === "object" && err !== null && "cause" in err
+      ? ((err as { cause?: unknown }).cause ?? err)
+      : err;
+  if (typeof candidate !== "object" || candidate === null || !("code" in candidate)) return false;
+  const pgErr = candidate as { code?: string; constraint?: string };
   if (pgErr.code !== "23505") return false;
   return constraint === undefined || pgErr.constraint === constraint;
 }
