@@ -1,6 +1,13 @@
 import { type InferInsertModel, type InferSelectModel, relations } from "drizzle-orm";
-import { boolean, integer, pgTable, timestamp, uuid } from "drizzle-orm/pg-core";
-import { analysisReviewModeEnum } from "./enums";
+import {
+  boolean,
+  doublePrecision,
+  integer,
+  pgTable,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
+import { analysisReviewModeEnum, sexEnum } from "./enums";
 import { users } from "./users";
 
 /**
@@ -17,6 +24,11 @@ export const userSettings = pgTable("user_settings", {
   analysisReviewMode: analysisReviewModeEnum("analysis_review_mode").notNull().default("all"),
   maxHeartRate: integer("max_heart_rate"),
   processHeartRate: boolean("process_heart_rate").notNull().default(false),
+  thresholdPaceMps: doublePrecision("threshold_pace_mps"),
+  lthr: integer("lthr"),
+  restingHr: integer("resting_hr"),
+  ftp: integer("ftp"),
+  sex: sexEnum("sex"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

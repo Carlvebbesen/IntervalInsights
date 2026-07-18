@@ -16,6 +16,11 @@ export function toUserSettingsDto(settings: UserSettingsDao): UserSettingsDto {
     analysisReviewMode: settings.analysisReviewMode,
     maxHeartRate: settings.maxHeartRate,
     processHeartRate: settings.processHeartRate,
+    thresholdPaceMps: settings.thresholdPaceMps,
+    lthr: settings.lthr,
+    restingHr: settings.restingHr,
+    ftp: settings.ftp,
+    sex: settings.sex,
   };
 }
 

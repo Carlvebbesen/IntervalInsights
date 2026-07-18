@@ -1,6 +1,6 @@
 import "zod-openapi/extend";
 import { z } from "zod";
-import { analysisReviewModeEnum, userRoleEnum } from "../schema/enums";
+import { analysisReviewModeEnum, sexEnum, userRoleEnum } from "../schema/enums";
 
 export const UserSettingsSchema = z
   .object({
@@ -8,6 +8,11 @@ export const UserSettingsSchema = z
     analysisReviewMode: z.enum(analysisReviewModeEnum.enumValues),
     maxHeartRate: z.number().nullable(),
     processHeartRate: z.boolean(),
+    thresholdPaceMps: z.number().nullable(),
+    lthr: z.number().nullable(),
+    restingHr: z.number().nullable(),
+    ftp: z.number().nullable(),
+    sex: z.enum(sexEnum.enumValues).nullable(),
   })
   .openapi({ ref: "UserSettings" });
 
@@ -17,6 +22,11 @@ export const UpdateUserSettingsSchema = z
     analysisReviewMode: z.enum(analysisReviewModeEnum.enumValues).optional(),
     maxHeartRate: z.number().int().positive().max(250).nullable().optional(),
     processHeartRate: z.boolean().optional(),
+    thresholdPaceMps: z.number().positive().max(12).nullable().optional(),
+    lthr: z.number().int().min(80).max(220).nullable().optional(),
+    restingHr: z.number().int().min(20).max(120).nullable().optional(),
+    ftp: z.number().int().min(50).max(600).nullable().optional(),
+    sex: z.enum(sexEnum.enumValues).nullable().optional(),
   })
   .openapi({ ref: "UpdateUserSettings" });
 
