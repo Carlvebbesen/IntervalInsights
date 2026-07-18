@@ -18,17 +18,20 @@ import {
 import { closePool, createTestUser, deleteTestUser, getDb, getPool } from "./helpers/db";
 import { insertActivity, insertEvent } from "./helpers/fixtures";
 import { buildTestApp, withIdentity } from "./helpers/test_app";
+import { checkpointerMock } from "./setup";
 
 const app = buildTestApp(getPool());
 const db = getDb();
 
 let userA: { id: string; clerkId: string };
 let userB: { id: string; clerkId: string };
+let userC: { id: string; clerkId: string };
+const conversationIds: Record<string, string> = {};
 
 const fetchCalls: string[] = [];
 const realFetch = globalThis.fetch;
 
-async function seedOwnedRows(userId: string) {
+async function seedOwnedRows(userId: string): Promise<string> {
   const activity = await insertActivity(userId, { trainingType: "LONG_INTERVALS" });
   await db.insert(intervalSegments).values({
     activityId: activity.id,
@@ -53,6 +56,7 @@ async function seedOwnedRows(userId: string) {
     .insert(chatMessages)
     .values({ conversationId: conversation.id, role: "user", content: "hello" });
   await getOrCreateUserSettings(db, userId);
+  return conversation.id;
 }
 
 async function countOwnedRows(userId: string) {
@@ -76,10 +80,13 @@ async function countOwnedRows(userId: string) {
 }
 
 beforeAll(async () => {
+  checkpointerMock.reset();
   userA = await createTestUser({ role: "premium" });
   userB = await createTestUser({ role: "premium" });
-  await seedOwnedRows(userA.id);
-  await seedOwnedRows(userB.id);
+  userC = await createTestUser({ role: "premium" });
+  conversationIds.A = await seedOwnedRows(userA.id);
+  conversationIds.B = await seedOwnedRows(userB.id);
+  conversationIds.C = await seedOwnedRows(userC.id);
 
   // The controller fires a real fetch to Strava's deauthorize endpoint — keep
   // the suite offline and record the attempt instead.
@@ -91,9 +98,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   globalThis.fetch = realFetch;
+  checkpointerMock.reset();
   await deleteTestUser(userB.id);
-  // userA is deleted by the endpoint; clean up defensively if the test failed.
+  // userA and userC are deleted by the endpoint; clean up defensively if a test failed.
   await deleteTestUser(userA.id).catch(() => {});
+  await deleteTestUser(userC.id).catch(() => {});
   await closePool();
 });
 
@@ -156,6 +165,43 @@ describe("DELETE /api/v1/user/data", () => {
           [userA.id],
         );
         expect(tokenRows[0].n).toBe(0);
+
+        // The LangGraph checkpointer thread for user A's conversation was
+        // dropped, and user B's survives (its thread was never touched).
+        expect(checkpointerMock.deletedThreads).toContain(conversationIds.A);
+        expect(checkpointerMock.deletedThreads).not.toContain(conversationIds.B);
+      },
+    ));
+
+  it("tolerates a throwing coach-thread delete without aborting the account deletion", () =>
+    withIdentity(
+      { userId: userC.id, clerkUserId: userC.clerkId, role: "premium" },
+      async () => {
+        checkpointerMock.deleteCoachThread = async () => {
+          throw new Error("checkpointer unavailable");
+        };
+
+        const res = await app.fetch(
+          new Request("http://test/api/v1/user/data", { method: "DELETE" }),
+        );
+        expect(res.status).toBe(200);
+
+        // The delete was attempted for user C's conversation…
+        expect(checkpointerMock.deletedThreads).toContain(conversationIds.C);
+        // …and despite it throwing, every owned row is gone.
+        const after = await countOwnedRows(userC.id);
+        expect(after).toEqual({
+          users: 0,
+          activities: 0,
+          segments: 0,
+          events: 0,
+          gears: 0,
+          conversations: 0,
+          messages: 0,
+          userSettings: 0,
+        });
+
+        checkpointerMock.reset();
       },
     ));
 });

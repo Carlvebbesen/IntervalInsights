@@ -117,6 +117,14 @@ export function listConversationsForUser(db: Db, userId: string, page: number) {
     .offset((page - 1) * CONVERSATIONS_PAGE_SIZE);
 }
 
+export async function listAllConversationIdsForUser(db: Db, userId: string): Promise<string[]> {
+  const rows = await db
+    .select({ id: chatConversations.id })
+    .from(chatConversations)
+    .where(eq(chatConversations.userId, userId));
+  return rows.map((r) => r.id);
+}
+
 export function getConversationForUser(db: Db, userId: string, conversationId: string) {
   return db.query.chatConversations.findFirst({
     where: and(eq(chatConversations.id, conversationId), eq(chatConversations.userId, userId)),
