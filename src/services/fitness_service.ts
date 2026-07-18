@@ -7,6 +7,8 @@ import type {
 import type { IIntervalsWellness } from "../types/intervals/IIntervalsWellness";
 import { intervalsApiService } from "./intervals_api_service";
 import { withIntervalsToken } from "./intervals_token_helper";
+import { isReviewUser } from "./review_account";
+import { getDemoCorpus } from "./review_demo/corpus_cache";
 import { toISODate } from "./utils";
 
 const DAY_MS = 86_400_000;
@@ -110,6 +112,12 @@ export async function fetchFitnessSeries(
   oldest: string,
   newest: string,
 ): Promise<IFitnessSeriesResult> {
+  if (isReviewUser(userId)) {
+    const points = getDemoCorpus().fitnessSeries.filter(
+      (p) => p.date >= oldest && p.date <= newest,
+    );
+    return { status: "ok", data: { range: { oldest, newest }, points } };
+  }
   const result = await withIntervalsToken(
     userId,
     async (accessToken): Promise<IFitnessSeriesResult> => {
@@ -134,6 +142,9 @@ export async function fetchFitnessDayBlock(
   userId: string,
   date: string,
 ): Promise<IFitnessPoint | null> {
+  if (isReviewUser(userId)) {
+    return getDemoCorpus().fitnessSeries.find((p) => p.date === date) ?? null;
+  }
   const result = await withIntervalsToken(userId, async (accessToken) => {
     const extendedOldest = shiftIsoDate(date, -(BASELINE_DAYS + ROLLING_DAYS));
     const records = await intervalsApiService.getWellness(accessToken, extendedOldest, date);

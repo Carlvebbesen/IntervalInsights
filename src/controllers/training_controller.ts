@@ -17,6 +17,7 @@ import * as chatRepo from "../repositories/chat_repository";
 import * as userRepo from "../repositories/user_repository";
 import type { ChatMessageStatus } from "../schema";
 import type { CoachArtifact, CoachChatRequest } from "../schemas/api_schemas";
+import { isReviewUser } from "../services/review_account";
 import type { IGlobalBindings, TStravaEnv } from "../types/IRouters";
 import { clearTurnActive, isTurnActive, markTurnActive } from "./active_turns";
 
@@ -139,7 +140,9 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
         userId,
         stravaAccessToken,
         intervalsConnected: !!user?.intervalsAthleteId,
-        stravaLinked: !!user?.stravaId,
+        // The demo user's stravaId is a sentinel with no real link/token, so
+        // provider-backed tools must read as unavailable — chat runs on DB tools.
+        stravaLinked: !isReviewUser(userId) && !!user?.stravaId,
         userTime: body.userTime,
         weather: body.weather,
         logger: log,

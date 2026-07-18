@@ -1,9 +1,11 @@
 import { Hono } from "hono";
 import { describeRoute, validator } from "hono-openapi";
 import z from "zod";
+import { AppError } from "../../error";
 import { errJson, okJson } from "../../schemas/route_helpers";
 import { disconnectIntervals } from "../../services/intervals_link_service";
 import { linkIntervalsAccount } from "../../services/oauth_link_service";
+import { isReviewUser } from "../../services/review_account";
 import type { TGlobalEnv } from "../../types/IRouters";
 import {
   INTERVALS_AUTHORIZE_URL,
@@ -68,6 +70,9 @@ intervalsAuthRouter.post(
   validator("json", ExchangeBodySchema),
   async (c) => {
     const userId = c.get("userId");
+    if (isReviewUser(userId)) {
+      throw new AppError(403, "The demo account cannot link an intervals.icu account.");
+    }
     const { code } = c.req.valid("json");
     await linkIntervalsAccount(c.env.db, userId, code, c.var.logger);
 
@@ -89,6 +94,11 @@ intervalsAuthRouter.post(
   }),
   async (c) => {
     const userId = c.get("userId");
+    // Disconnect must stay a no-op for the reviewer — it would clear the demo
+    // link state the seeded experience depends on.
+    if (isReviewUser(userId)) {
+      throw new AppError(403, "The demo account cannot disconnect intervals.icu.");
+    }
     await disconnectIntervals(c.env, userId);
     c.var.logger.info({ userId }, "Disconnected Intervals.icu");
 
