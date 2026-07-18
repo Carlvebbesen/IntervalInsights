@@ -145,16 +145,21 @@ export async function resumeTrainingPlan(
   const graph = await buildPlanBuilderGraph();
   const state = await graph.getState(threadConfig(threadId, db));
 
+  // Ownership first, and with the same body as "unknown thread": an unknown
+  // thread_id has no checkpoint, so `state.values.userId` is undefined and
+  // fails this check identically to a real thread owned by someone else.
+  // Checking pending-work first would leak existence — an unknown thread and
+  // a foreign *pending* thread would otherwise return different statuses
+  // (409 vs 404), letting a caller distinguish "no such thread" from
+  // "someone else's thread that's still paused."
+  if (state.values.userId !== userId) {
+    throw new AppError(404, "No pending plan-builder step for this thread");
+  }
+
   const hasPendingWork = state.next.length > 0;
   const interrupt = pendingInterrupt(state);
   if (!hasPendingWork && !interrupt) {
     throw new AppError(409, "No pending plan-builder step for this thread");
-  }
-
-  // Same body as "unknown thread" — never leak whether a thread id exists to a
-  // non-owner.
-  if (state.values.userId !== userId) {
-    throw new AppError(404, "No pending plan-builder step for this thread");
   }
 
   (c.env as { timeout?: (req: Request, seconds: number) => void }).timeout?.(c.req.raw, 0);

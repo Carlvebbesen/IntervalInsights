@@ -244,7 +244,19 @@ describe("POST /api/v1/training-plans/generate + /generate/resume", () => {
     expect(body).toEqual({ error: expect.stringContaining("No pending plan-builder step") });
   });
 
-  it("409s resuming a completed thread", async () => {
+  it("404s resuming a well-formed but never-created thread — indistinguishable from a foreign thread", async () => {
+    const res = await withIdentity(identityA(), () =>
+      postJson("/api/v1/training-plans/generate/resume", {
+        threadId: "plan-builder:ffffffff-ffff-ffff-ffff-ffffffffffff",
+        action: "accept",
+      }),
+    );
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body).toEqual({ error: expect.stringContaining("No pending plan-builder step") });
+  });
+
+  it("409s resuming a completed thread (owner, not a foreign/unknown thread)", async () => {
     const { threadId, terminal: firstInterrupt } = await startWizard(identityA());
     expect(firstInterrupt.event).toBe("interrupt");
 
