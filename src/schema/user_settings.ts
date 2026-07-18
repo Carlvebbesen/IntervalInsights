@@ -1,12 +1,5 @@
 import { type InferInsertModel, type InferSelectModel, relations } from "drizzle-orm";
-import {
-  boolean,
-  doublePrecision,
-  integer,
-  pgTable,
-  timestamp,
-  uuid,
-} from "drizzle-orm/pg-core";
+import { boolean, doublePrecision, integer, pgTable, timestamp, uuid } from "drizzle-orm/pg-core";
 import { analysisReviewModeEnum, sexEnum } from "./enums";
 import { users } from "./users";
 
