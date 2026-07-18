@@ -32,6 +32,11 @@ import suggestSessionRouter from "./routers/suggest_session_router";
 import trainingRouter from "./routers/training_router";
 import userRouter from "./routers/user_router";
 import weatherRouter from "./routers/weather_router";
+import {
+  hasReviewDemoData,
+  prepareReviewAccount,
+  reseedReviewAccountData,
+} from "./services/review_demo/seed";
 import type { TGlobalEnv } from "./types/IRouters";
 import { registerOAuthCallbackPages } from "./web/oauth_callback_page";
 import { registerWebPages } from "./web/pages";
@@ -204,6 +209,9 @@ app.onError((err, c) => {
 });
 
 await ensureReviewAccount();
+const reviewUserId = await prepareReviewAccount();
+if (reviewUserId && !(await hasReviewDemoData(reviewUserId)))
+  await reseedReviewAccountData(reviewUserId);
 
 export default {
   port: config.PORT,

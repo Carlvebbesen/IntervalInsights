@@ -8,9 +8,7 @@ import { db } from "./db";
 import { logger } from "./logger";
 import * as schema from "./schema";
 import { sendSignInOtpEmail } from "./services/auth_email";
-
-const isReviewAccount = (email: string) =>
-  config.REVIEW_ACCOUNT_EMAIL !== undefined && email.toLowerCase() === config.REVIEW_ACCOUNT_EMAIL;
+import { isReviewAccountEmail } from "./services/review_account";
 
 const expoOriginBridge = {
   id: "expo-origin-bridge",
@@ -128,14 +126,14 @@ export const auth = betterAuth({
     emailOTP({
       sendVerificationOTP: async ({ email, otp, type }) => {
         if (type !== "sign-in") return;
-        if (isReviewAccount(email)) {
+        if (isReviewAccountEmail(email)) {
           logger.info({ email }, "review-account OTP issued — email suppressed");
           return;
         }
         await sendSignInOtpEmail(email, otp);
       },
       generateOTP: ({ email, type }) =>
-        type === "sign-in" && isReviewAccount(email) ? config.REVIEW_ACCOUNT_OTP : undefined,
+        type === "sign-in" && isReviewAccountEmail(email) ? config.REVIEW_ACCOUNT_OTP : undefined,
       otpLength: 6,
       expiresIn: 600,
       allowedAttempts: 5,

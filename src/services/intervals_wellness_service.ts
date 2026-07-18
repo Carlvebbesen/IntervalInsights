@@ -13,6 +13,8 @@ import type {
 } from "../types/intervals/IIntervalsWellness";
 import { intervalsApiService } from "./intervals_api_service";
 import { withIntervalsToken } from "./intervals_token_helper";
+import { isReviewUser } from "./review_account";
+import { getDemoCorpus } from "./review_demo/corpus_cache";
 import { toISODate } from "./utils";
 
 export async function fetchWellnessSummary(
@@ -20,6 +22,7 @@ export async function fetchWellnessSummary(
   oldest: string,
   newest: string,
 ): Promise<IIntervalsWellnessSummary | null> {
+  if (isReviewUser(userId)) return getDemoCorpus().wellnessSummary;
   let accessToken: string;
   try {
     accessToken = await getIntervalsAccessToken(userId);
@@ -66,6 +69,7 @@ export async function fetchWellnessSummary(
 export async function fetchTrainingSummary(
   userId: string,
 ): Promise<IIntervalsTrainingSummaryResult> {
+  if (isReviewUser(userId)) return { status: "ok", data: getDemoCorpus().trainingSummary };
   let accessToken: string;
   try {
     accessToken = await getIntervalsAccessToken(userId);
@@ -194,6 +198,7 @@ export async function fetchWeekWellnessStats(
   oldest: string,
   newest: string,
 ): Promise<IIntervalsWeekWellness | null> {
+  if (isReviewUser(userId)) return getDemoCorpus().weekWellness;
   let accessToken: string;
   try {
     accessToken = await getIntervalsAccessToken(userId);
@@ -250,6 +255,19 @@ export async function fetchWellnessSeries(
   oldest: string,
   newest: string,
 ): Promise<IIntervalsWellnessSeriesResult> {
+  if (isReviewUser(userId)) {
+    const series = getDemoCorpus().wellnessSeries;
+    const points = series.points.filter((p) => p.date >= oldest && p.date <= newest);
+    return {
+      status: "ok",
+      data: {
+        range: { oldest, newest },
+        metricsAvailable: series.metricsAvailable,
+        summary: series.summary,
+        points,
+      },
+    };
+  }
   const result = await withIntervalsToken(userId, (accessToken) =>
     fetchWellnessSeriesWithToken(accessToken, oldest, newest),
   );

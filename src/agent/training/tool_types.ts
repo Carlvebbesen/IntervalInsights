@@ -44,5 +44,8 @@ export function defineTool<S extends z.ZodRawShape>(spec: {
 export function isToolAvailable(tool: CoachTool, ctx: CoachCtx): boolean {
   if (tool.requires === "intervals") return ctx.intervalsConnected;
   if (tool.requires === "activity-source") return ctx.intervalsConnected || ctx.stravaLinked;
+  // Strava tools call the provider directly, so gate on an actual token rather
+  // than the `stravaId` sentinel — the demo user is "linked" but has no token.
+  if (tool.requires === "strava") return !!ctx.stravaAccessToken;
   return true;
 }
