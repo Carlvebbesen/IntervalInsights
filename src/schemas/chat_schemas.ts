@@ -119,6 +119,7 @@ export const ChatMessageSchema = z
     id: z.number(),
     role: z.enum(["user", "assistant"]),
     content: z.string(),
+    status: z.enum(["interrupted", "error"]).nullish(),
     artifacts: z.array(CoachArtifactSchema).nullish(),
     createdAt: z.string(),
   })

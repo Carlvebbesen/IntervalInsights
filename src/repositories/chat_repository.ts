@@ -1,5 +1,5 @@
 import { and, asc, desc, eq } from "drizzle-orm";
-import { type ChatRole, chatConversations, chatMessages } from "../schema";
+import { type ChatMessageStatus, type ChatRole, chatConversations, chatMessages } from "../schema";
 import type { CoachArtifact } from "../schemas/api_schemas";
 import type { IGlobalBindings } from "../types/IRouters";
 
@@ -18,14 +18,7 @@ export async function ensureConversation(
     columns: { userId: true },
   });
 
-  if (existing) {
-    if (existing.userId !== userId) return false;
-    await db
-      .update(chatConversations)
-      .set({ updatedAt: new Date() })
-      .where(eq(chatConversations.id, conversationId));
-    return true;
-  }
+  if (existing) return existing.userId === userId;
 
   const inserted = await db
     .insert(chatConversations)
@@ -47,12 +40,26 @@ export async function insertMessage(
   role: ChatRole,
   content: string,
   artifacts?: CoachArtifact[] | null,
+  status?: ChatMessageStatus | null,
 ): Promise<{ id: number; createdAt: Date }> {
   const [row] = await db
     .insert(chatMessages)
-    .values({ conversationId, role, content, artifacts: artifacts?.length ? artifacts : null })
+    .values({
+      conversationId,
+      role,
+      content,
+      status: status ?? null,
+      artifacts: artifacts?.length ? artifacts : null,
+    })
     .returning({ id: chatMessages.id, createdAt: chatMessages.createdAt });
   return row;
+}
+
+export async function touchConversation(db: Db, conversationId: string): Promise<void> {
+  await db
+    .update(chatConversations)
+    .set({ updatedAt: new Date() })
+    .where(eq(chatConversations.id, conversationId));
 }
 
 export function listConversationsForUser(db: Db, userId: string, page: number) {
@@ -82,6 +89,7 @@ export function listMessages(db: Db, conversationId: string) {
       id: chatMessages.id,
       role: chatMessages.role,
       content: chatMessages.content,
+      status: chatMessages.status,
       artifacts: chatMessages.artifacts,
       createdAt: chatMessages.createdAt,
     })
