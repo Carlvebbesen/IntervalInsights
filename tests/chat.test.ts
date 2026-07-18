@@ -434,7 +434,7 @@ describe("/api/v1/chat", () => {
       expect(rows.map((m) => m.role)).toEqual(["assistant", "user"]);
     }));
 
-  it("a non-premium user can GET history but is 403'd on POST /", async () => {
+  it("a non-premium user is 403'd on the whole chat surface", async () => {
     const conversationId = await withIdentity(identity(), async () => {
       const id = await seedConversation(user.id);
       return id;
@@ -442,7 +442,12 @@ describe("/api/v1/chat", () => {
 
     await withIdentity(guestIdentity(), async () => {
       const list = await app.fetch(new Request("http://test/api/v1/chat/conversations"));
-      expect(list.status).toBe(200);
+      expect(list.status).toBe(403);
+
+      const detail = await app.fetch(
+        new Request(`http://test/api/v1/chat/conversations/${conversationId}`),
+      );
+      expect(detail.status).toBe(403);
 
       const post = await postChat(conversationId);
       expect(post.status).toBe(403);

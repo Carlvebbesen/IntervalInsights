@@ -23,11 +23,10 @@ import type { TStravaEnv } from "../types/IRouters";
 
 const trainingRouter = new Hono<TStravaEnv>();
 
-// Premium is gated on new chat turns only (POST /). Lapsed-premium users keep
-// read/manage access to their history (GET/PATCH/DELETE).
+trainingRouter.use("*", requireRole("premium", "admin"));
+
 trainingRouter.post(
   "/",
-  requireRole("premium", "admin"),
   describeRoute({
     description:
       "Streaming training-coach chat (Server-Sent Events). Answers questions about the athlete's own training data, analyses it, and suggests workouts (read-only). Emits `status`, `token`, `artifact` (rendered cards: workout/chart/table/stat cards/weekly plan), `done` and `error` events.",
