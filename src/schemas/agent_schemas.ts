@@ -47,6 +47,8 @@ export const WorkoutStructureSetSchema = z
   })
   .openapi({ ref: "WorkoutStructureSet" });
 
+export type WorkoutStructureSet = z.infer<typeof WorkoutStructureSetSchema>;
+
 export const ProposedTrainingArtifactSchema = z
   .object({
     type: z.literal("proposed_training"),

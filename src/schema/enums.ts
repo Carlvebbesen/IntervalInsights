@@ -231,6 +231,41 @@ export function gearContextForActivity(sportType: string, indoor: boolean): Gear
   }
 }
 
+export const trainingPlanStatusEnum = pgEnum("training_plan_status", [
+  "draft",
+  "active",
+  "completed",
+  "archived",
+]);
+export type TrainingPlanStatus = (typeof trainingPlanStatusEnum.enumValues)[number];
+
+export const plannedSessionStatusEnum = pgEnum("planned_session_status", [
+  "planned",
+  "completed",
+  "skipped",
+  "moved",
+]);
+export type PlannedSessionStatus = (typeof plannedSessionStatusEnum.enumValues)[number];
+
+export const racePriorityEnum = pgEnum("race_priority", ["A", "B", "C"]);
+export type RacePriority = (typeof racePriorityEnum.enumValues)[number];
+
+export const raceEventStatusEnum = pgEnum("race_event_status", [
+  "upcoming",
+  "completed",
+  "cancelled",
+]);
+export type RaceEventStatus = (typeof raceEventStatusEnum.enumValues)[number];
+
+export const planWeekPhaseEnum = pgEnum("plan_week_phase", [
+  "base",
+  "build",
+  "peak",
+  "taper",
+  "race",
+]);
+export type PlanWeekPhase = (typeof planWeekPhaseEnum.enumValues)[number];
+
 export const STRAVA_GEAR_SPORT_TYPES = [
   "Run",
   "TrailRun",
