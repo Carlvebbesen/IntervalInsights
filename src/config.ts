@@ -6,6 +6,7 @@ const envSchema = z
     CLERK_SECRET_KEY: z.string().min(1),
     CLERK_PUBLISHABLE_KEY: z.string().min(1),
     OPENAI_API_KEY: z.string().min(1),
+    PLAN_BUILDER_MODEL: z.string().min(1).optional(),
 
     TOKEN_ENC_KEY: z.string().min(32),
 

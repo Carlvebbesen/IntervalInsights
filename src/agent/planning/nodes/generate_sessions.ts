@@ -1,4 +1,5 @@
 import { logger } from "../../../logger";
+import { invokeWithRateLimitRetry } from "../../model";
 import { assembleWeekSessions } from "../guards";
 import type { GeneratedWeekSessions } from "../plan_builder_schemas";
 import type { PlanBuilderState } from "../plan_builder_state";
@@ -13,7 +14,9 @@ export async function generateSessions(
   if (!macro) throw new Error("generateSessions requires a macro");
   if (!ctx) throw new Error("generateSessions requires athleteContext");
 
-  const raw = await invokeGenerateSessionsAgent(ctx, macro, state.sessionsFeedback);
+  const raw = await invokeWithRateLimitRetry(() =>
+    invokeGenerateSessionsAgent(ctx, macro, state.sessionsFeedback),
+  );
 
   const sessionsByWeek: GeneratedWeekSessions[] = macro.weeks.map((week) => {
     const llmWeek = raw?.weeks.find((w) => w.weekIndex === week.weekIndex);

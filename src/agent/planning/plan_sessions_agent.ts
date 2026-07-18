@@ -1,5 +1,5 @@
 import type { ChatOpenAI } from "@langchain/openai";
-import { gptMiniModel, invokeStructured } from "../model";
+import { getPlanBuilderModel, invokeStructured } from "../model";
 import {
   type GenerateSessionsOutput,
   GenerateSessionsOutputSchema,
@@ -20,7 +20,7 @@ export async function invokeGenerateSessionsAgent(
   context: AthleteContext,
   macro: PlanMacro,
   feedback: string[],
-  model: ChatOpenAI = gptMiniModel,
+  model: ChatOpenAI = getPlanBuilderModel(),
 ): Promise<GenerateSessionsOutput | null> {
   const feedbackBlock = feedback.length
     ? `\n  ### ATHLETE FEEDBACK ON PRIOR DRAFTS (apply all, most recent last)\n${feedback.map((f, i) => `  ${i + 1}. ${f}`).join("\n")}`

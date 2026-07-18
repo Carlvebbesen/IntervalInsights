@@ -152,6 +152,8 @@ Tier 3 (device attestation / OTP-send captcha) stays a documented contingency, t
 
 `DATABASE_URL`, `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` (used to derive the Clerk OAuth/FAPI URL for the MCP server), `BETTER_AUTH_SECRET` (min 32 chars, session signing), `BETTER_AUTH_URL` (backend base URL), `RESEND_API_KEY` (OTP email delivery; emails only send in production — dev logs the code), `TOKEN_ENC_KEY` (min 32 chars, provider-token encryption at rest — rotating it invalidates every stored Strava/intervals token), `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `OPENAI_API_KEY` (for GPT-4o-mini). See `src/config.ts` for the full validated set.
 
+Optional plan-builder model override: `PLAN_BUILDER_MODEL` (defaults to `gpt-5`) — the plan-builder graph's macro-proposal and session-generation agents (`src/agent/planning/plan_macro_agent.ts`, `plan_sessions_agent.ts`) use a separate, stronger model than the house GPT-4o-mini since plan quality there matters more than cost. `getPlanBuilderModel()` (`src/agent/model.ts`) omits `temperature` — newer OpenAI reasoning-tier models reject a pinned value.
+
 Optional store-review demo account: `REVIEW_ACCOUNT_EMAIL` + `REVIEW_ACCOUNT_OTP` (a fixed 6-digit sign-in code for app-store reviewers; both-or-neither, disabled when unset). The review address' OTP email is suppressed — the code lives only in the env. See `src/auth.ts`.
 
 Optional app client key (API-abuse hardening, see below): `APP_CLIENT_KEY` (min 16 chars; unset ⇒ feature off) + `APP_CLIENT_KEY_MODE` (`log` default | `enforce`). See `src/middlewares/client_key_middleware.ts`.

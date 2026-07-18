@@ -7,6 +7,7 @@ import {
 } from "@opentelemetry/semantic-conventions/incubating";
 import { sleep } from "bun";
 import type { z } from "zod";
+import { config } from "../config";
 import { logger } from "../logger";
 import { recordTokenUsage } from "../otel";
 
@@ -15,6 +16,12 @@ export const ANALYSIS_VERSION = "v4.0";
 const MINI_MODEL = "gpt-4o-mini";
 const STRONG_MODEL = "gpt-4.1";
 const REASONING_MODEL = "o4-mini";
+
+// The plan-builder (macro + session generation) gets its own, stronger model:
+// plan quality there matters more than cost. Reasoning-tier models (gpt-5 and
+// newer) reject a pinned temperature, so this factory omits it — don't copy
+// the temperature:0 pin from the other models below onto this one.
+const DEFAULT_PLAN_BUILDER_MODEL = "gpt-5";
 
 class TokenUsageCallback extends BaseCallbackHandler {
   name = "OtelTokenUsage";
@@ -67,6 +74,20 @@ export const o4ReasoningModel = new ChatOpenAI({
   timeout: 90_000,
   callbacks: [new TokenUsageCallback(REASONING_MODEL)],
 });
+
+export function resolvePlanBuilderModelName(configured?: string | null): string {
+  return configured?.trim() || DEFAULT_PLAN_BUILDER_MODEL;
+}
+
+export function getPlanBuilderModel(): ChatOpenAI {
+  const model = resolvePlanBuilderModelName(config.PLAN_BUILDER_MODEL);
+  return new ChatOpenAI({
+    model,
+    maxRetries: 2,
+    timeout: 90_000,
+    callbacks: [new TokenUsageCallback(model)],
+  });
+}
 
 const MAX_STRUCTURED_ATTEMPTS = 2;
 

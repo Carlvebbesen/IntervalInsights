@@ -1,5 +1,5 @@
 import type { ChatOpenAI } from "@langchain/openai";
-import { gptMiniModel, invokeStructured } from "../model";
+import { getPlanBuilderModel, invokeStructured } from "../model";
 import { type PlanMacro, PlanMacroSchema } from "./plan_builder_schemas";
 import type { AthleteContext, PlanBuilderInput } from "./plan_builder_state";
 
@@ -37,7 +37,7 @@ export async function invokeProposeMacroAgent(
   context: AthleteContext,
   input: PlanBuilderInput,
   feedback: string[],
-  model: ChatOpenAI = gptMiniModel,
+  model: ChatOpenAI = getPlanBuilderModel(),
 ): Promise<PlanMacro | null> {
   const feedbackBlock = feedback.length
     ? `\n  ### ATHLETE FEEDBACK ON PRIOR DRAFTS (apply all, most recent last)\n${feedback.map((f, i) => `  ${i + 1}. ${f}`).join("\n")}`
