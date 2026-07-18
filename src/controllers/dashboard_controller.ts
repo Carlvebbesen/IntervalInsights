@@ -41,7 +41,7 @@ export async function getTrainingSummary(
     sportType: a.sportType,
     trainingType: a.trainingType,
     movingTime: a.movingTime,
-    load: a.icuTrainingLoad ?? a.trainingLoad,
+    load: a.trainingLoad ?? a.icuTrainingLoad,
   }));
   return {
     status: "ok",
