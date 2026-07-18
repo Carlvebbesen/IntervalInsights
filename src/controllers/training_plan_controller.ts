@@ -22,7 +22,7 @@ import type {
   TrainingPlanStatus,
   TrainingType,
 } from "../schema";
-import type { WorkoutStructureSet } from "../schemas/agent_schemas";
+import type { PlanRevisionChange, WorkoutStructureSet } from "../schemas/agent_schemas";
 import { sweepOverduePlannedSessions } from "../services/planned_session_matcher";
 import { toISODate } from "../services/utils";
 import type { IGlobalBindings } from "../types/IRouters";
@@ -321,4 +321,21 @@ export async function unlinkSession(
 ): Promise<PlannedSessionDto> {
   const session = await planRepo.unlinkSession(db, userId, planId, sessionId);
   return toPlannedSessionDto(session);
+}
+
+export async function applyPlanRevision(
+  db: Db,
+  userId: string,
+  planId: number,
+  changes: PlanRevisionChange[],
+  rationale?: string,
+): Promise<TrainingPlanDetailDto> {
+  const detail = await planRepo.applyRevisionForUser(
+    db,
+    userId,
+    planId,
+    changes,
+    rationale ?? null,
+  );
+  return toTrainingPlanDetailDto(detail, await computePlanAggregates(db, userId, detail));
 }

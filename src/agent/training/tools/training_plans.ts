@@ -10,7 +10,10 @@ import {
   trainingPlanStatusEnum,
   trainingTypeEnum,
 } from "../../../schema/enums";
-import { WorkoutStructureSetSchema } from "../../../schemas/agent_schemas";
+import {
+  PlanRevisionChangeSchema,
+  WorkoutStructureSetSchema,
+} from "../../../schemas/agent_schemas";
 import { defineTool } from "../tool_types";
 
 const listTrainingPlans = defineTool({
@@ -266,6 +269,35 @@ const unlinkPlannedSession = defineTool({
     trainingPlanController.unlinkSession(ctx.db, ctx.userId, args.planId, args.sessionId),
 });
 
+const applyPlanRevision = defineTool({
+  name: "apply_plan_revision",
+  description:
+    "Apply a set of previously-proposed changes to a training plan: move/update/drop a session, add a session, or update a week's targets. Every change is validated (plan ownership, every sessionId/weekId belongs to this plan) and applied atomically — an invalid reference rejects the whole batch, nothing partially applies. The revision (with optional rationale) is recorded in the plan's history. Per policy, ALWAYS call create_plan_revision FIRST to show the athlete the proposal, and only call this tool after the athlete has explicitly confirmed they want it applied — never apply a revision silently.",
+  keywords: [
+    "training plan",
+    "apply revision",
+    "revise plan",
+    "move session",
+    "update plan",
+    "plan revision",
+    "confirm changes",
+  ],
+  requires: "db",
+  params: z.object({
+    planId: z.number().int().positive(),
+    rationale: z.string().min(1).optional(),
+    changes: z.array(PlanRevisionChangeSchema).min(1),
+  }),
+  handler: (ctx, args) =>
+    trainingPlanController.applyPlanRevision(
+      ctx.db,
+      ctx.userId,
+      args.planId,
+      args.changes,
+      args.rationale,
+    ),
+});
+
 export const trainingPlanTools = [
   listTrainingPlans,
   getTrainingPlan,
@@ -281,4 +313,5 @@ export const trainingPlanTools = [
   deletePlannedSession,
   linkPlannedSession,
   unlinkPlannedSession,
+  applyPlanRevision,
 ];

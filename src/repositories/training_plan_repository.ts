@@ -13,6 +13,7 @@ import {
   trainingPlans,
   trainingPlanWeeks,
 } from "../schema";
+import type { PlanRevisionChange } from "../schemas/agent_schemas";
 import type { IGlobalBindings } from "../types/IRouters";
 import * as activityRepo from "./activity_repository";
 
@@ -481,6 +482,152 @@ export async function unlinkSession(
     .where(and(eq(plannedSessions.id, sessionId), eq(plannedSessions.planId, planId)))
     .returning();
   return updated;
+}
+
+interface PlanRevisionHistoryEntry {
+  at: string;
+  rationale: string | null;
+  changes: PlanRevisionChange[];
+}
+
+/**
+ * Apply a coach-proposed set of plan revisions (D7): validates plan ownership
+ * and that every referenced session/week belongs to THIS plan, applies every
+ * change, then appends to `meta.revisions` — all inside one transaction, so an
+ * invalid reference rolls back the whole batch rather than partially applying.
+ */
+export async function applyRevisionForUser(
+  db: Db,
+  userId: string,
+  planId: number,
+  changes: PlanRevisionChange[],
+  rationale?: string | null,
+): Promise<TrainingPlanDetail> {
+  return db.transaction(async (tx) => {
+    const [planRow] = await tx
+      .select({ meta: trainingPlans.meta })
+      .from(trainingPlans)
+      .where(and(eq(trainingPlans.id, planId), eq(trainingPlans.userId, userId)));
+    if (!planRow) throw new AppError(404, "Training plan not found or unauthorized");
+
+    const weekRows = await tx
+      .select({ id: trainingPlanWeeks.id })
+      .from(trainingPlanWeeks)
+      .where(eq(trainingPlanWeeks.planId, planId));
+    const weekIds = new Set(weekRows.map((w) => w.id));
+
+    const sessionRows = await tx
+      .select({ id: plannedSessions.id })
+      .from(plannedSessions)
+      .where(eq(plannedSessions.planId, planId));
+    const sessionIds = new Set(sessionRows.map((s) => s.id));
+
+    for (const change of changes) {
+      if (
+        (change.kind === "move_session" ||
+          change.kind === "update_session" ||
+          change.kind === "drop_session") &&
+        !sessionIds.has(change.sessionId)
+      ) {
+        throw new AppError(400, `Session ${change.sessionId} does not belong to plan ${planId}`);
+      }
+      if (
+        (change.kind === "add_session" || change.kind === "update_week") &&
+        !weekIds.has(change.weekId)
+      ) {
+        throw new AppError(400, `Week ${change.weekId} does not belong to plan ${planId}`);
+      }
+    }
+
+    for (const change of changes) {
+      switch (change.kind) {
+        case "move_session":
+          await tx
+            .update(plannedSessions)
+            .set({ date: change.toDate, updatedAt: new Date() })
+            .where(eq(plannedSessions.id, change.sessionId));
+          break;
+        case "update_session": {
+          const updates: Partial<InsertPlannedSession> = { updatedAt: new Date() };
+          if (change.patch.title !== undefined) updates.title = change.patch.title;
+          if (change.patch.sessionType !== undefined)
+            updates.sessionType = change.patch.sessionType;
+          if (change.patch.description !== undefined)
+            updates.description = change.patch.description;
+          if (change.patch.structure !== undefined) updates.structure = change.patch.structure;
+          await tx
+            .update(plannedSessions)
+            .set(updates)
+            .where(eq(plannedSessions.id, change.sessionId));
+          break;
+        }
+        case "drop_session":
+          await tx.delete(plannedSessions).where(eq(plannedSessions.id, change.sessionId));
+          break;
+        case "add_session":
+          await tx.insert(plannedSessions).values({
+            planId,
+            weekId: change.weekId,
+            date: change.session.date,
+            sessionType: change.session.sessionType,
+            title: change.session.title,
+            description: change.session.description ?? null,
+            structure: change.session.structure ?? null,
+            sortOrder: 0,
+          });
+          break;
+        case "update_week": {
+          const updates: Partial<InsertTrainingPlanWeek> = { updatedAt: new Date() };
+          if (change.patch.targetDistanceMeters !== undefined) {
+            updates.targetDistanceMeters = change.patch.targetDistanceMeters;
+          }
+          if (change.patch.targetLoad !== undefined) updates.targetLoad = change.patch.targetLoad;
+          if (change.patch.notes !== undefined) updates.notes = change.patch.notes;
+          if (change.patch.phase !== undefined) updates.phase = change.patch.phase;
+          await tx
+            .update(trainingPlanWeeks)
+            .set(updates)
+            .where(eq(trainingPlanWeeks.id, change.weekId));
+          break;
+        }
+      }
+    }
+
+    const priorRevisions = Array.isArray(
+      (planRow.meta as { revisions?: unknown } | null)?.revisions,
+    )
+      ? ((planRow.meta as { revisions: PlanRevisionHistoryEntry[] }).revisions ?? [])
+      : [];
+    const entry: PlanRevisionHistoryEntry = {
+      at: new Date().toISOString(),
+      rationale: rationale ?? null,
+      changes,
+    };
+    await tx
+      .update(trainingPlans)
+      .set({
+        meta: { ...planRow.meta, revisions: [...priorRevisions, entry] },
+        updatedAt: new Date(),
+      })
+      .where(eq(trainingPlans.id, planId));
+
+    const [plan] = await tx
+      .select(trainingPlanColumns)
+      .from(trainingPlans)
+      .where(eq(trainingPlans.id, planId));
+    const weeks = await tx
+      .select()
+      .from(trainingPlanWeeks)
+      .where(eq(trainingPlanWeeks.planId, planId))
+      .orderBy(asc(trainingPlanWeeks.weekIndex));
+    const sessions = await tx
+      .select()
+      .from(plannedSessions)
+      .where(eq(plannedSessions.planId, planId))
+      .orderBy(asc(plannedSessions.date), asc(plannedSessions.sortOrder));
+
+    return { plan, weeks, sessions };
+  });
 }
 
 export async function deleteAllForUser(db: Db, userId: string): Promise<void> {
