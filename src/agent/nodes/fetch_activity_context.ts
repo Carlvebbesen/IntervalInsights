@@ -4,6 +4,7 @@ import { AppError } from "../../error";
 import { logger } from "../../logger";
 import { getIntervalsAccessToken } from "../../middlewares/intervals_middleware";
 import { activities } from "../../schema";
+import { computeAndStoreActivityLoad } from "../../services/activity_load_service";
 import { getStreamsAndLaps } from "../../services/activity_source_service";
 import { intervalsApiService } from "../../services/intervals_api_service";
 import { stravaApiService } from "../../services/strava_api_service";
@@ -44,6 +45,7 @@ export async function fetchActivityContext(
         stravaActivityId: true,
         title: true,
         description: true,
+        trainingLoad: true,
       },
     }),
   ]);
@@ -76,6 +78,11 @@ export async function fetchActivityContext(
 
   if (!context.streams || Object.keys(context.streams).length === 0) {
     throw new Error(`No streams returned for activity ${state.activityId}`);
+  }
+
+  // Backfill self-computed load for activities ingested before thresholds existed.
+  if (row?.trainingLoad == null) {
+    await computeAndStoreActivityLoad(db, state.userId, state.activityId);
   }
 
   log.info(

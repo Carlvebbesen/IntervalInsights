@@ -6,6 +6,7 @@ import { findOrCreateUserSettings } from "../repositories/user_settings_reposito
 import { activities, gears, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IStravaWebhookEvent } from "../types/strava/IWebHookEvent";
+import { computeAndStoreActivityLoad } from "./activity_load_service";
 import { distanceBand, TIME_TOLERANCE_MS } from "./activity_match";
 import { triggerAnalysisByStravaId } from "./analysis_service";
 import { linkActivityGearOnIngest, relinkActivityGearFromStrava } from "./gear_strava_service";
@@ -211,6 +212,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
         });
         await maybeStartImmediateAnalysis(context, accessToken, stravaActivityId, user.id, twin.id);
       }
+      await computeAndStoreActivityLoad(context.db, user.id, twin.id);
       return;
     }
 
@@ -247,6 +249,7 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
         inserted.id,
       );
     }
+    if (inserted) await computeAndStoreActivityLoad(context.db, user.id, inserted.id);
     return;
   }
 
@@ -315,5 +318,6 @@ export async function processStravaWebhook(body: IStravaWebhookEvent, context: I
         await triggerAnalysisByStravaId(context.db, accessToken, stravaActivityId, user.id);
       }
     }
+    await computeAndStoreActivityLoad(context.db, user.id, existing.id);
   }
 }
