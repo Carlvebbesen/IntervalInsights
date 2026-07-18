@@ -79,6 +79,18 @@ export interface TrainingPlanDetail {
   sessions: PlannedSessionDao[];
 }
 
+export async function findByIdForUser(
+  db: Db,
+  userId: string,
+  id: number,
+): Promise<TrainingPlanDao | undefined> {
+  const [plan] = await db
+    .select(trainingPlanColumns)
+    .from(trainingPlans)
+    .where(and(eq(trainingPlans.id, id), eq(trainingPlans.userId, userId)));
+  return plan;
+}
+
 export async function getWithDetailForUser(
   db: Db,
   userId: string,
@@ -157,18 +169,26 @@ export async function createWithChildren(
     const sessions: PlannedSessionDao[] = [];
 
     for (const w of input.weeks ?? []) {
-      const [week] = await tx
-        .insert(trainingPlanWeeks)
-        .values({
-          planId: plan.id,
-          weekIndex: w.weekIndex,
-          startDate: w.startDate,
-          phase: w.phase ?? null,
-          targetDistanceMeters: w.targetDistanceMeters ?? null,
-          targetLoad: w.targetLoad ?? null,
-          notes: w.notes ?? null,
-        })
-        .returning();
+      let week: TrainingPlanWeekDao;
+      try {
+        [week] = await tx
+          .insert(trainingPlanWeeks)
+          .values({
+            planId: plan.id,
+            weekIndex: w.weekIndex,
+            startDate: w.startDate,
+            phase: w.phase ?? null,
+            targetDistanceMeters: w.targetDistanceMeters ?? null,
+            targetLoad: w.targetLoad ?? null,
+            notes: w.notes ?? null,
+          })
+          .returning();
+      } catch (err) {
+        if (isUniqueViolation(err, "training_plan_weeks_plan_week_idx")) {
+          throw new AppError(409, "A week with this index already exists in the plan");
+        }
+        throw err;
+      }
       weeks.push(week);
 
       for (const s of w.sessions ?? []) {
@@ -330,22 +350,34 @@ export async function deleteSessionForUser(
   return deleted.length > 0;
 }
 
-async function requireSessionOwnedByUser(db: Db, userId: string, sessionId: number): Promise<void> {
+async function requireSessionInPlan(
+  db: Db,
+  userId: string,
+  planId: number,
+  sessionId: number,
+): Promise<void> {
   const [row] = await db
     .select({ id: plannedSessions.id })
     .from(plannedSessions)
     .innerJoin(trainingPlans, eq(trainingPlans.id, plannedSessions.planId))
-    .where(and(eq(plannedSessions.id, sessionId), eq(trainingPlans.userId, userId)));
+    .where(
+      and(
+        eq(plannedSessions.id, sessionId),
+        eq(plannedSessions.planId, planId),
+        eq(trainingPlans.userId, userId),
+      ),
+    );
   if (!row) throw new AppError(404, "Planned session not found or unauthorized");
 }
 
 export async function linkSessionToActivity(
   db: Db,
   userId: string,
+  planId: number,
   sessionId: number,
   activityId: number,
 ): Promise<PlannedSessionDao> {
-  await requireSessionOwnedByUser(db, userId, sessionId);
+  await requireSessionInPlan(db, userId, planId, sessionId);
 
   const activity = await activityRepo.findByIdForUser(db, userId, activityId);
   if (!activity) throw new AppError(404, "Activity not found or unauthorized");
@@ -354,7 +386,7 @@ export async function linkSessionToActivity(
     const [updated] = await db
       .update(plannedSessions)
       .set({ completedActivityId: activityId, status: "completed" })
-      .where(eq(plannedSessions.id, sessionId))
+      .where(and(eq(plannedSessions.id, sessionId), eq(plannedSessions.planId, planId)))
       .returning();
     return updated;
   } catch (err) {
@@ -368,14 +400,15 @@ export async function linkSessionToActivity(
 export async function unlinkSession(
   db: Db,
   userId: string,
+  planId: number,
   sessionId: number,
 ): Promise<PlannedSessionDao> {
-  await requireSessionOwnedByUser(db, userId, sessionId);
+  await requireSessionInPlan(db, userId, planId, sessionId);
 
   const [updated] = await db
     .update(plannedSessions)
     .set({ completedActivityId: null, status: "planned" })
-    .where(eq(plannedSessions.id, sessionId))
+    .where(and(eq(plannedSessions.id, sessionId), eq(plannedSessions.planId, planId)))
     .returning();
   return updated;
 }

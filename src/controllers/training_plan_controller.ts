@@ -94,12 +94,18 @@ export async function updateTrainingPlan(
   id: number,
   patch: UpdateTrainingPlanInput,
 ): Promise<TrainingPlanDto> {
-  if (
-    patch.startDate !== undefined &&
-    patch.endDate !== undefined &&
-    patch.endDate < patch.startDate
-  ) {
-    throw new AppError(400, "endDate must be on or after startDate");
+  if (patch.startDate !== undefined || patch.endDate !== undefined) {
+    let startDate = patch.startDate;
+    let endDate = patch.endDate;
+    if (startDate === undefined || endDate === undefined) {
+      const current = await planRepo.findByIdForUser(db, userId, id);
+      if (!current) throw new AppError(404, "Training plan not found or unauthorized");
+      startDate ??= current.startDate;
+      endDate ??= current.endDate;
+    }
+    if (endDate < startDate) {
+      throw new AppError(400, "endDate must be on or after startDate");
+    }
   }
   if (patch.raceEventId !== undefined) {
     await assertRaceEventOwned(db, userId, patch.raceEventId);
@@ -270,18 +276,20 @@ export async function deleteSession(
 export async function linkSession(
   db: Db,
   userId: string,
+  planId: number,
   sessionId: number,
   activityId: number,
 ): Promise<PlannedSessionDto> {
-  const session = await planRepo.linkSessionToActivity(db, userId, sessionId, activityId);
+  const session = await planRepo.linkSessionToActivity(db, userId, planId, sessionId, activityId);
   return toPlannedSessionDto(session);
 }
 
 export async function unlinkSession(
   db: Db,
   userId: string,
+  planId: number,
   sessionId: number,
 ): Promise<PlannedSessionDto> {
-  const session = await planRepo.unlinkSession(db, userId, sessionId);
+  const session = await planRepo.unlinkSession(db, userId, planId, sessionId);
   return toPlannedSessionDto(session);
 }

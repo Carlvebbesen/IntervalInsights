@@ -75,15 +75,30 @@ const createWeekSchema = z.object({
   sessions: z.array(createSessionSchema).optional(),
 });
 
-const createTrainingPlanSchema = z.object({
-  name: z.string().min(1),
-  startDate: z.string().date(),
-  endDate: z.string().date(),
-  raceEventId: z.number().int().positive().optional(),
-  goalText: z.string().min(1).optional(),
-  status: z.enum(trainingPlanStatusEnum.enumValues).optional(),
-  weeks: z.array(createWeekSchema).optional(),
-});
+const createTrainingPlanSchema = z
+  .object({
+    name: z.string().min(1),
+    startDate: z.string().date(),
+    endDate: z.string().date(),
+    raceEventId: z.number().int().positive().optional(),
+    goalText: z.string().min(1).optional(),
+    status: z.enum(trainingPlanStatusEnum.enumValues).optional(),
+    weeks: z.array(createWeekSchema).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (!data.weeks) return;
+    const seen = new Set<number>();
+    data.weeks.forEach((week, index) => {
+      if (seen.has(week.weekIndex)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Duplicate weekIndex values are not allowed within a plan",
+          path: ["weeks", index, "weekIndex"],
+        });
+      }
+      seen.add(week.weekIndex);
+    });
+  });
 
 trainingPlansRouter.post(
   "/",
@@ -520,11 +535,12 @@ trainingPlansRouter.post(
   validator("param", sessionParamSchema),
   validator("json", linkSessionSchema),
   async (c) => {
-    const { sessionId } = c.req.valid("param");
+    const { id, sessionId } = c.req.valid("param");
     const { activityId } = c.req.valid("json");
     const session = await trainingPlanController.linkSession(
       c.env.db,
       c.get("userId"),
+      id,
       sessionId,
       activityId,
     );
@@ -553,10 +569,11 @@ trainingPlansRouter.delete(
   }),
   validator("param", sessionParamSchema),
   async (c) => {
-    const { sessionId } = c.req.valid("param");
+    const { id, sessionId } = c.req.valid("param");
     const session = await trainingPlanController.unlinkSession(
       c.env.db,
       c.get("userId"),
+      id,
       sessionId,
     );
     return c.json(session);

@@ -224,6 +224,73 @@ describe("/api/v1/training-plans", () => {
     expect(res.status).toBe(404);
   });
 
+  it("404s linking a session through the wrong plan id (same user, different plan)", async () => {
+    const planOne = await createPlanWithChildren(identityA());
+    const planTwo = await createPlanWithChildren(identityA());
+    const sessionInPlanOne = planOne.weeks[0].sessions[0];
+    const activity = await insertActivity(userA.id, { title: "Cross-plan link attempt" });
+
+    const res = await withIdentity(identityA(), () =>
+      app.fetch(
+        new Request(
+          `http://test/api/v1/training-plans/${planTwo.id}/sessions/${sessionInPlanOne.id}/link`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ activityId: activity.id }),
+          },
+        ),
+      ),
+    );
+    expect(res.status).toBe(404);
+
+    const unlinkRes = await withIdentity(identityA(), () =>
+      app.fetch(
+        new Request(
+          `http://test/api/v1/training-plans/${planTwo.id}/sessions/${sessionInPlanOne.id}/link`,
+          { method: "DELETE" },
+        ),
+      ),
+    );
+    expect(unlinkRes.status).toBe(404);
+  });
+
+  it("400s a nested create with duplicate weekIndex values", async () => {
+    const res = await withIdentity(identityA(), () =>
+      app.fetch(
+        new Request("http://test/api/v1/training-plans", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Dup Week Plan",
+            startDate: "2026-02-01",
+            endDate: "2026-02-14",
+            weeks: [
+              { weekIndex: 0, startDate: "2026-02-01" },
+              { weekIndex: 0, startDate: "2026-02-08" },
+            ],
+          }),
+        }),
+      ),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("400s PATCH /:id when startDate alone would move past the stored endDate", async () => {
+    const created = await createPlanWithChildren(identityA());
+
+    const res = await withIdentity(identityA(), () =>
+      app.fetch(
+        new Request(`http://test/api/v1/training-plans/${created.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ startDate: "2026-02-01" }),
+        }),
+      ),
+    );
+    expect(res.status).toBe(400);
+  });
+
   it("surfaces a duplicate week index as an error, not a 500", async () => {
     const created = await createPlanWithChildren(identityA());
 
