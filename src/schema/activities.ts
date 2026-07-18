@@ -104,6 +104,7 @@ export const activities = pgTable(
     calories: doublePrecision("calories"),
     deviceName: text("device_name"),
     trainingLoad: doublePrecision("training_load"),
+    trainingLoadSource: text("training_load_source"),
     icuTrainingLoad: doublePrecision("icu_training_load"),
     icuIntensity: doublePrecision("icu_intensity"),
     relativeIntensity: doublePrecision("relative_intensity"),

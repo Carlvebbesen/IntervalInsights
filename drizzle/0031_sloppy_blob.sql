@@ -1,0 +1,1 @@
+ALTER TABLE "activities" ADD COLUMN "training_load_source" text;
