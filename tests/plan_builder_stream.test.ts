@@ -261,6 +261,13 @@ describe("POST /api/v1/training-plans/generate + /generate/resume", () => {
     // mid-LLM-call.
     expect(frames.some((f) => f.event === "ping")).toBe(true);
 
+    // LangGraph's internal `__interrupt__` update chunk must never leak as a
+    // `status` node — the terminal `interrupt` event carries that payload.
+    const statusNodes = frames
+      .filter((f) => f.event === "status")
+      .map((f) => (JSON.parse(f.data) as { node?: string }).node ?? "");
+    expect(statusNodes.every((n) => !n.startsWith("__"))).toBe(true);
+
     const progress = frames
       .filter((f) => f.event === "status")
       .map(

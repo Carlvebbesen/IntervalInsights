@@ -100,7 +100,12 @@ async function runStream(
         continue;
       }
       const nodeName = Object.keys(data)[0];
-      if (nodeName) await safeWrite("status", JSON.stringify({ node: nodeName }));
+      // `__interrupt__` (and other `__`-prefixed internals) are LangGraph's own
+      // update chunks, not real nodes — the terminal `interrupt` event carries
+      // the payload; don't leak them as `status`.
+      if (nodeName && !nodeName.startsWith("__")) {
+        await safeWrite("status", JSON.stringify({ node: nodeName }));
+      }
     }
     return true;
   } catch (err) {
