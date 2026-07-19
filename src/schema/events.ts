@@ -1,5 +1,6 @@
-import { type InferInsertModel, type InferSelectModel, relations } from "drizzle-orm";
+import { type InferInsertModel, type InferSelectModel, relations, sql } from "drizzle-orm";
 import {
+  boolean,
   index,
   integer,
   jsonb,
@@ -12,7 +13,13 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { activities } from "./activities";
-import { attributeValueTypeEnum, eventStatusEnum, eventTypeEnum } from "./enums";
+import {
+  attributeValueTypeEnum,
+  eventStatusEnum,
+  eventTypeEnum,
+  noteSourceEnum,
+  noteTrendEnum,
+} from "./enums";
 import { users } from "./users";
 
 export const events = pgTable(
@@ -24,7 +31,6 @@ export const events = pgTable(
       .notNull(),
     eventType: eventTypeEnum("event_type").notNull(),
     bodyLocation: text("body_location"),
-    description: text("description").notNull(),
     startTime: timestamp("start_time").notNull(),
     lastOccurrence: timestamp("last_occurrence").notNull(),
     status: eventStatusEnum("status").notNull().default("active"),
@@ -79,10 +85,47 @@ export const eventAttributes = pgTable(
   ],
 );
 
+export const eventNotes = pgTable(
+  "event_notes",
+  {
+    id: serial("id").primaryKey(),
+    eventId: integer("event_id")
+      .references(() => events.id, { onDelete: "cascade" })
+      .notNull(),
+    userId: uuid("user_id")
+      .references(() => users.id)
+      .notNull(),
+    note: text("note").notNull(),
+    source: noteSourceEnum("source").notNull(),
+    occurredAt: timestamp("occurred_at").notNull(),
+    trend: noteTrendEnum("trend"),
+    severity: integer("severity"),
+    isAnchor: boolean("is_anchor").notNull().default(false),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("event_notes_event_occurred_idx").on(table.eventId, table.occurredAt),
+    uniqueIndex("event_notes_anchor_idx").on(table.eventId).where(sql`${table.isAnchor}`),
+  ],
+);
+
 export const eventsRelations = relations(events, ({ one, many }) => ({
   user: one(users, { fields: [events.userId], references: [users.id] }),
   activityEvents: many(activityEvents),
   attributes: many(eventAttributes),
+  notes: many(eventNotes),
+}));
+
+export const eventNotesRelations = relations(eventNotes, ({ one }) => ({
+  event: one(events, {
+    fields: [eventNotes.eventId],
+    references: [events.id],
+  }),
+  user: one(users, {
+    fields: [eventNotes.userId],
+    references: [users.id],
+  }),
 }));
 
 export const activityEventsRelations = relations(activityEvents, ({ one }) => ({
@@ -110,6 +153,8 @@ export const eventAttributesRelations = relations(eventAttributes, ({ one }) => 
 export type InsertEvent = InferInsertModel<typeof events>;
 export type InsertActivityEvent = InferInsertModel<typeof activityEvents>;
 export type InsertEventAttribute = InferInsertModel<typeof eventAttributes>;
+export type InsertEventNote = InferInsertModel<typeof eventNotes>;
 export type SelectEvent = InferSelectModel<typeof events>;
 export type SelectActivityEvent = InferSelectModel<typeof activityEvents>;
 export type SelectEventAttribute = InferSelectModel<typeof eventAttributes>;
+export type SelectEventNote = InferSelectModel<typeof eventNotes>;

@@ -117,6 +117,14 @@ export const eventStatusEnum = pgEnum("event_status", ["active", "resolved"]);
 
 export type EventStatus = (typeof eventStatusEnum.enumValues)[number];
 
+export const noteSourceEnum = pgEnum("note_source", ["ai", "user"]);
+
+export type NoteSource = (typeof noteSourceEnum.enumValues)[number];
+
+export const noteTrendEnum = pgEnum("note_trend", ["improving", "worsening", "unchanged"]);
+
+export type NoteTrend = (typeof noteTrendEnum.enumValues)[number];
+
 export const chatRoleEnum = pgEnum("chat_role", ["user", "assistant"]);
 
 export type ChatRole = (typeof chatRoleEnum.enumValues)[number];

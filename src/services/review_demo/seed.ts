@@ -11,6 +11,7 @@ import { logger } from "../../logger";
 import {
   activities,
   activityEvents,
+  eventNotes,
   events,
   gears,
   intervalSegments,
@@ -108,6 +109,18 @@ export async function reseedReviewAccountData(userId: string): Promise<void> {
         .insert(events)
         .values({ ...e.event, userId })
         .returning({ id: events.id });
+      await tx.insert(eventNotes).values(
+        e.notes.map((n) => ({
+          eventId: row.id,
+          userId,
+          note: n.note,
+          source: n.source,
+          occurredAt: n.occurredAt,
+          trend: n.trend ?? null,
+          severity: n.severity ?? null,
+          isAnchor: n.isAnchor ?? false,
+        })),
+      );
       const links = e.activityDemoKeys
         .map((k) => demoKeyToActivityId.get(k))
         .filter((id): id is number => id != null)

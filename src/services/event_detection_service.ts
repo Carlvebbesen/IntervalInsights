@@ -10,6 +10,7 @@ import { logger } from "../logger";
 import {
   activityEvents,
   eventAttributes,
+  eventNotes,
   events,
   type InsertEvent,
   type InsertEventAttribute,
@@ -78,7 +79,6 @@ export async function detectAndPersistEvents(
         id: events.id,
         eventType: events.eventType,
         bodyLocation: events.bodyLocation,
-        description: events.description,
         lastOccurrence: events.lastOccurrence,
         status: events.status,
       })
@@ -86,8 +86,16 @@ export async function detectAndPersistEvents(
       .innerJoin(events, eq(events.id, activityEvents.eventId))
       .where(eq(activityEvents.activityId, activityId)),
     db
-      .select()
+      .select({
+        id: events.id,
+        eventType: events.eventType,
+        bodyLocation: events.bodyLocation,
+        lastOccurrence: events.lastOccurrence,
+        status: events.status,
+        anchorNote: eventNotes.note,
+      })
       .from(events)
+      .leftJoin(eventNotes, and(eq(eventNotes.eventId, events.id), eq(eventNotes.isAnchor, true)))
       .where(and(eq(events.userId, userId), gte(events.lastOccurrence, oneYearAgo))),
     db
       .select({
@@ -132,7 +140,7 @@ export async function detectAndPersistEvents(
         id: r.id,
         eventType: r.eventType,
         bodyLocation: r.bodyLocation,
-        description: r.description,
+        description: r.anchorNote ?? "",
         lastOccurrence: r.lastOccurrence,
         status: r.status,
         alreadyLinkedToThisActivity: alreadyLinkedIds.has(r.id),
@@ -216,6 +224,16 @@ export async function detectAndPersistEvents(
         await tx.update(events).set(updates).where(eq(events.id, existing.id));
         eventId = existing.id;
 
+        // Recurrence → append a dated AI note (the per-occurrence trace, D8/S3).
+        await tx.insert(eventNotes).values({
+          eventId,
+          userId,
+          note: e.updateText?.trim() || e.description,
+          source: "ai",
+          occurredAt: activityStart,
+          isAnchor: false,
+        });
+
         const attrRows = attributeRowsFor(eventId, userId, e.attributes ?? []);
         if (attrRows.length > 0) {
           await tx
@@ -239,7 +257,6 @@ export async function detectAndPersistEvents(
             userId,
             eventType: e.eventType,
             bodyLocation: e.bodyLocation,
-            description: e.description,
             startTime: activityStart,
             lastOccurrence: activityStart,
             status: e.markResolved ? "resolved" : "active",
@@ -248,6 +265,16 @@ export async function detectAndPersistEvents(
           .returning({ id: events.id });
         eventId = created.id;
         alreadyLinkedTypeLoc.add(key);
+
+        // New event → its condition summary becomes the anchor note (D2/D8).
+        await tx.insert(eventNotes).values({
+          eventId,
+          userId,
+          note: e.description,
+          source: "ai",
+          occurredAt: activityStart,
+          isAnchor: true,
+        });
 
         const attrRows = attributeRowsFor(eventId, userId, e.attributes ?? []);
         if (attrRows.length > 0) {

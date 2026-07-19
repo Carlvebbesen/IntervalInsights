@@ -2,6 +2,7 @@ import type { RunnableConfig } from "@langchain/core/runnables";
 import { AppError } from "../../../error";
 import { logger } from "../../../logger";
 import * as dashboardRepo from "../../../repositories/dashboard_repository";
+import * as noteRepo from "../../../repositories/event_note_repository";
 import type { EventDao } from "../../../repositories/event_repository";
 import * as eventRepo from "../../../repositories/event_repository";
 import * as intervalStructureRepo from "../../../repositories/interval_structure_repository";
@@ -84,14 +85,19 @@ export function computeBaselineVolume(runs: RunRow[], today: Date): AthleteBasel
   };
 }
 
-/** Map active injury/illness rows to the plan-facing constraint shape. */
-export function mapActiveHealthEvents(rows: EventDao[]): ActiveHealthEvent[] {
+/** Map active injury/illness rows to the plan-facing constraint shape. The
+ * summary text now lives in each event's anchor note (events.description was
+ * dropped), passed in as an eventId → anchor-note map. */
+export function mapActiveHealthEvents(
+  rows: EventDao[],
+  anchorNotes: Map<number, { note: string }>,
+): ActiveHealthEvent[] {
   return rows
     .filter((r) => r.status === "active")
     .map((r) => ({
       type: r.eventType,
       bodyLocation: r.bodyLocation ?? null,
-      description: r.description,
+      description: anchorNotes.get(r.id)?.note ?? "",
       since: toISODate(r.startTime),
     }));
 }
@@ -234,7 +240,11 @@ export async function gatherContext(
   let activeHealthEvents: ActiveHealthEvent[] = [];
   try {
     const eventRows = await eventRepo.listForUser(db, state.userId, { status: "active" });
-    activeHealthEvents = mapActiveHealthEvents(eventRows);
+    const anchors = await noteRepo.anchorNotesFor(
+      db,
+      eventRows.map((r) => r.id),
+    );
+    activeHealthEvents = mapActiveHealthEvents(eventRows, anchors);
   } catch (err) {
     log.warn({ err }, "active health events failed — degrading to empty");
     activeHealthEvents = [];

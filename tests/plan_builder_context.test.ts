@@ -49,7 +49,6 @@ describe("mapActiveHealthEvents", () => {
       id: 1,
       eventType: "INJURY",
       bodyLocation: null,
-      description: "",
       startTime: daysAgo(5),
       lastOccurrence: daysAgo(1),
       status: "active",
@@ -59,11 +58,17 @@ describe("mapActiveHealthEvents", () => {
       ...over,
     }) as EventDao;
 
-  it("maps active rows and drops resolved ones", () => {
-    const out = mapActiveHealthEvents([
-      row({ eventType: "INJURY", bodyLocation: "left knee", description: "sore" }),
-      row({ status: "resolved", description: "old illness", eventType: "ILLNESS" }),
-    ]);
+  it("maps active rows (description from the anchor note) and drops resolved ones", () => {
+    const out = mapActiveHealthEvents(
+      [
+        row({ id: 1, eventType: "INJURY", bodyLocation: "left knee" }),
+        row({ id: 2, status: "resolved", eventType: "ILLNESS" }),
+      ],
+      new Map([
+        [1, { note: "sore" }],
+        [2, { note: "old illness" }],
+      ]),
+    );
     expect(out).toHaveLength(1);
     expect(out[0]).toEqual({
       type: "INJURY",

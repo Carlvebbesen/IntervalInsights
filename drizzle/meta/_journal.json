@@ -246,6 +246,27 @@
       "when": 1784461984154,
       "tag": "0034_spooky_red_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1784501605379,
+      "tag": "0035_create_event_notes",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1784501617764,
+      "tag": "0036_backfill_event_notes",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1784501635498,
+      "tag": "0037_drop_events_description",
+      "breakpoints": true
     }
   ]
 }

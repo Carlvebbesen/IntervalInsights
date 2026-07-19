@@ -6,7 +6,13 @@
 
 import type { z } from "zod";
 import type { InsertActivity } from "../../schema/activities";
-import type { TargetTypeEnum, TrainingType, WorkoutPartType } from "../../schema/enums";
+import type {
+  NoteSource,
+  NoteTrend,
+  TargetTypeEnum,
+  TrainingType,
+  WorkoutPartType,
+} from "../../schema/enums";
 import type { InsertEvent } from "../../schema/events";
 import type { InsertGear } from "../../schema/gears";
 import type { InsertIntervalSegment } from "../../schema/interval_segments";
@@ -63,8 +69,18 @@ export interface DemoStructure {
 
 export type DemoGear = Omit<InsertGear, "id" | "userId" | "createdAt">;
 
+export interface DemoEventNote {
+  note: string;
+  source: NoteSource;
+  occurredAt: Date;
+  trend?: NoteTrend | null;
+  severity?: number | null;
+  isAnchor?: boolean;
+}
+
 export interface DemoEvent {
   event: Omit<InsertEvent, "id" | "userId" | "createdAt" | "updatedAt">;
+  notes: DemoEventNote[];
   activityDemoKeys: string[];
 }
 
@@ -910,7 +926,6 @@ export function buildDemoCorpus(now: Date): DemoCorpus {
         event: {
           eventType: "INJURY",
           bodyLocation: "left calf",
-          description: "Mild left calf tightness after a hard session — eased off for a few days.",
           startTime: new Date(now.getTime() - injuryActs[0].dayOffset * DAY_MS),
           lastOccurrence: new Date(
             now.getTime() - injuryActs[injuryActs.length - 1].dayOffset * DAY_MS,
@@ -918,6 +933,28 @@ export function buildDemoCorpus(now: Date): DemoCorpus {
           status: "resolved",
           resolvedAt: new Date(now.getTime() - 25 * DAY_MS),
         },
+        notes: [
+          {
+            note: "Mild left calf tightness after a hard session.",
+            source: "ai",
+            occurredAt: new Date(now.getTime() - injuryActs[0].dayOffset * DAY_MS),
+            isAnchor: true,
+          },
+          {
+            note: "Still a little tight on today's easy run, but easing off.",
+            source: "user",
+            occurredAt: new Date(now.getTime() - 30 * DAY_MS),
+            trend: "improving",
+            severity: 3,
+          },
+          {
+            note: "Calf feels back to normal — resolved.",
+            source: "user",
+            occurredAt: new Date(now.getTime() - 25 * DAY_MS),
+            trend: "improving",
+            severity: 1,
+          },
+        ],
         activityDemoKeys: injuryActs.map((a) => a.demoKey),
       });
     }
@@ -927,12 +964,19 @@ export function buildDemoCorpus(now: Date): DemoCorpus {
         event: {
           eventType: "ILLNESS",
           bodyLocation: null,
-          description: "Head cold — kept runs easy for a week.",
           startTime: new Date(now.getTime() - illnessAct.dayOffset * DAY_MS),
           lastOccurrence: new Date(now.getTime() - illnessAct.dayOffset * DAY_MS),
           status: "resolved",
           resolvedAt: new Date(now.getTime() - 8 * DAY_MS),
         },
+        notes: [
+          {
+            note: "Head cold — kept runs easy for a week.",
+            source: "ai",
+            occurredAt: new Date(now.getTime() - illnessAct.dayOffset * DAY_MS),
+            isAnchor: true,
+          },
+        ],
         activityDemoKeys: [illnessAct.demoKey],
       });
     }
