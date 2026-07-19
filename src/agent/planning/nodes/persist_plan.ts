@@ -5,7 +5,12 @@ import {
   type CreateWeekInput,
   createWithChildren,
 } from "../../../repositories/training_plan_repository";
-import type { PlanBuilderConfigurable, PlanBuilderState } from "../plan_builder_state";
+import {
+  DEFAULT_INTENSITY_AGGRESSIVENESS,
+  DEFAULT_VOLUME_AGGRESSIVENESS,
+  type PlanBuilderConfigurable,
+  type PlanBuilderState,
+} from "../plan_builder_state";
 
 export async function persistPlan(
   state: PlanBuilderState,
@@ -46,6 +51,14 @@ export async function persistPlan(
     meta: {
       createdVia: "plan_builder",
       inputs: state.input,
+      settings: {
+        volumeAggressiveness: state.input.volumeAggressiveness ?? DEFAULT_VOLUME_AGGRESSIVENESS,
+        intensityAggressiveness:
+          state.input.intensityAggressiveness ?? DEFAULT_INTENSITY_AGGRESSIVENESS,
+        maxWeeklyVolumeMeters: state.input.maxWeeklyVolumeMeters ?? null,
+        daysPerWeek: state.input.daysPerWeek ?? null,
+        preferredLongRunDay: state.input.preferredLongRunDay ?? null,
+      },
       rationale: macro.rationale,
       feedbackRounds: {
         macro: state.macroFeedback.length,

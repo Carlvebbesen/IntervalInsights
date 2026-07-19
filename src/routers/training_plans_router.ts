@@ -1,6 +1,12 @@
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
+import {
+  DEFAULT_INTENSITY_AGGRESSIVENESS,
+  DEFAULT_VOLUME_AGGRESSIVENESS,
+  INTENSITY_AGGRESSIVENESS,
+  VOLUME_AGGRESSIVENESS,
+} from "../agent/planning/plan_builder_state";
 import * as planBuilderController from "../controllers/plan_builder_controller";
 import * as trainingPlanController from "../controllers/training_plan_controller";
 import {
@@ -148,6 +154,13 @@ const generatePlanSchema = z
     startDate: z.string().date(),
     endDate: z.string().date(),
     goalText: z.string().max(2000).optional(),
+    volumeAggressiveness: z.enum(VOLUME_AGGRESSIVENESS).default(DEFAULT_VOLUME_AGGRESSIVENESS),
+    intensityAggressiveness: z
+      .enum(INTENSITY_AGGRESSIVENESS)
+      .default(DEFAULT_INTENSITY_AGGRESSIVENESS),
+    maxWeeklyVolumeMeters: z.number().int().positive().optional(),
+    daysPerWeek: z.number().int().min(3).max(7).optional(),
+    preferredLongRunDay: z.number().int().min(0).max(6).optional(),
   })
   .refine((data) => data.endDate >= data.startDate, {
     message: "endDate must be on or after startDate",

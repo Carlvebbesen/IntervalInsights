@@ -3,12 +3,28 @@ import type { EventType, TrainingType } from "../../schema/enums";
 import type { GraphDb } from "../graph_state";
 import type { GeneratedWeekSessions, PlanMacro, PlanReviewAction } from "./plan_builder_schemas";
 
+// Runna-style 2-axis aggressiveness dial (per-plan). The volume axis drives the
+// deterministic macro ramp ceiling (see guards.VOLUME_RAMP); the intensity axis
+// is plumbed + stored now but only affects session quality-counts in a later wave.
+export const VOLUME_AGGRESSIVENESS = ["gradual", "steady", "progressive"] as const;
+export type VolumeAggressiveness = (typeof VOLUME_AGGRESSIVENESS)[number];
+export const DEFAULT_VOLUME_AGGRESSIVENESS: VolumeAggressiveness = "steady";
+
+export const INTENSITY_AGGRESSIVENESS = ["comfortable", "balanced", "challenging"] as const;
+export type IntensityAggressiveness = (typeof INTENSITY_AGGRESSIVENESS)[number];
+export const DEFAULT_INTENSITY_AGGRESSIVENESS: IntensityAggressiveness = "balanced";
+
 export type PlanBuilderInput = {
   name?: string | null;
   raceEventId?: number | null;
   startDate: string;
   endDate: string;
   goalText?: string | null;
+  volumeAggressiveness?: VolumeAggressiveness;
+  intensityAggressiveness?: IntensityAggressiveness;
+  maxWeeklyVolumeMeters?: number | null;
+  daysPerWeek?: number | null;
+  preferredLongRunDay?: number | null;
 };
 
 export type AthleteRaceContext = {
