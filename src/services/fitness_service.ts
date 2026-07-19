@@ -1,3 +1,5 @@
+import { logger } from "../logger";
+import type { IGlobalBindings } from "../types/IRouters";
 import type {
   HrvStatus,
   IFitnessPoint,
@@ -5,9 +7,18 @@ import type {
   IHrvBaseline,
 } from "../types/intervals/IFitness";
 import type { IIntervalsWellness } from "../types/intervals/IIntervalsWellness";
+import {
+  computeFitnessDay,
+  computeFitnessSeries,
+  type FitnessMetricsPoint,
+} from "./fitness_metrics_service";
 import { intervalsApiService } from "./intervals_api_service";
 import { withIntervalsToken } from "./intervals_token_helper";
+import { isReviewUser } from "./review_account";
+import { getDemoCorpus } from "./review_demo/corpus_cache";
 import { toISODate } from "./utils";
+
+type Db = IGlobalBindings["db"];
 
 const DAY_MS = 86_400_000;
 
@@ -85,64 +96,91 @@ export function computeHrvAssessment(
   };
 }
 
-function buildFitnessPoint(w: IIntervalsWellness, hrv: HrvAssessment): IFitnessPoint {
-  const { ctl, atl } = w;
+// CTL/ATL/TSB/load now come from the self-computed fold; HRV/sleep data points
+// still merge in from the intervals.icu wellness record for that day (null when
+// the account isn't linked). See project note self-computed-fitness-metrics.
+function buildFitnessPoint(
+  metrics: FitnessMetricsPoint,
+  w: IIntervalsWellness | undefined,
+  hrv: HrvAssessment,
+): IFitnessPoint {
   const nightlyStatus =
-    w.hrv != null && hrv.baseline != null ? classifyHrv(w.hrv, hrv.baseline) : null;
+    w?.hrv != null && hrv.baseline != null ? classifyHrv(w.hrv, hrv.baseline) : null;
   return {
-    date: w.id,
-    ctl,
-    atl,
-    tsb: ctl != null && atl != null ? ctl - atl : null,
-    ctlLoad: w.ctlLoad,
-    atlLoad: w.atlLoad,
-    hrv: w.hrv,
+    date: metrics.date,
+    ctl: metrics.ctl,
+    atl: metrics.atl,
+    tsb: metrics.tsb,
+    ctlLoad: metrics.load,
+    atlLoad: metrics.load,
+    hrv: w?.hrv ?? null,
     hrv7dAvg: hrv.rollingAvg,
     hrvStatus: hrv.status,
     hrvNightlyStatus: nightlyStatus,
     hrvBaseline: hrv.baseline,
-    sleepScore: w.sleepScore,
+    sleepScore: w?.sleepScore ?? null,
   };
 }
 
-export async function fetchFitnessSeries(
+async function fetchWellnessRecords(
   userId: string,
   oldest: string,
   newest: string,
+): Promise<IIntervalsWellness[]> {
+  try {
+    const result = await withIntervalsToken(userId, (accessToken) =>
+      intervalsApiService.getWellness(accessToken, oldest, newest),
+    );
+    return result.status === "ok" ? result.data : [];
+  } catch (err) {
+    logger.error({ err }, "Intervals.icu wellness fetch failed (fitness series)");
+    return [];
+  }
+}
+
+export async function fetchFitnessSeries(
+  db: Db,
+  userId: string,
+  oldest: string,
+  newest: string,
+  sport?: string,
 ): Promise<IFitnessSeriesResult> {
-  const result = await withIntervalsToken(
-    userId,
-    async (accessToken): Promise<IFitnessSeriesResult> => {
-      const extendedOldest = shiftIsoDate(oldest, -(BASELINE_DAYS + ROLLING_DAYS));
-      const records = await intervalsApiService.getWellness(accessToken, extendedOldest, newest);
+  if (isReviewUser(userId)) {
+    const points = getDemoCorpus().fitnessSeries.filter(
+      (p) => p.date >= oldest && p.date <= newest,
+    );
+    return { status: "ok", data: { range: { oldest, newest }, points } };
+  }
 
-      const inRange = records.filter((r) => r.id >= oldest && r.id <= newest);
-      if (inRange.length === 0) return { status: "no_data", data: null };
+  const metrics = await computeFitnessSeries(db, userId, { oldest, newest, sport });
+  if (metrics.length === 0) return { status: "no_data", data: null };
 
-      const hrvByDate = buildHrvByDate(records);
-      const points = inRange.map((r) =>
-        buildFitnessPoint(r, computeHrvAssessment(hrvByDate, r.id)),
-      );
+  const extendedOldest = shiftIsoDate(oldest, -(BASELINE_DAYS + ROLLING_DAYS));
+  const records = await fetchWellnessRecords(userId, extendedOldest, newest);
+  const byDate = new Map(records.map((r) => [r.id, r]));
+  const hrvByDate = buildHrvByDate(records);
 
-      return { status: "ok", data: { range: { oldest, newest }, points } };
-    },
+  const points = metrics.map((m) =>
+    buildFitnessPoint(m, byDate.get(m.date), computeHrvAssessment(hrvByDate, m.date)),
   );
-  return result.status === "not_linked" ? { status: "not_linked", data: null } : result.data;
+  return { status: "ok", data: { range: { oldest, newest }, points } };
 }
 
 export async function fetchFitnessDayBlock(
+  db: Db,
   userId: string,
   date: string,
 ): Promise<IFitnessPoint | null> {
-  const result = await withIntervalsToken(userId, async (accessToken) => {
-    const extendedOldest = shiftIsoDate(date, -(BASELINE_DAYS + ROLLING_DAYS));
-    const records = await intervalsApiService.getWellness(accessToken, extendedOldest, date);
+  if (isReviewUser(userId)) {
+    return getDemoCorpus().fitnessSeries.find((p) => p.date === date) ?? null;
+  }
 
-    const dayRecord = records.find((r) => r.id === date);
-    if (!dayRecord) return null;
+  const metrics = await computeFitnessDay(db, userId, date);
+  if (!metrics) return null;
 
-    const hrvByDate = buildHrvByDate(records);
-    return buildFitnessPoint(dayRecord, computeHrvAssessment(hrvByDate, date));
-  });
-  return result.status === "not_linked" ? null : result.data;
+  const extendedOldest = shiftIsoDate(date, -(BASELINE_DAYS + ROLLING_DAYS));
+  const records = await fetchWellnessRecords(userId, extendedOldest, date);
+  const dayRecord = records.find((r) => r.id === date);
+  const hrvByDate = buildHrvByDate(records);
+  return buildFitnessPoint(metrics, dayRecord, computeHrvAssessment(hrvByDate, date));
 }

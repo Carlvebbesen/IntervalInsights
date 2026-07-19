@@ -33,6 +33,11 @@ describe("/api/v1/user settings", () => {
           maxHeartRate: null,
           processHeartRate: false,
           paceProgression: "mild",
+          thresholdPaceMps: null,
+          lthr: null,
+          restingHr: null,
+          ftp: null,
+          sex: null,
         });
         expect(body.maxHeartRate).toBeNull();
         expect(body.processHeartRate).toBe(false);
@@ -56,6 +61,11 @@ describe("/api/v1/user settings", () => {
           maxHeartRate: null,
           processHeartRate: false,
           paceProgression: "mild",
+          thresholdPaceMps: null,
+          lthr: null,
+          restingHr: null,
+          ftp: null,
+          sex: null,
         });
 
         const second = await app.fetch(
@@ -167,6 +177,79 @@ describe("/api/v1/user settings", () => {
       await deleteTestUser(user.id);
     }
   });
+
+  it("PATCH /api/v1/user/settings roundtrips the threshold fields, then clears them", () =>
+    withFreshUser((user) =>
+      withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+        const set = await app.fetch(
+          new Request("http://test/api/v1/user/settings", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              thresholdPaceMps: 3.5,
+              lthr: 165,
+              restingHr: 48,
+              ftp: 260,
+              sex: "female",
+            }),
+          }),
+        );
+        expect(set.status).toBe(200);
+        expect(await set.json()).toMatchObject({
+          thresholdPaceMps: 3.5,
+          lthr: 165,
+          restingHr: 48,
+          ftp: 260,
+          sex: "female",
+        });
+
+        const clear = await app.fetch(
+          new Request("http://test/api/v1/user/settings", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              thresholdPaceMps: null,
+              lthr: null,
+              restingHr: null,
+              ftp: null,
+              sex: null,
+            }),
+          }),
+        );
+        expect(clear.status).toBe(200);
+        const cleared = await clear.json();
+        expect(cleared.thresholdPaceMps).toBeNull();
+        expect(cleared.lthr).toBeNull();
+        expect(cleared.restingHr).toBeNull();
+        expect(cleared.ftp).toBeNull();
+        expect(cleared.sex).toBeNull();
+      }),
+    ));
+
+  it("PATCH /api/v1/user/settings rejects out-of-bounds threshold fields", () =>
+    withFreshUser((user) =>
+      withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+        for (const bad of [
+          { thresholdPaceMps: 20 },
+          { thresholdPaceMps: -1 },
+          { lthr: 40 },
+          { lthr: 300 },
+          { restingHr: 10 },
+          { ftp: 10 },
+          { ftp: 1000 },
+          { sex: "other" },
+        ]) {
+          const res = await app.fetch(
+            new Request("http://test/api/v1/user/settings", {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(bad),
+            }),
+          );
+          expect(res.status).toBe(400);
+        }
+      }),
+    ));
 
   it("first-ever PATCH /api/v1/user/settings preserves legacy HR columns seeded into the new row", async () => {
     const user = await createTestUser({ role: "premium", maxHeartRate: 185, processHeartRate: true });

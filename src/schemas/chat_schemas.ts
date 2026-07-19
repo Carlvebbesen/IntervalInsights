@@ -120,6 +120,7 @@ export const ChatMessageSchema = z
     id: z.number(),
     role: z.enum(["user", "assistant"]),
     content: z.string(),
+    status: z.enum(["interrupted", "error"]).nullish(),
     artifacts: z.array(CoachArtifactSchema).nullish(),
     createdAt: z.string(),
   })
@@ -127,4 +128,16 @@ export const ChatMessageSchema = z
 
 export const ChatConversationDetailSchema = ChatConversationSummarySchema.extend({
   messages: z.array(ChatMessageSchema),
+  meta: z.object({
+    hasMore: z.boolean(),
+    nextBefore: z.number().nullable(),
+  }),
 }).openapi({ ref: "ChatConversationDetail" });
+
+export const RenameConversationSchema = z
+  .object({ title: z.string().trim().min(1).max(120) })
+  .openapi({ ref: "RenameConversation" });
+
+export const ChatDeleteResponseSchema = z
+  .object({ success: z.boolean() })
+  .openapi({ ref: "ChatDeleteResponse" });

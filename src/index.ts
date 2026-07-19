@@ -33,6 +33,12 @@ import suggestSessionRouter from "./routers/suggest_session_router";
 import trainingPlansRouter from "./routers/training_plans_router";
 import trainingRouter from "./routers/training_router";
 import userRouter from "./routers/user_router";
+import weatherRouter from "./routers/weather_router";
+import {
+  hasReviewDemoData,
+  prepareReviewAccount,
+  reseedReviewAccountData,
+} from "./services/review_demo/seed";
 import type { TGlobalEnv } from "./types/IRouters";
 import { registerOAuthCallbackPages } from "./web/oauth_callback_page";
 import { registerWebPages } from "./web/pages";
@@ -163,6 +169,7 @@ v1.route("/chat", trainingRouter);
 v1.route("/progress", progressRouter);
 v1.route("/race-events", raceEventsRouter);
 v1.route("/training-plans", trainingPlansRouter);
+v1.route("/weather", weatherRouter);
 app.route("/api", v1);
 app.route("/api/v1", v1);
 
@@ -206,6 +213,9 @@ app.onError((err, c) => {
 });
 
 await ensureReviewAccount();
+const reviewUserId = await prepareReviewAccount();
+if (reviewUserId && !(await hasReviewDemoData(reviewUserId)))
+  await reseedReviewAccountData(reviewUserId);
 
 export default {
   port: config.PORT,

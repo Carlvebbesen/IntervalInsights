@@ -10,11 +10,40 @@ import type { StreamSet, StreamTypeMap } from "../types/strava/IStream";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { intervalsApiService } from "./intervals_api_service";
 import { mapIntervalsRawToLaps, mapIntervalsStreamsToStreamSet } from "./intervals_mappers";
+import { isReviewUser } from "./review_account";
+import type { DemoActivity, DemoStreams } from "./review_demo/corpus";
+import { getDemoCorpus } from "./review_demo/corpus_cache";
 import { stravaApiService } from "./strava_api_service";
 
 type Db = IGlobalBindings["db"];
 
 type ActivitySourceRow = { intervalsIcuId: string | null; stravaActivityId: number | null };
+
+// For the store-review demo user, map a seeded activity row back to its corpus
+// entry (join key: activities.intervalsIcuId === demoKey). Returns null for
+// every other user and for non-demo rows, so all normal behaviour is untouched.
+async function reviewDemoActivity(
+  db: Db,
+  userId: string,
+  activityId: number,
+): Promise<DemoActivity | null> {
+  if (!isReviewUser(userId)) return null;
+  const row = await loadActivitySourceRow(db, userId, activityId);
+  return getDemoCorpus().activities.find((a) => a.demoKey === row.intervalsIcuId) ?? null;
+}
+
+function demoStreamSet(s: DemoStreams): StreamSet {
+  const set: StreamSet = {
+    time: { data: s.time },
+    distance: { data: s.distance },
+    moving: { data: s.time.map(() => true) },
+  };
+  if (s.heartrate) set.heartrate = { data: s.heartrate };
+  if (s.altitude) set.altitude = { data: s.altitude };
+  if (s.cadence) set.cadence = { data: s.cadence };
+  if (s.velocity) set.velocity_smooth = { data: s.velocity };
+  return set;
+}
 
 async function loadActivitySourceRow(
   db: Db,
@@ -93,6 +122,8 @@ export async function resolveActivitySource(
 }
 
 export async function getLaps(db: Db, userId: string, activityId: number): Promise<Lap[]> {
+  const demo = await reviewDemoActivity(db, userId, activityId);
+  if (demo) return demo.laps;
   const { result, source } = await fetchIntervalsPreferred<Lap[]>(db, userId, activityId, {
     fromIntervals: async (token, externalId) =>
       mapIntervalsRawToLaps(await intervalsApiService.getActivityIntervals(token, externalId)),
@@ -103,6 +134,8 @@ export async function getLaps(db: Db, userId: string, activityId: number): Promi
 }
 
 export async function getSplits(db: Db, userId: string, activityId: number) {
+  const demo = await reviewDemoActivity(db, userId, activityId);
+  if (demo) return demo.splits;
   const src = await resolveActivitySource(db, userId, activityId);
   if (src.kind === "intervals") return [];
   const activity = await stravaApiService.getActivity(src.token, src.externalId);
@@ -130,6 +163,13 @@ export async function getStreamSet<K extends keyof StreamTypeMap>(
 ): Promise<Pick<StreamSet, K>> {
   const { gateHeartRate, providerKeys } = await resolveHeartRateGate(db, userId, keys);
 
+  const demo = await reviewDemoActivity(db, userId, activityId);
+  if (demo) {
+    const set = demoStreamSet(demo.streams);
+    if (gateHeartRate) delete set.heartrate;
+    return set as Pick<StreamSet, K>;
+  }
+
   const { result, source } = await fetchIntervalsPreferred<StreamSet>(db, userId, activityId, {
     fromIntervals: async (token, externalId) =>
       mapIntervalsStreamsToStreamSet(
@@ -152,6 +192,13 @@ export async function getStreamsAndLaps<K extends keyof StreamTypeMap>(
   keys: readonly K[],
 ): Promise<{ streams: Pick<StreamSet, K>; laps: Lap[] }> {
   const { gateHeartRate, providerKeys } = await resolveHeartRateGate(db, userId, keys);
+
+  const demo = await reviewDemoActivity(db, userId, activityId);
+  if (demo) {
+    const set = demoStreamSet(demo.streams);
+    if (gateHeartRate) delete set.heartrate;
+    return { streams: set as Pick<StreamSet, K>, laps: demo.laps };
+  }
 
   const { result, source } = await fetchIntervalsPreferred<{ streams: StreamSet; laps: Lap[] }>(
     db,
@@ -194,6 +241,8 @@ const DEFAULT_STREAM_KEYS = [
 ] as const;
 
 export async function getStreams(db: Db, userId: string, activityId: number) {
+  const demo = await reviewDemoActivity(db, userId, activityId);
+  if (demo) return demo.streams;
   const streams = await getStreamSet(db, userId, activityId, DEFAULT_STREAM_KEYS);
   return {
     time: streams?.time?.data ?? [],

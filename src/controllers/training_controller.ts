@@ -7,17 +7,24 @@ import {
 } from "@langchain/core/messages";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
+import { deleteCoachThread } from "../agent/chat_thread";
+import { generateConversationTitle } from "../agent/chat_title";
 import { SAFE_REFUSAL } from "../agent/training/prompts";
 import type { CoachCtx } from "../agent/training/tool_types";
 import { buildTrainingGraph } from "../agent/training/training_graph";
 import { AppError } from "../error";
 import * as chatRepo from "../repositories/chat_repository";
 import * as userRepo from "../repositories/user_repository";
+import type { ChatMessageStatus } from "../schema";
 import type { CoachArtifact, CoachChatRequest } from "../schemas/api_schemas";
+import { isReviewUser } from "../services/review_account";
 import type { IGlobalBindings, TStravaEnv } from "../types/IRouters";
+import { clearTurnActive, isTurnActive, markTurnActive } from "./active_turns";
 import { startSseHeartbeat } from "./sse_heartbeat";
 
 type Db = IGlobalBindings["db"];
+
+const GRAPH_ERROR_CONTENT = "Sorry — I ran into an error answering that. Please try again.";
 
 function deriveTitle(message: string): string {
   const trimmed = message.trim().replace(/\s+/g, " ");
@@ -48,7 +55,30 @@ function* chunkText(text: string): Generator<string> {
   if (buf) yield buf;
 }
 
-const activeTurns = new Set<string>();
+async function persistAssistantOutcome(
+  db: Db,
+  conversationId: string,
+  content: string,
+  artifacts: CoachArtifact[] | null,
+  status: ChatMessageStatus | null,
+  log: CoachCtx["logger"],
+): Promise<{ id: number; createdAt: Date } | null> {
+  try {
+    const row = await chatRepo.insertMessage(
+      db,
+      conversationId,
+      "assistant",
+      content,
+      artifacts,
+      status,
+    );
+    await chatRepo.touchConversation(db, conversationId);
+    return row;
+  } catch (err) {
+    log.error({ err, status }, "coach: failed to persist assistant outcome");
+    return null;
+  }
+}
 
 async function repairDanglingToolCalls(
   graph: Awaited<ReturnType<typeof buildTrainingGraph>>,
@@ -117,7 +147,9 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
         userId,
         stravaAccessToken,
         intervalsConnected: !!user?.intervalsAthleteId,
-        stravaLinked: !!user?.stravaId,
+        // The demo user's stravaId is a sentinel with no real link/token, so
+        // provider-backed tools must read as unavailable — chat runs on DB tools.
+        stravaLinked: !isReviewUser(userId) && !!user?.stravaId,
         userTime: body.userTime,
         weather: body.weather,
         logger: log,
@@ -149,22 +181,22 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
       return;
     }
 
-    if (activeTurns.has(body.conversationId)) {
+    if (isTurnActive(body.conversationId)) {
       await safeWrite(
         "error",
         JSON.stringify({ error: "A reply is already in progress for this conversation." }),
       );
       return;
     }
-    activeTurns.add(body.conversationId);
+    markTurnActive(body.conversationId);
 
     try {
-      let persist = true;
       try {
         await chatRepo.insertMessage(db, body.conversationId, "user", body.message);
       } catch (err) {
         log.error({ err }, "coach: failed to persist user message");
-        persist = false;
+        await safeWrite("error", JSON.stringify({ error: "Failed to start." }));
+        return;
       }
 
       const graph = await buildTrainingGraph();
@@ -204,9 +236,18 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
       } catch (err) {
         if (abort.signal.aborted) {
           log.info("coach: client disconnected — graph aborted");
+          await persistAssistantOutcome(db, body.conversationId, "", null, "interrupted", log);
           return;
         }
         log.error({ err }, "coach: graph run failed");
+        await persistAssistantOutcome(
+          db,
+          body.conversationId,
+          GRAPH_ERROR_CONTENT,
+          null,
+          "error",
+          log,
+        );
         await safeWrite(
           "error",
           JSON.stringify({ error: "The coach hit an error answering that." }),
@@ -216,23 +257,20 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
         stopHeartbeat();
       }
 
-      let messageId: number | null = null;
-      let messageCreatedAt: string | null = null;
-      if (persist) {
-        try {
-          const row = await chatRepo.insertMessage(
-            db,
-            body.conversationId,
-            "assistant",
-            finalAnswer,
-            artifacts,
-          );
-          messageId = row.id;
-          messageCreatedAt = row.createdAt.toISOString();
-        } catch (err) {
-          log.error({ err }, "coach: failed to persist assistant message");
-        }
+      const row = await persistAssistantOutcome(
+        db,
+        body.conversationId,
+        finalAnswer,
+        artifacts,
+        null,
+        log,
+      );
+      if (!row) {
+        await safeWrite("error", JSON.stringify({ error: "Failed to save the answer." }));
+        return;
       }
+      const messageId: number | null = row.id;
+      const messageCreatedAt: string | null = row.createdAt.toISOString();
 
       for (const piece of chunkText(finalAnswer)) {
         await safeWrite("token", JSON.stringify({ text: piece }));
@@ -248,8 +286,21 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
           createdAt: messageCreatedAt,
         }),
       );
+
+      // After `done` (never blocking it): on the first clean assistant message
+      // of a conversation, upgrade the derived-truncation title to an LLM one.
+      // Any failure keeps the derived title.
+      try {
+        const cleanCount = await chatRepo.countCleanAssistantMessages(db, body.conversationId);
+        if (cleanCount === 1) {
+          const title = await generateConversationTitle(body.message, finalAnswer);
+          if (title) await chatRepo.updateConversationTitle(db, body.conversationId, title);
+        }
+      } catch (err) {
+        log.warn({ err }, "coach: title generation failed — keeping derived title");
+      }
     } finally {
-      activeTurns.delete(body.conversationId);
+      clearTurnActive(body.conversationId);
     }
   });
 }
@@ -259,15 +310,55 @@ export async function listConversations(db: Db, userId: string, page: number) {
   return { data, meta: { page, pageSize: chatRepo.CONVERSATIONS_PAGE_SIZE } };
 }
 
-export async function getConversation(db: Db, userId: string, conversationId: string) {
+export async function getConversation(
+  db: Db,
+  userId: string,
+  conversationId: string,
+  opts: { limit: number; before?: number },
+) {
   const conversation = await chatRepo.getConversationForUser(db, userId, conversationId);
   if (!conversation) throw new AppError(404, "Conversation not found");
-  const messages = await chatRepo.listMessages(db, conversationId);
+  let page = await chatRepo.listMessagesPage(db, conversationId, opts.limit, opts.before);
+
+  // Backfill a dangling trailing user turn only on the newest window (no cursor),
+  // where the window's last message is the conversation's true last message.
+  if (opts.before === undefined) {
+    const last = page.messages[page.messages.length - 1];
+    if (last && last.role === "user" && !isTurnActive(conversationId)) {
+      await chatRepo.insertMessage(db, conversationId, "assistant", "", null, "interrupted");
+      page = await chatRepo.listMessagesPage(db, conversationId, opts.limit, opts.before);
+    }
+  }
+
   return {
     id: conversation.id,
     title: conversation.title,
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
-    messages,
+    messages: page.messages,
+    meta: { hasMore: page.hasMore, nextBefore: page.nextBefore },
   };
+}
+
+export async function renameConversation(
+  db: Db,
+  userId: string,
+  conversationId: string,
+  title: string,
+) {
+  const conversation = await chatRepo.getConversationForUser(db, userId, conversationId);
+  if (!conversation) throw new AppError(404, "Conversation not found");
+  return chatRepo.renameConversation(db, conversationId, title);
+}
+
+export async function deleteConversation(db: Db, userId: string, conversationId: string) {
+  const conversation = await chatRepo.getConversationForUser(db, userId, conversationId);
+  if (!conversation) throw new AppError(404, "Conversation not found");
+
+  // Drop the LangGraph checkpointer thread FIRST: if this fails we surface the
+  // error (500) with the conversation still intact, rather than leaving a
+  // deleted conversation with a live thread.
+  await deleteCoachThread(conversationId);
+
+  await chatRepo.deleteConversation(db, conversationId);
 }

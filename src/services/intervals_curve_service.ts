@@ -3,6 +3,8 @@ import { isPowerSport } from "../schema";
 import type { IIntervalsPowerCurve } from "../types/intervals/IIntervalsActivity";
 import { intervalsApiService } from "./intervals_api_service";
 import { withIntervalsToken } from "./intervals_token_helper";
+import { isReviewUser } from "./review_account";
+import { getDemoCorpus } from "./review_demo/corpus_cache";
 
 export type BestEffortWindow = "this_season" | "last_season" | "custom";
 
@@ -57,6 +59,7 @@ export async function fetchBestEffortCurve(
   userId: string,
   opts: { type?: string; window?: BestEffortWindow; oldest?: string; newest?: string },
 ): Promise<BestEffortResult> {
+  if (isReviewUser(userId)) return { status: "ok", data: getDemoCorpus().curve };
   const result = await withIntervalsToken(userId, (accessToken) =>
     fetchBestEffortCurveWithToken(accessToken, opts),
   );

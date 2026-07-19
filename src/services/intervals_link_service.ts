@@ -6,6 +6,7 @@ import { getIntervalsAccessToken } from "../middlewares/intervals_middleware";
 import { activities, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsActivity } from "../types/intervals/IIntervalsActivity";
+import { computeAndStoreActivityLoad } from "./activity_load_service";
 import { distanceBand, TIME_TOLERANCE_MS, withinMatchTolerance } from "./activity_match";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { classifyUserActivity } from "./ingest_gating";
@@ -183,7 +184,7 @@ export async function linkOrCreateFromIntervalsActivity(
 
   const processHeartRate = await userHasHeartRateConsent(context.db, user.id);
 
-  return context.db.transaction(async (tx) => {
+  const result = await context.db.transaction(async (tx): Promise<IntervalsIngestResult> => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${user.id}))`);
 
     const existing = await tx.query.activities.findFirst({
@@ -249,6 +250,12 @@ export async function linkOrCreateFromIntervalsActivity(
       intervalsActivityId,
     };
   });
+
+  // Self-compute training load once the created row has committed (errors swallowed).
+  if (result.outcome === "created" && result.localActivityId != null) {
+    await computeAndStoreActivityLoad(context.db, user.id, result.localActivityId);
+  }
+  return result;
 }
 
 export async function refreshLinkedIntervalsActivity(
@@ -299,6 +306,8 @@ export async function refreshLinkedIntervalsActivity(
       ...buildEnrichment(full, processHeartRate),
     })
     .where(eq(activities.id, row.id));
+
+  await computeAndStoreActivityLoad(context.db, user.id, row.id);
 
   // Surface the refresh to the app (ACTIVITY_UPDATED/ANALYZED) so an activity the
   // user edited on intervals.icu reflects live, mirroring the Strava update path.

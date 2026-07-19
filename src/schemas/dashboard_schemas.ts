@@ -1,7 +1,14 @@
 import "zod-openapi/extend";
 import { z } from "zod";
-import { trainingTypeEnum } from "../schema/enums";
+import { OTHER_SPORT_TYPES, RUNNING_SPORT_TYPES, trainingTypeEnum } from "../schema/enums";
 import { isoDate } from "./common_schemas";
+
+/** `running` (all run sub-types) or an exact stored sport type. */
+export const FITNESS_SPORT_VALUES = [
+  "running",
+  ...RUNNING_SPORT_TYPES,
+  ...OTHER_SPORT_TYPES,
+] as const;
 
 export const DashboardResponseSchema = z
   .object({
@@ -99,7 +106,11 @@ export const TrainingSummaryResponseSchema = z
 export const MAX_WELLNESS_RANGE_DAYS = 366;
 
 export const WellnessQuerySchema = z
-  .object({ oldest: isoDate, newest: isoDate })
+  .object({
+    oldest: isoDate,
+    newest: isoDate,
+    sport: z.enum(FITNESS_SPORT_VALUES).optional(),
+  })
   .refine(({ oldest, newest }) => oldest <= newest, {
     message: "`oldest` must be on or before `newest`",
     path: ["newest"],

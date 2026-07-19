@@ -94,6 +94,7 @@ export async function deleteTestUser(userId: string) {
   // training_plan_weeks + planned_sessions cascade from training_plans.
   await pool.query(`DELETE FROM training_plans WHERE user_id = $1`, [userId]);
   await pool.query(`DELETE FROM race_events WHERE user_id = $1`, [userId]);
+  await pool.query(`DELETE FROM chat_conversations WHERE user_id = $1`, [userId]);
   await pool.query(`DELETE FROM events WHERE user_id = $1`, [userId]);
   await pool.query(`DELETE FROM activities WHERE user_id = $1`, [userId]);
   await pool.query(`DELETE FROM gears WHERE user_id = $1`, [userId]);

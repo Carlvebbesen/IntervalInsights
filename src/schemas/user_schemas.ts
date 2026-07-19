@@ -1,6 +1,6 @@
 import "zod-openapi/extend";
 import { z } from "zod";
-import { analysisReviewModeEnum, paceProgressionEnum, userRoleEnum } from "../schema/enums";
+import { analysisReviewModeEnum, paceProgressionEnum, sexEnum, userRoleEnum } from "../schema/enums";
 
 export const UserSettingsSchema = z
   .object({
@@ -9,6 +9,11 @@ export const UserSettingsSchema = z
     maxHeartRate: z.number().nullable(),
     processHeartRate: z.boolean(),
     paceProgression: z.enum(paceProgressionEnum.enumValues),
+    thresholdPaceMps: z.number().nullable(),
+    lthr: z.number().nullable(),
+    restingHr: z.number().nullable(),
+    ftp: z.number().nullable(),
+    sex: z.enum(sexEnum.enumValues).nullable(),
   })
   .openapi({ ref: "UserSettings" });
 
@@ -19,6 +24,11 @@ export const UpdateUserSettingsSchema = z
     maxHeartRate: z.number().int().positive().max(250).nullable().optional(),
     processHeartRate: z.boolean().optional(),
     paceProgression: z.enum(paceProgressionEnum.enumValues).optional(),
+    thresholdPaceMps: z.number().positive().max(12).nullable().optional(),
+    lthr: z.number().int().min(80).max(220).nullable().optional(),
+    restingHr: z.number().int().min(20).max(120).nullable().optional(),
+    ftp: z.number().int().min(50).max(600).nullable().optional(),
+    sex: z.enum(sexEnum.enumValues).nullable().optional(),
   })
   .openapi({ ref: "UpdateUserSettings" });
 

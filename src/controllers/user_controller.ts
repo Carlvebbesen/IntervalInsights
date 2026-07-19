@@ -1,12 +1,15 @@
 import { eq } from "drizzle-orm";
+import { deleteCoachThread } from "../agent/chat_thread";
 import {
   CURRENT_PRIVACY_POLICY_VERSION,
   CURRENT_TERMS_OF_SERVICE_VERSION,
 } from "../consent_versions";
 import { toUserDto, toUserSettingsDto, type UserDto, type UserSettingsDto } from "../dtos/user_dto";
 import { AppError } from "../error";
+import { logger } from "../logger";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import * as activityRepo from "../repositories/activity_repository";
+import * as chatRepo from "../repositories/chat_repository";
 import * as raceEventRepo from "../repositories/race_event_repository";
 import * as trainingPlanRepo from "../repositories/training_plan_repository";
 import * as userRepo from "../repositories/user_repository";
@@ -111,6 +114,22 @@ export async function deleteAccount(
 
   await trainingPlanRepo.deleteAllForUser(db, userId);
   await raceEventRepo.deleteAllForUser(db, userId);
+  // Chat conversation rows cascade with the user, but their LangGraph
+  // checkpointer threads are keyed by conversationId and survive — drop each
+  // one first. A single failed thread delete must not abort the deletion.
+  const conversationIds = await chatRepo.listAllConversationIdsForUser(db, userId);
+  for (const conversationId of conversationIds) {
+    try {
+      await deleteCoachThread(conversationId);
+    } catch (err) {
+      logger.warn(
+        { err, conversationId, userId },
+        "failed to delete coach thread during account deletion",
+      );
+    }
+  }
+
+
   await activityRepo.deleteAllForUser(db, userId);
   await db.delete(events).where(eq(events.userId, userId));
   await db.delete(gears).where(eq(gears.userId, userId));

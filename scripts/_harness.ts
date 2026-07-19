@@ -32,7 +32,10 @@ async function completedCount(db: Db, name: string): Promise<number> {
  * Set `MARK_COMPLETE=1` to record a completed run WITHOUT executing the body —
  * used to baseline scripts already run in production before tracking existed.
  */
-export async function runScript(opts: RunScriptOptions, body: () => Promise<void>): Promise<void> {
+export async function runScript(
+  opts: RunScriptOptions,
+  body: () => Promise<void | Record<string, unknown>>,
+): Promise<void> {
   const { name, once = false, db, pool, meta } = opts;
 
   if (process.env.MARK_COMPLETE === "1") {
@@ -64,11 +67,16 @@ export async function runScript(opts: RunScriptOptions, body: () => Promise<void
     .returning({ id: scriptRuns.id });
 
   try {
-    await body();
+    const bodyMeta = await body();
     const finishedAt = new Date();
     await db
       .update(scriptRuns)
-      .set({ status: "completed", finishedAt, durationMs: finishedAt.getTime() - startedAt.getTime() })
+      .set({
+        status: "completed",
+        finishedAt,
+        durationMs: finishedAt.getTime() - startedAt.getTime(),
+        ...(bodyMeta ? { meta: { ...meta, ...bodyMeta } } : {}),
+      })
       .where(eq(scriptRuns.id, run.id));
     console.log(`[script:${name}] completed (run #${prior + 1})`);
     await pool.end().catch(() => {});
