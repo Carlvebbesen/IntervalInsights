@@ -77,6 +77,9 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
   const baSession = await auth.api.getSession({ headers: c.req.raw.headers });
   if (baSession) {
     const sessionUser = baSession.user as unknown as SelectUser;
+    if (sessionUser.banned) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
     const dbUser = await bumpLastSeen(c, sessionUser);
     return finishAuth(c, next, dbUser, "better-auth");
   }

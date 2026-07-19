@@ -1,7 +1,7 @@
 import { createAuthEndpoint } from "@better-auth/core/api";
 import { type BetterAuthPlugin, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { bearer, emailOTP } from "better-auth/plugins";
+import { admin, bearer, emailOTP } from "better-auth/plugins";
 import { z } from "zod";
 import { config } from "./config";
 import { db } from "./db";
@@ -142,6 +142,7 @@ export const auth = betterAuth({
       disableSignUp: true,
     }),
     bearer(),
+    admin({ defaultRole: "guest", adminRoles: ["admin"] }),
     expoOriginBridge,
     signUpEmailOtp,
   ],

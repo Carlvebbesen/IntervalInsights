@@ -1,4 +1,5 @@
 export * from "./activity_schemas";
+export * from "./admin_schemas";
 export * from "./agent_schemas";
 export * from "./chat_schemas";
 export * from "./common_schemas";
