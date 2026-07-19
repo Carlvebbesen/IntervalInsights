@@ -1,6 +1,12 @@
 // Small factories for inserting common test rows under a given test user.
 
-import { activityEvents, activities, events, intervalStructures } from "../../src/schema";
+import {
+  activityEvents,
+  activities,
+  eventNotes,
+  events,
+  intervalStructures,
+} from "../../src/schema";
 import { getDb } from "./db";
 
 export type SeededActivity = {
@@ -81,6 +87,7 @@ export async function insertEvent(
   overrides: Partial<{
     eventType: "INJURY" | "ILLNESS" | "MEDICAL_VISIT" | "PHYSIO_VISIT" | "OTHER";
     bodyLocation: string | null;
+    /** Anchor-note text (was the dropped `events.description` column). */
     description: string;
     startTime: Date;
     lastOccurrence: Date;
@@ -89,16 +96,55 @@ export async function insertEvent(
 ) {
   const db = getDb();
   const now = new Date();
+  const occurredAt = overrides.startTime ?? now;
+  const status = overrides.status ?? "active";
   const [row] = await db
     .insert(events)
     .values({
       userId,
       eventType: overrides.eventType ?? "INJURY",
       bodyLocation: overrides.bodyLocation ?? null,
-      description: overrides.description ?? "Test event",
-      startTime: overrides.startTime ?? now,
+      startTime: occurredAt,
       lastOccurrence: overrides.lastOccurrence ?? now,
-      status: overrides.status ?? "active",
+      status,
+      resolvedAt: status === "resolved" ? occurredAt : null,
+    })
+    .returning();
+  await db.insert(eventNotes).values({
+    eventId: row.id,
+    userId,
+    note: overrides.description ?? "Test event",
+    source: "ai",
+    occurredAt,
+    isAnchor: true,
+  });
+  return row;
+}
+
+export async function insertEventNote(
+  eventId: number,
+  userId: string,
+  overrides: Partial<{
+    note: string;
+    source: "ai" | "user";
+    occurredAt: Date;
+    trend: "improving" | "worsening" | "unchanged" | null;
+    severity: number | null;
+    isAnchor: boolean;
+  }> = {},
+) {
+  const db = getDb();
+  const [row] = await db
+    .insert(eventNotes)
+    .values({
+      eventId,
+      userId,
+      note: overrides.note ?? "Test note",
+      source: overrides.source ?? "user",
+      occurredAt: overrides.occurredAt ?? new Date(),
+      trend: overrides.trend ?? null,
+      severity: overrides.severity ?? null,
+      isAnchor: overrides.isAnchor ?? false,
     })
     .returning();
   return row;

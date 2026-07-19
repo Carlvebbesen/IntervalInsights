@@ -33,7 +33,12 @@ export const eventDetectionOutput = z.object({
       description: z
         .string()
         .describe(
-          "A short (5–15 word) summary of the underlying CONDITION, not this specific activity's experience of it. Examples: 'Recurring right hip pain', 'Achilles tendon pain', 'Cold/flu'. Avoid activity-specific phrasing like 'felt pain during today's run'. MUST be written in the SAME language the user wrote the title/description/notes in (Norwegian text -> Norwegian description). Do NOT translate.",
+          "A short (5–15 word) summary of the underlying CONDITION, not this specific activity's experience of it. Examples: 'Recurring right hip pain', 'Achilles tendon pain', 'Cold/flu'. Avoid activity-specific phrasing like 'felt pain during today's run'. This becomes the event's ANCHOR note (its timeless canonical summary). MUST be written in the SAME language the user wrote the title/description/notes in (Norwegian text -> Norwegian description). Do NOT translate.",
+        ),
+      updateText: z
+        .string()
+        .describe(
+          "A one-line, activity-SPECIFIC observation of the condition AS IT APPEARED IN THIS activity. Unlike `description` (the timeless summary), this SHOULD reference today's occurrence — e.g. 'Fortsatt vondt i høyre hofte etter dagens langtur', 'Cold symptoms lingering this morning'. It is appended as a dated timeline note when this event turns out to be a recurrence of an existing one. Written in the SAME language as the user's text. Keep it to one short sentence.",
         ),
       markResolved: z
         .boolean()
@@ -140,23 +145,28 @@ The trigger word determines whether something is an event:
 - Required for INJURY when the body part is mentioned (e.g. "right knee", "left achilles", "lower back", "hip" without side).
 - Use null when no specific body part is involved (most ILLNESS, MEDICAL_VISIT, PHYSIO_VISIT, OTHER).
 
+### description vs updateText (BOTH are required on every event)
+- **\`description\`** = the timeless CONDITION summary. It becomes the event's anchor note and is written once. Keep it activity-agnostic ("Smerter i høyre hofte", "Forkjølelse").
+- **\`updateText\`** = a one-line, THIS-ACTIVITY observation. It is appended to the timeline as a dated note when the event recurs. It SHOULD reference today's occurrence ("Fortsatt vondt i høyre hofte etter dagens økt", "Forkjølelsen henger igjen"). Never leave it as a copy of \`description\` — it is the per-occurrence trace of how the condition is going.
+- Both fields use the user's language.
+
 ### Worked examples
 These illustrate the rules above. Each example shows notes -> the events array you should produce.
 
 Example 1 — pain with softener IS an event
 notes: "litt vondt i høyre hofte, men løsnet etterhvert"
 recentEvents: (none for hip)
-→ [{ linkedEventId: null, eventType: "INJURY", bodyLocation: "right hip", description: "Smerter i høyre hofte", markResolved: false, attributes: [] }]
+→ [{ linkedEventId: null, eventType: "INJURY", bodyLocation: "right hip", description: "Smerter i høyre hofte", updateText: "Litt vondt i høyre hofte i dag, men løsnet etterhvert", markResolved: false, attributes: [] }]
 
 Example 2 — recurring pain links only when body part matches
 notes: "fortsatt vondt i høyre hofte"
 recentEvents: [{ id: 5, eventType: "INJURY", bodyLocation: "right hip", description: "Smerter i høyre hofte", ... }]
-→ [{ linkedEventId: 5, eventType: "INJURY", bodyLocation: "right hip", description: "Smerter i høyre hofte", markResolved: false, attributes: [] }]
+→ [{ linkedEventId: 5, eventType: "INJURY", bodyLocation: "right hip", description: "Smerter i høyre hofte", updateText: "Fortsatt vondt i høyre hofte etter dagens økt", markResolved: false, attributes: [] }]
 
 Example 3 — DO NOT link when body part differs
 notes: "litt vondt i kneet"
 recentEvents: [{ id: 5, eventType: "INJURY", bodyLocation: "right hip", ... }]
-→ [{ linkedEventId: null, eventType: "INJURY", bodyLocation: "knee", description: "Smerter i kneet", markResolved: false, attributes: [] }]
+→ [{ linkedEventId: null, eventType: "INJURY", bodyLocation: "knee", description: "Smerter i kneet", updateText: "Litt vondt i kneet under dagens økt", markResolved: false, attributes: [] }]
 (Knee ≠ hip — must be a new event.)
 
 Example 4 — soreness + no-pain disclaimer is NOT an event
@@ -171,20 +181,20 @@ notes: "veldig tungt, ganske støl. spesielt i hofta"
 Example 6 — multiple events in one note, with a negation
 notes: "Litt smerter i kneet underveis, innsiden. kjente ikke noe i hofta, og litt vondt under fotbuen på venstre"
 → [
-  { linkedEventId: null, eventType: "INJURY", bodyLocation: "knee", description: "Smerter på innsiden av kneet", markResolved: false, attributes: [{ key: "side_of_joint", type: "string", value: "inner" }] },
-  { linkedEventId: null, eventType: "INJURY", bodyLocation: "left foot arch", description: "Smerter under venstre fotbue", markResolved: false, attributes: [] }
+  { linkedEventId: null, eventType: "INJURY", bodyLocation: "knee", description: "Smerter på innsiden av kneet", updateText: "Smerter på innsiden av kneet underveis i dag", markResolved: false, attributes: [{ key: "side_of_joint", type: "string", value: "inner" }] },
+  { linkedEventId: null, eventType: "INJURY", bodyLocation: "left foot arch", description: "Smerter under venstre fotbue", updateText: "Litt vondt under venstre fotbue i dag", markResolved: false, attributes: [] }
 ]
 (Hip is negated → skip. Knee and foot arch are separate events.)
 
 Example 7 — fatigue + pain → only the pain is an event
 notes: "tunge bein, lite overskudd, vondt i hofta"
 recentEvents: [{ id: 5, eventType: "INJURY", bodyLocation: "right hip", ... }]
-→ [{ linkedEventId: null, eventType: "INJURY", bodyLocation: "hip", description: "Smerter i hofta", markResolved: false, attributes: [] }]
+→ [{ linkedEventId: null, eventType: "INJURY", bodyLocation: "hip", description: "Smerter i hofta", updateText: "Vondt i hofta under dagens økt", markResolved: false, attributes: [] }]
 (Fatigue is not an event. The user did not say "høyre"/"venstre", so bodyLocation is "hip" without a side — and that means it does NOT link to event 5 which has bodyLocation "right hip".)
 
 Example 8 — illness is sickness, not fatigue
 notes: "Kriger med en liten forkjølelse 🤧"
-→ [{ linkedEventId: null, eventType: "ILLNESS", bodyLocation: null, description: "Forkjølelse", markResolved: false, attributes: [] }]
+→ [{ linkedEventId: null, eventType: "ILLNESS", bodyLocation: null, description: "Forkjølelse", updateText: "Kriger med en liten forkjølelse i dag", markResolved: false, attributes: [] }]
 
 Example 9 — fatigue alone is NEVER an illness
 notes: "ting økt, kjenner det i bena etter tirsdag"

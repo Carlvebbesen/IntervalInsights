@@ -70,6 +70,9 @@ async function countOwnedRows(userId: string) {
       `SELECT COUNT(*) FROM interval_segments s JOIN activities a ON a.id = s.activity_id WHERE a.user_id = $1`,
     ),
     events: await one(`SELECT COUNT(*) FROM events WHERE user_id = $1`),
+    // event_notes.user_id has no FK cascade; GDPR delete works only because
+    // events are deleted before the user, cascading notes via event_id (S5).
+    eventNotes: await one(`SELECT COUNT(*) FROM event_notes WHERE user_id = $1`),
     gears: await one(`SELECT COUNT(*) FROM gears WHERE user_id = $1`),
     conversations: await one(`SELECT COUNT(*) FROM chat_conversations WHERE user_id = $1`),
     messages: await one(
@@ -117,6 +120,7 @@ describe("DELETE /api/v1/user/data", () => {
           activities: 1,
           segments: 1,
           events: 1,
+          eventNotes: 1,
           gears: 1,
           conversations: 1,
           messages: 1,
@@ -136,6 +140,7 @@ describe("DELETE /api/v1/user/data", () => {
           activities: 0,
           segments: 0,
           events: 0,
+          eventNotes: 0,
           gears: 0,
           conversations: 0,
           messages: 0,
@@ -149,6 +154,7 @@ describe("DELETE /api/v1/user/data", () => {
           activities: 1,
           segments: 1,
           events: 1,
+          eventNotes: 1,
           gears: 1,
           conversations: 1,
           messages: 1,
@@ -195,6 +201,7 @@ describe("DELETE /api/v1/user/data", () => {
           activities: 0,
           segments: 0,
           events: 0,
+          eventNotes: 0,
           gears: 0,
           conversations: 0,
           messages: 0,
