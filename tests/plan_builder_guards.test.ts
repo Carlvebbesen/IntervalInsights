@@ -6,19 +6,30 @@ import {
   capMaxWeekly,
   clampVolumeRamp,
   clampWeeklyRamp,
+  CROSS_TRAINING_TITLE,
   DEFAULT_BASELINE_WEEKLY_METERS,
+  DEFAULT_DAYS_PER_WEEK,
   EASY_PACE_MPS,
+  enforceDaysPerWeek,
   enforceDownWeeks,
+  enforceQualityCount,
   estimateStructureDistanceMeters,
   expectedWeekStarts,
+  isHardSession,
+  longRunOffset,
   type MacroShapingParams,
+  placeLongRun,
+  qualityCap,
   repairMacro,
   repairSessionDate,
+  resolveDaysPerWeek,
+  spaceHardSessions,
   stripPaces,
+  substituteCrossTraining,
   taperWeekCount,
   VOLUME_RAMP,
 } from "../src/agent/planning/guards";
-import type { PlanMacro, PlanMacroWeek } from "../src/agent/planning/plan_builder_schemas";
+import type { GeneratedSession, PlanMacro, PlanMacroWeek } from "../src/agent/planning/plan_builder_schemas";
 import type { PlanBuilderInput } from "../src/agent/planning/plan_builder_state";
 import type { WorkoutStructureSet } from "../src/schemas/agent_schemas";
 
@@ -296,5 +307,227 @@ describe("repairMacro (orchestrated volume shaping)", () => {
     ]);
     expect(macro.weeks.at(-1)?.phase).toBe("race");
     expect(macro.weeks[3].phase).toBe("taper");
+  });
+});
+
+// ── Session-level guards ─────────────────────────────────────────────────────
+
+const struct = () => [
+  { set_reps: 1, steps: [{ reps: 4, work_type: "TIME" as const, work_value: 60, target_pace: null }] },
+];
+const sess = (
+  date: string,
+  sessionType: GeneratedSession["sessionType"],
+  structured = false,
+): GeneratedSession => ({
+  date,
+  sessionType,
+  title: sessionType,
+  description: null,
+  structure: structured ? struct() : null,
+});
+const hardCount = (ss: GeneratedSession[]) =>
+  ss.filter((s) => isHardSession(s.sessionType, s.structure)).length;
+
+describe("isHardSession", () => {
+  it("classifies interval / tempo / progressive-long types as hard", () => {
+    for (const t of ["TEMPO", "LONG_INTERVALS", "SHORT_INTERVALS", "HILL_SPRINTS", "SPRINTS", "FARTLEK", "PROGRESSIVE_LONG"] as const) {
+      expect(isHardSession(t, null)).toBe(true);
+    }
+  });
+
+  it("classifies easy / recovery / long / race as not hard", () => {
+    for (const t of ["EASY", "RECOVERY", "LONG", "RACE"] as const) {
+      expect(isHardSession(t, null)).toBe(false);
+    }
+  });
+
+  it("treats a structured non-easy session as hard (defensive), but not a structured easy run", () => {
+    expect(isHardSession("OTHER", struct())).toBe(true);
+    expect(isHardSession("EASY", struct())).toBe(false);
+  });
+});
+
+describe("qualityCap (per-phase / intensity axis)", () => {
+  it("balanced: base 0, build 2, peak 3, taper 1, race 1", () => {
+    expect(qualityCap("base", "balanced")).toBe(0);
+    expect(qualityCap("build", "balanced")).toBe(2);
+    expect(qualityCap("peak", "balanced")).toBe(3);
+    expect(qualityCap("taper", "balanced")).toBe(1);
+    expect(qualityCap("race", "balanced")).toBe(1);
+  });
+
+  it("comfortable shifts −1 with a floor of 0", () => {
+    expect(qualityCap("build", "comfortable")).toBe(1);
+    expect(qualityCap("base", "comfortable")).toBe(0);
+  });
+
+  it("challenging shifts +1, capped at 3 except peak reaches 4", () => {
+    expect(qualityCap("build", "challenging")).toBe(3);
+    expect(qualityCap("peak", "challenging")).toBe(4);
+    expect(qualityCap("taper", "challenging")).toBe(2);
+  });
+});
+
+describe("enforceQualityCount", () => {
+  it("downgrades the excess (latest) hard sessions to easy runs", () => {
+    const week = [
+      sess("2026-01-05", "LONG_INTERVALS", true),
+      sess("2026-01-07", "TEMPO", true),
+      sess("2026-01-09", "SHORT_INTERVALS", true),
+    ];
+    const out = enforceQualityCount(week, "build", "balanced"); // cap 2
+    expect(hardCount(out)).toBe(2);
+    const downgraded = out.find((s) => s.sessionType === "EASY");
+    expect(downgraded?.date).toBe("2026-01-09");
+    expect(downgraded?.structure).toBeNull();
+  });
+
+  it("base phase (cap 0) downgrades all hard work to easy", () => {
+    const out = enforceQualityCount([sess("2026-01-06", "TEMPO", true)], "base", "balanced");
+    expect(hardCount(out)).toBe(0);
+  });
+
+  it("never fabricates hard work when below the cap", () => {
+    const week = [sess("2026-01-06", "TEMPO", true), sess("2026-01-08", "EASY")];
+    const out = enforceQualityCount(week, "build", "balanced"); // cap 2, only 1 hard
+    expect(hardCount(out)).toBe(1);
+  });
+});
+
+describe("spaceHardSessions", () => {
+  it("moves a hard session off a day adjacent to another hard session", () => {
+    const week = [
+      sess("2026-01-05", "TEMPO", true),
+      sess("2026-01-06", "LONG_INTERVALS", true),
+      sess("2026-01-08", "EASY"),
+    ];
+    const out = spaceHardSessions(week);
+    const hardDates = out
+      .filter((s) => isHardSession(s.sessionType, s.structure))
+      .map((s) => s.date)
+      .sort();
+    expect(hardDates).toEqual(["2026-01-05", "2026-01-08"]);
+  });
+
+  it("is a no-op when hard sessions are already spaced", () => {
+    const week = [sess("2026-01-05", "TEMPO", true), sess("2026-01-08", "LONG_INTERVALS", true)];
+    expect(spaceHardSessions(week).map((s) => s.date)).toEqual(["2026-01-05", "2026-01-08"]);
+  });
+
+  it("best-effort no-op when nothing swappable", () => {
+    const week = [sess("2026-01-05", "TEMPO", true), sess("2026-01-06", "LONG_INTERVALS", true)];
+    expect(spaceHardSessions(week)).toHaveLength(2);
+  });
+});
+
+describe("resolveDaysPerWeek", () => {
+  it("honours an explicit request", () => {
+    expect(resolveDaysPerWeek(6, 3.2)).toBe(6);
+  });
+
+  it("infers from observed average when absent", () => {
+    expect(resolveDaysPerWeek(null, 4.4)).toBe(4);
+  });
+
+  it("falls back to the default with no history", () => {
+    expect(resolveDaysPerWeek(null, null)).toBe(DEFAULT_DAYS_PER_WEEK);
+    expect(resolveDaysPerWeek(undefined, 0)).toBe(DEFAULT_DAYS_PER_WEEK);
+  });
+
+  it("clamps to 1–7", () => {
+    expect(resolveDaysPerWeek(9, null)).toBe(7);
+    expect(resolveDaysPerWeek(0, null)).toBe(1);
+  });
+});
+
+describe("longRunOffset / placeLongRun", () => {
+  it("defaults to Sunday (offset 6) and clamps", () => {
+    expect(longRunOffset(undefined)).toBe(6);
+    expect(longRunOffset(0)).toBe(0);
+    expect(longRunOffset(9)).toBe(6);
+    expect(longRunOffset(-1)).toBe(0);
+  });
+
+  it("moves the long-bucket session onto the preferred day (Monday-aligned week)", () => {
+    const week = [
+      sess("2026-01-06", "LONG"),
+      sess("2026-01-07", "EASY"),
+    ];
+    const out = placeLongRun(week, "2026-01-05", 6); // Sunday of that week
+    expect(out.find((s) => s.sessionType === "LONG")?.date).toBe("2026-01-11");
+  });
+
+  it("also relocates a PROGRESSIVE_LONG and no-ops without a long run", () => {
+    const withProg = placeLongRun([sess("2026-01-06", "PROGRESSIVE_LONG")], "2026-01-05", 0);
+    expect(withProg[0].date).toBe("2026-01-05");
+    const noLong = placeLongRun([sess("2026-01-06", "EASY")], "2026-01-05", 6);
+    expect(noLong[0].date).toBe("2026-01-06");
+  });
+});
+
+describe("enforceDaysPerWeek", () => {
+  it("trims the latest easy fill runs first, protecting hard + long", () => {
+    const week = [
+      sess("2026-01-05", "LONG_INTERVALS", true),
+      sess("2026-01-06", "LONG"),
+      sess("2026-01-07", "EASY"),
+      sess("2026-01-08", "EASY"),
+      sess("2026-01-09", "EASY"),
+      sess("2026-01-10", "EASY"),
+    ];
+    const out = enforceDaysPerWeek(week, 4);
+    expect(out).toHaveLength(4);
+    expect(hardCount(out)).toBe(1);
+    expect(out.some((s) => s.sessionType === "LONG")).toBe(true);
+    expect(out.map((s) => s.date)).toEqual([
+      "2026-01-05",
+      "2026-01-06",
+      "2026-01-07",
+      "2026-01-08",
+    ]);
+  });
+
+  it("no-ops when already at or under the cap", () => {
+    const week = [sess("2026-01-05", "EASY"), sess("2026-01-07", "TEMPO", true)];
+    expect(enforceDaysPerWeek(week, 5)).toHaveLength(2);
+  });
+
+  it("drops protected sessions only when nothing else remains to trim", () => {
+    const week = [
+      sess("2026-01-05", "TEMPO", true),
+      sess("2026-01-07", "LONG_INTERVALS", true),
+      sess("2026-01-09", "SHORT_INTERVALS", true),
+    ];
+    expect(enforceDaysPerWeek(week, 2)).toHaveLength(2);
+  });
+});
+
+describe("substituteCrossTraining", () => {
+  const injuryWeek = () => [
+    sess("2026-01-05", "LONG_INTERVALS", true),
+    sess("2026-01-06", "LONG"),
+    sess("2026-01-08", "EASY"),
+    sess("2026-01-10", "RECOVERY"),
+  ];
+
+  it("converts up to count easy/recovery runs to OTHER cross-training", () => {
+    const out = substituteCrossTraining(injuryWeek(), 2);
+    const cross = out.filter((s) => s.sessionType === "OTHER");
+    expect(cross).toHaveLength(2);
+    expect(cross.every((s) => s.structure === null && s.title === CROSS_TRAINING_TITLE)).toBe(true);
+    expect(out.some((s) => s.sessionType === "LONG")).toBe(true);
+    expect(hardCount(out)).toBe(1);
+  });
+
+  it("caps substitutions at 2 per week", () => {
+    const week = ["2026-01-05", "2026-01-06", "2026-01-08", "2026-01-10"].map((d) => sess(d, "EASY"));
+    expect(substituteCrossTraining(week, 5).filter((s) => s.sessionType === "OTHER")).toHaveLength(2);
+  });
+
+  it("no-ops with count 0 or fewer than 2 easy runs to spare", () => {
+    expect(substituteCrossTraining(injuryWeek(), 0)).toEqual(injuryWeek());
+    const oneEasy = [sess("2026-01-05", "LONG"), sess("2026-01-08", "EASY")];
+    expect(substituteCrossTraining(oneEasy, 2)).toEqual(oneEasy);
   });
 });

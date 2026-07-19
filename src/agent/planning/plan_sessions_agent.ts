@@ -74,7 +74,10 @@ ${feedbackBlock}
     and introduce rep workouts gradually rather than prescribing complex sets
     early. Favour session types they have actually done.
   - Keep intensity conservative around any ACTIVE injury/illness — avoid
-    sessions likely to aggravate the noted body location.
+    sessions likely to aggravate the noted body location. When there is an active
+    injury, some easy volume may be delivered as low-impact cross-training
+    (elliptical / bike / pool) in place of an easy run; the plan applies this
+    substitution deterministically, so you may simply keep those as easy runs.
   - Cover each week's keySessions as structured quality sessions; fill the rest
     with EASY / LONG / RECOVERY runs to reach the weekly target. At most 7
     sessions per week.

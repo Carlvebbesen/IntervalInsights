@@ -1,6 +1,12 @@
+import type { TrainingType } from "../../schema/enums";
+import { INTERVAL_TRAINING_TYPES, type PlanWeekPhase, trainingBucketFor } from "../../schema/enums";
 import type { WorkoutStructureSet } from "../../schemas/agent_schemas";
 import type { GeneratedSession, PlanMacro, PlanMacroWeek } from "./plan_builder_schemas";
-import type { PlanBuilderInput, VolumeAggressiveness } from "./plan_builder_state";
+import type {
+  IntensityAggressiveness,
+  PlanBuilderInput,
+  VolumeAggressiveness,
+} from "./plan_builder_state";
 
 // ~2.78 m/s — 5 km in 30 min. Used to approximate distance for TIME-based work
 // so a week's estimated volume is comparable regardless of how a step is typed.
@@ -16,6 +22,16 @@ function parseUTC(d: string): Date {
 
 function fmt(dt: Date): string {
   return dt.toISOString().split("T")[0];
+}
+
+function addDays(dateStr: string, days: number): string {
+  const d = parseUTC(dateStr);
+  d.setUTCDate(d.getUTCDate() + days);
+  return fmt(d);
+}
+
+function daysBetween(a: string, b: string): number {
+  return Math.abs((parseUTC(b).getTime() - parseUTC(a).getTime()) / 86_400_000);
 }
 
 function mondayOf(d: Date): Date {
@@ -339,20 +355,250 @@ export function repairMacro(
   return { name: raw.name, rationale: raw.rationale, weeks: final };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Session-level guards (the polarization / day-placement / injury layer).
+// Pure functions over one week's proposed sessions; the node passes settings in.
+// Research-backed constants, tunable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Classify a session as "hard" (quality) for the ≥80% easy / ≤20% hard
+ * polarization rule. Hard = TEMPO / interval types / PROGRESSIVE_LONG (its fast
+ * segment) — i.e. every `INTERVAL_TRAINING_TYPES` value. Defensive fallback: a
+ * session carrying an explicit structure that is not an easy/long/race type is
+ * treated as quality even if mislabeled. EASY/RECOVERY/LONG/RACE are not hard.
+ */
+export function isHardSession(
+  sessionType: TrainingType,
+  structure: WorkoutStructureSet[] | null | undefined,
+): boolean {
+  if ((INTERVAL_TRAINING_TYPES as readonly TrainingType[]).includes(sessionType)) return true;
+  const bucket = trainingBucketFor(sessionType);
+  return (
+    (structure?.length ?? 0) > 0 && bucket !== "EASY" && bucket !== "LONG" && bucket !== "RACE"
+  );
+}
+
+// Quality (hard) sessions per week by phase at intensity = balanced. Polarized
+// training (Seiler): base is nearly all easy, quality ramps through build/peak,
+// then drops in the taper/race week. Race week keeps 1 (the race itself is it).
+export const QUALITY_SESSIONS_BY_PHASE: Record<PlanWeekPhase, number> = {
+  base: 0,
+  build: 2,
+  peak: 3,
+  taper: 1,
+  race: 1,
+};
+
+/**
+ * Max hard sessions for a week: the per-phase baseline shifted by the intensity
+ * dial (`comfortable` −1, floor 0; `challenging` +1). Overall cap 3, except peak
+ * may reach 4 at `challenging`.
+ */
+export function qualityCap(phase: PlanWeekPhase, intensity: IntensityAggressiveness): number {
+  const shift = intensity === "comfortable" ? -1 : intensity === "challenging" ? 1 : 0;
+  const ceiling = phase === "peak" ? 4 : 3;
+  return Math.max(0, Math.min(ceiling, QUALITY_SESSIONS_BY_PHASE[phase] + shift));
+}
+
+function downgradeToEasy(s: GeneratedSession): GeneratedSession {
+  return { ...s, sessionType: "EASY", structure: null, title: "Easy run", description: null };
+}
+
+/**
+ * Enforce the polarization cap: keep at most `qualityCap` hard sessions (the
+ * earliest by date), downgrading any excess hard session to an easy run. Never
+ * fabricates hard work when there are too few — the cap is a ceiling.
+ */
+export function enforceQualityCount(
+  sessions: GeneratedSession[],
+  phase: PlanWeekPhase,
+  intensity: IntensityAggressiveness,
+): GeneratedSession[] {
+  const cap = qualityCap(phase, intensity);
+  const out = [...sessions].sort((a, b) => a.date.localeCompare(b.date));
+  let kept = 0;
+  return out.map((s) => {
+    if (!isHardSession(s.sessionType, s.structure)) return s;
+    kept += 1;
+    return kept > cap ? downgradeToEasy(s) : s;
+  });
+}
+
+/**
+ * Space hard sessions so no two land on consecutive calendar days: when a hard
+ * session sits within 1 day of the previous hard one, swap its date with a later
+ * easy session that clears the gap. Best-effort — a no-op when nothing swappable.
+ * Each swap strictly moves a hard session later, so the scan terminates.
+ */
+export function spaceHardSessions(sessions: GeneratedSession[]): GeneratedSession[] {
+  const s = sessions.map((x) => ({ ...x })).sort((a, b) => a.date.localeCompare(b.date));
+  const hard = (x: GeneratedSession) => isHardSession(x.sessionType, x.structure);
+  for (let guard = 0, i = 1; i < s.length && guard < 64; i++) {
+    if (!hard(s[i])) continue;
+    let prev = -1;
+    for (let k = i - 1; k >= 0; k--) {
+      if (hard(s[k])) {
+        prev = k;
+        break;
+      }
+    }
+    if (prev < 0 || daysBetween(s[prev].date, s[i].date) > 1) continue;
+    for (let j = i + 1; j < s.length; j++) {
+      if (hard(s[j]) || daysBetween(s[prev].date, s[j].date) < 2) continue;
+      const tmp = s[i].date;
+      s[i].date = s[j].date;
+      s[j].date = tmp;
+      s.sort((a, b) => a.date.localeCompare(b.date));
+      guard += 1;
+      i = 0; // restart: dates shifted
+      break;
+    }
+  }
+  return s;
+}
+
+// Number of run days per week when the athlete gives no explicit preference.
+export const DEFAULT_DAYS_PER_WEEK = 5;
+
+/** Resolve the week's run-day count: explicit request, else observed average, else default. Clamped 1–7. */
+export function resolveDaysPerWeek(
+  explicit: number | null | undefined,
+  observedAvgRunDays: number | null,
+): number {
+  const raw =
+    explicit ??
+    (observedAvgRunDays != null && observedAvgRunDays > 0
+      ? Math.round(observedAvgRunDays)
+      : DEFAULT_DAYS_PER_WEEK);
+  return Math.min(7, Math.max(1, raw));
+}
+
+/**
+ * Cap the week at `daysPerWeek` run days (the rest are rest days): drop the
+ * latest easy/recovery fill runs first, protecting hard and long sessions; only
+ * if still over do we drop protected sessions from the tail. Never adds sessions
+ * (too-few is handled by the volume-fill logic).
+ */
+export function enforceDaysPerWeek(
+  sessions: GeneratedSession[],
+  daysPerWeek: number,
+): GeneratedSession[] {
+  const cap = Math.min(7, Math.max(1, daysPerWeek));
+  if (sessions.length <= cap) return [...sessions];
+  const s = [...sessions].sort((a, b) => a.date.localeCompare(b.date));
+  const keep = s.map(() => true);
+  let excess = s.length - cap;
+  const protectedSession = (x: GeneratedSession) =>
+    isHardSession(x.sessionType, x.structure) || trainingBucketFor(x.sessionType) === "LONG";
+  for (let i = s.length - 1; i >= 0 && excess > 0; i--) {
+    if (!protectedSession(s[i])) {
+      keep[i] = false;
+      excess -= 1;
+    }
+  }
+  for (let i = s.length - 1; i >= 0 && excess > 0; i--) {
+    if (keep[i]) {
+      keep[i] = false;
+      excess -= 1;
+    }
+  }
+  return s.filter((_, i) => keep[i]);
+}
+
+// Preferred long-run weekday, expressed as a Monday-aligned week offset
+// (0 = Monday … 6 = Sunday), matching the plan's Monday-aligned week grid.
+// Default Sunday — the classic long-run slot at the end of the training week.
+export const DEFAULT_LONG_RUN_OFFSET = 6;
+
+/** Clamp a `preferredLongRunDay` (0=Mon … 6=Sun) into a valid week offset. */
+export function longRunOffset(preferredLongRunDay: number | null | undefined): number {
+  return Math.min(6, Math.max(0, preferredLongRunDay ?? DEFAULT_LONG_RUN_OFFSET));
+}
+
+/** Move the week's long-bucket session (LONG / PROGRESSIVE_LONG) onto the preferred long-run day. */
+export function placeLongRun(
+  sessions: GeneratedSession[],
+  weekStart: string,
+  preferredLongRunDay: number | null | undefined,
+): GeneratedSession[] {
+  const target = addDays(weekStart, longRunOffset(preferredLongRunDay));
+  const s = sessions.map((x) => ({ ...x }));
+  const idx = s.findIndex((x) => trainingBucketFor(x.sessionType) === "LONG");
+  if (idx >= 0) s[idx].date = target;
+  return s.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// A cross-training session is represented as a plain `OTHER` run-type with no
+// structure — the schema has no dedicated cross-training value (OTHER is the
+// catch-all). The app renders OTHER; the title/description carry the intent.
+export const CROSS_TRAINING_TITLE = "Cross-training (elliptical / bike / pool)";
+const CROSS_TRAINING_DESCRIPTION =
+  "Cross-training substitute for an easy run to protect the active injury — same duration/load.";
+export const MAX_CROSS_TRAINING_PER_WEEK = 2;
+
+function toCrossTraining(s: GeneratedSession): GeneratedSession {
+  return {
+    ...s,
+    sessionType: "OTHER",
+    structure: null,
+    title: CROSS_TRAINING_TITLE,
+    description: CROSS_TRAINING_DESCRIPTION,
+  };
+}
+
+/**
+ * For an athlete with an active injury: convert up to `count` (capped 1–2)
+ * EASY/RECOVERY runs into cross-training sessions, protecting the injury while
+ * preserving easy volume 1:1. Never touches a LONG or quality session, and only
+ * acts in weeks with ≥2 easy runs to spare.
+ */
+export function substituteCrossTraining(
+  sessions: GeneratedSession[],
+  count: number,
+): GeneratedSession[] {
+  const want = Math.min(MAX_CROSS_TRAINING_PER_WEEK, Math.max(0, count));
+  if (want === 0) return sessions;
+  const easyIdx = sessions
+    .map((s, i) => ({ s, i }))
+    .filter(
+      ({ s }) =>
+        (s.sessionType === "EASY" || s.sessionType === "RECOVERY") &&
+        !isHardSession(s.sessionType, s.structure),
+    )
+    .map(({ i }) => i);
+  if (easyIdx.length < 2) return sessions;
+  const convert = new Set(easyIdx.slice(0, Math.min(want, easyIdx.length)));
+  return sessions.map((s, i) => (convert.has(i) ? toCrossTraining(s) : s));
+}
+
+/** Everything the session guards need beyond the macro week itself. */
+export type SessionGuardParams = {
+  intensityAggressiveness: IntensityAggressiveness;
+  daysPerWeek: number;
+  preferredLongRunDay: number | null;
+  crossTrainingCount: number;
+};
+
 function appendDistanceHint(description: string | null | undefined, meters: number): string {
   const hint = `~${(meters / 1000).toFixed(1)} km`;
   return description ? `${description} — ${hint}` : hint;
 }
 
 /**
- * Deterministically finalize one week's sessions: repair dates into the week,
- * null every pace, cap at 7/week, then distribute the week's remaining volume
- * budget across the structureless (easy/long/recovery) fill runs so the week's
- * estimated distance tracks the macro target.
+ * Deterministically finalize one week's sessions. Order: repair dates into the
+ * week + null every pace → cap at 7/week → enforce the polarization quality cap
+ * (downgrade excess hard runs) → cap to the athlete's run-day count → pin the
+ * long run to the preferred day → space hard sessions off consecutive days →
+ * substitute easy runs with cross-training around an active injury → distribute
+ * the remaining volume budget across the structureless fill runs (cross-training
+ * sessions have null structure, so pace-nulling and this fill both apply to them
+ * unchanged). All shaping steps are pure; the node passes settings in `params`.
  */
 export function assembleWeekSessions(
   week: PlanMacroWeek,
   raw: GeneratedSession[],
+  params: SessionGuardParams,
 ): GeneratedSession[] {
   let sessions: GeneratedSession[] = raw.map((s) => ({
     ...s,
@@ -365,6 +611,13 @@ export function assembleWeekSessions(
   if (sessions.length > MAX_SESSIONS_PER_WEEK) {
     sessions = sessions.slice(0, MAX_SESSIONS_PER_WEEK);
   }
+
+  sessions = enforceQualityCount(sessions, week.phase, params.intensityAggressiveness);
+  sessions = enforceDaysPerWeek(sessions, params.daysPerWeek);
+  sessions = placeLongRun(sessions, week.startDate, params.preferredLongRunDay);
+  sessions = spaceHardSessions(sessions);
+  sessions = substituteCrossTraining(sessions, params.crossTrainingCount);
+  sessions.sort((a, b) => a.date.localeCompare(b.date));
 
   const structuredMeters = sessions.reduce(
     (n, s) => n + estimateStructureDistanceMeters(s.structure),
