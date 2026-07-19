@@ -6,10 +6,12 @@ import type { TGlobalEnv } from "../types/IRouters";
 export const SUGGEST_SESSION_QUOTA = "suggest-session";
 export const PARSE_INTERVALS_QUOTA = "parse-intervals";
 export const ANALYSIS_START_QUOTA = "analysis-start";
+export const PLAN_BUILDER_QUOTA = "plan-builder";
 
 export const SUGGEST_SESSION_DAILY_MAX = 100;
 export const PARSE_INTERVALS_DAILY_MAX = 100;
 export const ANALYSIS_START_DAILY_MAX = 1000;
+export const PLAN_BUILDER_DAILY_MAX = 40;
 
 interface QuotaEntry {
   day: string;

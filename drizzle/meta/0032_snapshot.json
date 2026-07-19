@@ -1,5 +1,5 @@
 {
-  "id": "385c4738-1dc9-43a8-887f-291653918717",
+  "id": "f5cfa493-3499-47e4-8b3e-117235b8c319",
   "prevId": "20b12cb2-47a7-4da1-9533-1b567b969ffb",
   "version": "7",
   "dialect": "postgresql",
@@ -1242,155 +1242,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.event_notes": {
-      "name": "event_notes",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "event_id": {
-          "name": "event_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "note": {
-          "name": "note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "source": {
-          "name": "source",
-          "type": "note_source",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "occurred_at": {
-          "name": "occurred_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "trend": {
-          "name": "trend",
-          "type": "note_trend",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "severity": {
-          "name": "severity",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "is_anchor": {
-          "name": "is_anchor",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "event_notes_event_occurred_idx": {
-          "name": "event_notes_event_occurred_idx",
-          "columns": [
-            {
-              "expression": "event_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "occurred_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "event_notes_anchor_idx": {
-          "name": "event_notes_anchor_idx",
-          "columns": [
-            {
-              "expression": "event_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"event_notes\".\"is_anchor\"",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "event_notes_event_id_events_id_fk": {
-          "name": "event_notes_event_id_events_id_fk",
-          "tableFrom": "event_notes",
-          "tableTo": "events",
-          "columnsFrom": [
-            "event_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "event_notes_user_id_users_id_fk": {
-          "name": "event_notes_user_id_users_id_fk",
-          "tableFrom": "event_notes",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.events": {
       "name": "events",
       "schema": "",
@@ -2307,6 +2158,615 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.planned_sessions": {
+      "name": "planned_sessions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "plan_id": {
+          "name": "plan_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "week_id": {
+          "name": "week_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "session_type": {
+          "name": "session_type",
+          "type": "training_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "structure": {
+          "name": "structure",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "planned_session_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'planned'"
+        },
+        "completed_activity_id": {
+          "name": "completed_activity_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "planned_sessions_plan_idx": {
+          "name": "planned_sessions_plan_idx",
+          "columns": [
+            {
+              "expression": "plan_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "planned_sessions_week_idx": {
+          "name": "planned_sessions_week_idx",
+          "columns": [
+            {
+              "expression": "week_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "planned_sessions_plan_date_idx": {
+          "name": "planned_sessions_plan_date_idx",
+          "columns": [
+            {
+              "expression": "plan_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "planned_sessions_completed_activity_idx": {
+          "name": "planned_sessions_completed_activity_idx",
+          "columns": [
+            {
+              "expression": "completed_activity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "planned_sessions_plan_id_training_plans_id_fk": {
+          "name": "planned_sessions_plan_id_training_plans_id_fk",
+          "tableFrom": "planned_sessions",
+          "tableTo": "training_plans",
+          "columnsFrom": [
+            "plan_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "planned_sessions_week_id_training_plan_weeks_id_fk": {
+          "name": "planned_sessions_week_id_training_plan_weeks_id_fk",
+          "tableFrom": "planned_sessions",
+          "tableTo": "training_plan_weeks",
+          "columnsFrom": [
+            "week_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "planned_sessions_completed_activity_id_activities_id_fk": {
+          "name": "planned_sessions_completed_activity_id_activities_id_fk",
+          "tableFrom": "planned_sessions",
+          "tableTo": "activities",
+          "columnsFrom": [
+            "completed_activity_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.race_events": {
+      "name": "race_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "distance_meters": {
+          "name": "distance_meters",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "target_time_seconds": {
+          "name": "target_time_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "priority": {
+          "name": "priority",
+          "type": "race_priority",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'B'"
+        },
+        "status": {
+          "name": "status",
+          "type": "race_event_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'upcoming'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "race_events_user_idx": {
+          "name": "race_events_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "race_events_user_date_idx": {
+          "name": "race_events_user_date_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "race_events_user_id_users_id_fk": {
+          "name": "race_events_user_id_users_id_fk",
+          "tableFrom": "race_events",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.training_plan_weeks": {
+      "name": "training_plan_weeks",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "plan_id": {
+          "name": "plan_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "week_index": {
+          "name": "week_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start_date": {
+          "name": "start_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phase": {
+          "name": "phase",
+          "type": "plan_week_phase",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_distance_meters": {
+          "name": "target_distance_meters",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_load": {
+          "name": "target_load",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "training_plan_weeks_plan_week_idx": {
+          "name": "training_plan_weeks_plan_week_idx",
+          "columns": [
+            {
+              "expression": "plan_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "week_index",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "training_plan_weeks_plan_idx": {
+          "name": "training_plan_weeks_plan_idx",
+          "columns": [
+            {
+              "expression": "plan_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "training_plan_weeks_plan_id_training_plans_id_fk": {
+          "name": "training_plan_weeks_plan_id_training_plans_id_fk",
+          "tableFrom": "training_plan_weeks",
+          "tableTo": "training_plans",
+          "columnsFrom": [
+            "plan_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.training_plans": {
+      "name": "training_plans",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "training_plan_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "start_date": {
+          "name": "start_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end_date": {
+          "name": "end_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "race_event_id": {
+          "name": "race_event_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "goal_text": {
+          "name": "goal_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "meta": {
+          "name": "meta",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "training_plans_user_idx": {
+          "name": "training_plans_user_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "training_plans_user_status_idx": {
+          "name": "training_plans_user_status_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "training_plans_user_id_users_id_fk": {
+          "name": "training_plans_user_id_users_id_fk",
+          "tableFrom": "training_plans",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "training_plans_race_event_id_race_events_id_fk": {
+          "name": "training_plans_race_event_id_race_events_id_fk",
+          "tableFrom": "training_plans",
+          "tableTo": "race_events",
+          "columnsFrom": [
+            "race_event_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.user_settings": {
       "name": "user_settings",
       "schema": "",
@@ -2344,6 +2804,14 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "pace_progression": {
+          "name": "pace_progression",
+          "type": "pace_progression",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'mild'"
         },
         "threshold_pace_mps": {
           "name": "threshold_pace_mps",
@@ -2678,29 +3146,60 @@
         "RECOVERY_INTERVALS"
       ]
     },
-    "public.note_source": {
-      "name": "note_source",
-      "schema": "public",
-      "values": [
-        "ai",
-        "user"
-      ]
-    },
-    "public.note_trend": {
-      "name": "note_trend",
-      "schema": "public",
-      "values": [
-        "improving",
-        "worsening",
-        "unchanged"
-      ]
-    },
     "public.oauth_provider": {
       "name": "oauth_provider",
       "schema": "public",
       "values": [
         "strava",
         "intervals"
+      ]
+    },
+    "public.pace_progression": {
+      "name": "pace_progression",
+      "schema": "public",
+      "values": [
+        "off",
+        "mild",
+        "aggressive"
+      ]
+    },
+    "public.plan_week_phase": {
+      "name": "plan_week_phase",
+      "schema": "public",
+      "values": [
+        "base",
+        "build",
+        "peak",
+        "taper",
+        "race"
+      ]
+    },
+    "public.planned_session_status": {
+      "name": "planned_session_status",
+      "schema": "public",
+      "values": [
+        "planned",
+        "completed",
+        "skipped",
+        "moved"
+      ]
+    },
+    "public.race_event_status": {
+      "name": "race_event_status",
+      "schema": "public",
+      "values": [
+        "upcoming",
+        "completed",
+        "cancelled"
+      ]
+    },
+    "public.race_priority": {
+      "name": "race_priority",
+      "schema": "public",
+      "values": [
+        "A",
+        "B",
+        "C"
       ]
     },
     "public.script_run_status_enum": {
@@ -2737,6 +3236,16 @@
         "LONG",
         "INTERVALS",
         "RACE"
+      ]
+    },
+    "public.training_plan_status": {
+      "name": "training_plan_status",
+      "schema": "public",
+      "values": [
+        "draft",
+        "active",
+        "completed",
+        "archived"
       ]
     },
     "public.training_type": {

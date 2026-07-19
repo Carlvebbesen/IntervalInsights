@@ -131,6 +131,26 @@ export function trainingLoadByWeek(db: Db, userId: string, sportTypes: string[],
     .orderBy(sql`DATE_TRUNC('week', ${activities.startDateLocal}) ASC`);
 }
 
+export function runWeeksWithTypeSince(db: Db, userId: string, runningTypes: string[], since: Date) {
+  return db
+    .select({
+      weekStart: sql<string>`DATE_TRUNC('week', ${activities.startDateLocal})::date`,
+      trainingType: activities.trainingType,
+      sessions: count(),
+      totalDistance: sum(activities.distance),
+    })
+    .from(activities)
+    .where(
+      and(
+        eq(activities.userId, userId),
+        inArray(activities.sportType, runningTypes),
+        gte(activities.startDateLocal, since),
+      ),
+    )
+    .groupBy(sql`DATE_TRUNC('week', ${activities.startDateLocal})`, activities.trainingType)
+    .orderBy(sql`DATE_TRUNC('week', ${activities.startDateLocal}) ASC`);
+}
+
 export function trainingTypeDistribution(db: Db, userId: string, from: Date, to: Date) {
   return db
     .select({

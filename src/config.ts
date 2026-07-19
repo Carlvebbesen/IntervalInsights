@@ -6,6 +6,7 @@ const envSchema = z
     CLERK_SECRET_KEY: z.string().min(1),
     CLERK_PUBLISHABLE_KEY: z.string().min(1),
     OPENAI_API_KEY: z.string().min(1),
+    PLAN_BUILDER_MODEL: z.string().min(1).optional(),
 
     TOKEN_ENC_KEY: z.string().min(32),
 
@@ -27,6 +28,7 @@ const envSchema = z
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
     LOG_LEVEL: z.string().optional(),
     PROGRESS_HEARTBEAT_MS: z.coerce.number().default(25000),
+    SSE_HEARTBEAT_MS: z.coerce.number().default(15000),
     BRAIN_DIR: z.string().optional(),
     MCP_ENFORCE_AUDIENCE: z
       .string()

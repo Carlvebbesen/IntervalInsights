@@ -13,6 +13,7 @@ import { segmentTools } from "./tools/segments";
 import { streamTools } from "./tools/streams";
 import { structureTools } from "./tools/structures";
 import { suggestTools } from "./tools/suggest";
+import { trainingPlanTools } from "./tools/training_plans";
 
 export const registry: CoachTool[] = [
   ...activityTools,
@@ -27,6 +28,7 @@ export const registry: CoachTool[] = [
   ...suggestTools,
   ...profileTools,
   ...brainTools,
+  ...trainingPlanTools,
 ];
 
 interface ParamDescriptor {
