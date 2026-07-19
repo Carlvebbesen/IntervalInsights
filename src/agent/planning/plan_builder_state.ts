@@ -1,4 +1,5 @@
 import { Annotation } from "@langchain/langgraph";
+import type { EventType, TrainingType } from "../../schema/enums";
 import type { GraphDb } from "../graph_state";
 import type { GeneratedWeekSessions, PlanMacro, PlanReviewAction } from "./plan_builder_schemas";
 
@@ -31,6 +32,34 @@ export type AthleteFitness = {
   rampRate: number | null;
 };
 
+export type AthletePredictedRace = {
+  distanceMeters: number;
+  timeSeconds: number;
+};
+
+export type AthleteRaceAbility = {
+  vdot: number | null;
+  criticalSpeedMps: number | null;
+  predicted: AthletePredictedRace[];
+};
+
+export type AthleteBaselineVolume = {
+  trailing4WeekAvgWeeklyMeters: number | null;
+  longestRunLast30dMeters: number | null;
+};
+
+export type ActiveHealthEvent = {
+  type: EventType;
+  bodyLocation: string | null;
+  description: string;
+  since: string;
+};
+
+export type WorkoutVocabulary = {
+  types: TrainingType[];
+  hasStructuredIntervalHistory: boolean;
+};
+
 export type AthleteContext = {
   athleteName: string | null;
   maxHeartRate: number | null;
@@ -38,6 +67,10 @@ export type AthleteContext = {
   race: AthleteRaceContext | null;
   recentWeeks: AthleteWeekSummary[];
   fitness: AthleteFitness | null;
+  raceAbility: AthleteRaceAbility | null;
+  baselineVolume: AthleteBaselineVolume | null;
+  activeHealthEvents: ActiveHealthEvent[];
+  workoutVocabulary: WorkoutVocabulary;
 };
 
 export type PlanBuilderConfigurable = {

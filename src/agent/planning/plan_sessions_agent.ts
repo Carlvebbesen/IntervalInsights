@@ -7,6 +7,26 @@ import {
 } from "./plan_builder_schemas";
 import type { AthleteContext } from "./plan_builder_state";
 
+function vocabularyBlock(context: AthleteContext): string {
+  const v = context.workoutVocabulary;
+  const types = v.types.length ? v.types.join(", ") : "no classified sessions on record";
+  const structured = v.hasStructuredIntervalHistory
+    ? "has structured-interval history"
+    : "NO structured-interval history — introduce intervals gradually and keep sessions simple";
+  return `  - Session types the athlete has actually done: ${types}\n  - Interval experience: ${structured}`;
+}
+
+function healthBlock(context: AthleteContext): string {
+  if (context.activeHealthEvents.length === 0) return "  - Active injuries/illnesses: none.";
+  const items = context.activeHealthEvents
+    .map((e) => {
+      const loc = e.bodyLocation ? ` (${e.bodyLocation})` : "";
+      return `    - ${e.type}${loc} since ${e.since}: ${e.description}`;
+    })
+    .join("\n");
+  return `  - ACTIVE injuries/illnesses (keep intensity conservative, avoid aggravating sessions):\n${items}`;
+}
+
 function weeksBlock(weeks: PlanMacroWeek[]): string {
   return weeks
     .map((w) => {
@@ -35,6 +55,10 @@ export async function invokeGenerateSessionsAgent(
   You are an expert running coach turning a macro plan into concrete weekly
   sessions for an athlete whose max HR is ${context.maxHeartRate ?? "unknown"}.
 
+  ### ATHLETE EXPERIENCE & HEALTH
+${vocabularyBlock(context)}
+${healthBlock(context)}
+
   ### MACRO PLAN
 ${weeksBlock(weeks)}
 ${feedbackBlock}
@@ -45,6 +69,12 @@ ${feedbackBlock}
   optional description, and an optional structure.
 
   ### RULES
+  - Match session complexity to the athlete's experience above. If they have NO
+    structured-interval history, prefer simpler sessions (strides, short fartlek)
+    and introduce rep workouts gradually rather than prescribing complex sets
+    early. Favour session types they have actually done.
+  - Keep intensity conservative around any ACTIVE injury/illness — avoid
+    sessions likely to aggravate the noted body location.
   - Cover each week's keySessions as structured quality sessions; fill the rest
     with EASY / LONG / RECOVERY runs to reach the weekly target. At most 7
     sessions per week.
