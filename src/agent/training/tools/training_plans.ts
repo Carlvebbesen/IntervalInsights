@@ -129,7 +129,7 @@ function assertNoDuplicateWeekIndex(weeks: z.infer<typeof planWeekInputSchema>[]
 const createTrainingPlan = defineTool({
   name: "create_training_plan",
   description:
-    "Create a training plan, optionally with nested weeks and planned sessions (including workout structure) in a single call. A week's weekIndex must be unique within the plan. Pass constraintsText to record the athlete's fixed scheduling/logistics preferences (e.g. a recurring Saturday club long run, no running Fridays).",
+    "Create a training plan, optionally with nested weeks and planned sessions (including workout structure) in a single call. A week's weekIndex must be unique within the plan. Pass constraintsText to record the athlete's fixed scheduling/logistics preferences (e.g. a recurring Saturday club long run, no running Fridays). Never include target paces — the plan stores intent, and any paces you send are stripped. The response may include a `warnings` array flagging weeks that breach the athlete's safe ramp, long-run spike, quality-session, run-day or weekly-volume limits; the plan is still saved. ALWAYS tell the athlete about any warnings in plain language and offer to fix the flagged week — never ignore them or hide them.",
   keywords: ["training plan", "create plan", "new plan", "training block", "plan a race"],
   requires: "db",
   params: z.object({
@@ -237,7 +237,8 @@ const deletePlanWeek = defineTool({
 
 const addPlannedSession = defineTool({
   name: "add_planned_session",
-  description: "Add a planned session to an existing week of a training plan.",
+  description:
+    "Add a planned session to an existing week of a training plan. Never include target paces — the plan stores intent, and any paces you send are stripped. The response may include a `warnings` array if the session pushes its week past the athlete's safe ramp, long-run spike, quality-session, run-day or weekly-volume limits; the session is still saved. ALWAYS surface any warnings to the athlete and offer to adjust — never ignore them.",
   keywords: ["planned session", "add session", "schedule workout", "training plan"],
   requires: "db",
   params: z.object({
@@ -259,7 +260,7 @@ const addPlannedSession = defineTool({
 const updatePlannedSession = defineTool({
   name: "update_planned_session",
   description:
-    "Edit a planned session. Providing weekId moves it to another week of the same plan.",
+    "Edit a planned session. Providing weekId moves it to another week of the same plan. Never include target paces — the plan stores intent, and any paces you send are stripped. The response may include a `warnings` array if the edit pushes the affected week past the athlete's safe ramp, long-run spike, quality-session, run-day or weekly-volume limits; the edit is still saved. ALWAYS surface any warnings to the athlete and offer to adjust — never ignore them.",
   keywords: ["planned session", "update session", "edit session", "move session", "training plan"],
   requires: "db",
   params: z.object({
@@ -330,7 +331,7 @@ const unlinkPlannedSession = defineTool({
 const applyPlanRevision = defineTool({
   name: "apply_plan_revision",
   description:
-    "Apply a set of previously-proposed changes to a training plan: move/update/drop a session, add a session, or update a week's targets. Every change is validated (plan ownership, every sessionId/weekId belongs to this plan) and applied atomically — an invalid reference rejects the whole batch, nothing partially applies. The revision (with optional rationale) is recorded in the plan's history. Per policy, ALWAYS call create_plan_revision FIRST to show the athlete the proposal, and only call this tool after the athlete has explicitly confirmed they want it applied — never apply a revision silently.",
+    "Apply a set of previously-proposed changes to a training plan: move/update/drop a session, add a session, or update a week's targets. Every change is validated (plan ownership, every sessionId/weekId belongs to this plan) and applied atomically — an invalid reference rejects the whole batch, nothing partially applies. The revision (with optional rationale) is recorded in the plan's history. Per policy, ALWAYS call create_plan_revision FIRST to show the athlete the proposal, and only call this tool after the athlete has explicitly confirmed they want it applied — never apply a revision silently. Never include target paces — the plan stores intent, and any paces you send are stripped. The response may include a `warnings` array flagging weeks the revision leaves past the athlete's safe ramp, long-run spike, quality-session, run-day or weekly-volume limits; the revision is still applied. ALWAYS report any warnings back to the athlete and offer to adjust — never ignore them.",
   keywords: [
     "training plan",
     "apply revision",
