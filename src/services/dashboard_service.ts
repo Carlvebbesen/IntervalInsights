@@ -8,6 +8,8 @@ import { ellipticalTimeToMetres, isTimeBased, toISODate } from "./utils";
 
 type Db = IGlobalBindings["db"];
 
+const GRAPH_WEEKS = 16;
+
 function getStartOfWeek(date: Date): Date {
   const d = new Date(date);
   const day = d.getUTCDay();
@@ -31,8 +33,8 @@ export async function getDashboard(
   const fourteenDaysAgo = new Date(now);
   fourteenDaysAgo.setUTCDate(fourteenDaysAgo.getUTCDate() - 14);
 
-  const eightWeeksAgo = new Date(startOfThisWeek);
-  eightWeeksAgo.setUTCDate(eightWeeksAgo.getUTCDate() - 7 * 8);
+  const graphWindowStart = new Date(startOfThisWeek);
+  graphWindowStart.setUTCDate(graphWindowStart.getUTCDate() - 7 * (GRAPH_WEEKS - 1));
   const msInDay = 24 * 60 * 60 * 1000;
   const utcDay = now.getUTCDay();
   const dayOfWeek = utcDay === 0 ? 6 : utcDay - 1;
@@ -98,7 +100,7 @@ export async function getDashboard(
     db,
     userId,
     runningTypes,
-    eightWeeksAgo,
+    graphWindowStart,
   );
 
   const otherTypes = [...OTHER_SPORT_TYPES];
@@ -106,11 +108,11 @@ export async function getDashboard(
     db,
     userId,
     otherTypes,
-    eightWeeksAgo,
+    graphWindowStart,
   );
 
   const graphData = [];
-  for (let i = 8; i >= 0; i--) {
+  for (let i = GRAPH_WEEKS - 1; i >= 0; i--) {
     const weekStart = new Date(startOfThisWeek);
     weekStart.setUTCDate(weekStart.getUTCDate() - 7 * i);
     const dateStr = toISODate(weekStart);
@@ -137,12 +139,11 @@ export async function getDashboard(
     db,
     userId,
     runningTypes,
-    eightWeeksAgo,
+    graphWindowStart,
   );
 
-  const numWeeks = 9;
-  const avgSessionsPerWeek = (longTermStats.totalSessions || 0) / numWeeks;
-  const avgIntervalsPerWeek = (Number(longTermStats.totalIntervals) || 0) / numWeeks;
+  const avgSessionsPerWeek = (longTermStats.totalSessions || 0) / GRAPH_WEEKS;
+  const avgIntervalsPerWeek = (Number(longTermStats.totalIntervals) || 0) / GRAPH_WEEKS;
   const avgElevationPerRun = Number(longTermStats.avgElevationPerRun) || null;
   const avgDistancePerRunKm = longTermStats.avgDistancePerRun
     ? (Number(longTermStats.avgDistancePerRun) || 0) / 1000
