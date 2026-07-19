@@ -82,6 +82,22 @@ export interface TrainingPlanDetail {
   sessions: PlannedSessionDao[];
 }
 
+/**
+ * The plan's `meta` blob, which `trainingPlanColumns` deliberately omits so it
+ * never leaks into a DTO. Only the guard-context loader needs it.
+ */
+export async function findMetaForUser(
+  db: Db,
+  userId: string,
+  id: number,
+): Promise<Record<string, unknown> | undefined> {
+  const [row] = await db
+    .select({ meta: trainingPlans.meta })
+    .from(trainingPlans)
+    .where(and(eq(trainingPlans.id, id), eq(trainingPlans.userId, userId)));
+  return row?.meta;
+}
+
 export async function findByIdForUser(
   db: Db,
   userId: string,
