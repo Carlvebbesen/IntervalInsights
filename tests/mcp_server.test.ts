@@ -65,6 +65,9 @@ describe("selectMcpTools", () => {
     expect(names).toContain("list_training_plans");
     expect(names).toContain("create_training_plan");
     expect(names).toContain("link_planned_session");
+    expect(names).toContain("add_plan_week");
+    expect(names).toContain("update_plan_week");
+    expect(names).toContain("delete_plan_week");
   });
 });
 
@@ -79,6 +82,9 @@ describe("training plan tools in the registry", () => {
     "create_training_plan",
     "update_training_plan",
     "delete_training_plan",
+    "add_plan_week",
+    "update_plan_week",
+    "delete_plan_week",
     "add_planned_session",
     "update_planned_session",
     "delete_planned_session",
@@ -127,5 +133,65 @@ describe("read-only tool execution over MCP context", () => {
       stravaConnected: false,
       intervalsConnected: false,
     });
+  });
+});
+
+describe("plan week tools over MCP context", () => {
+  let other: { id: string; clerkId: string };
+
+  beforeAll(async () => {
+    other = await createTestUser({ role: "premium" });
+  });
+
+  afterAll(async () => {
+    await deleteTestUser(other.id);
+  });
+
+  it("adds, updates, and deletes a week, scoped to the plan owner", async () => {
+    const created = await runTool(
+      "create_training_plan",
+      {
+        name: "Week Tool Plan",
+        startDate: "2026-04-06",
+        endDate: "2026-04-19",
+        constraintsText: "Long run Saturdays",
+      },
+      ctxFor(),
+    );
+    expect(created.error).toBeUndefined();
+    const planId = (created.data as { id: number }).id;
+    expect((created.data as { constraintsText: string }).constraintsText).toBe("Long run Saturdays");
+
+    const added = await runTool(
+      "add_plan_week",
+      { planId, weekIndex: 0, startDate: "2026-04-06", phase: "base", notes: "opener" },
+      ctxFor(),
+    );
+    expect(added.error).toBeUndefined();
+    const weekId = (added.data as { id: number }).id;
+
+    const updated = await runTool(
+      "update_plan_week",
+      { planId, weekId, notes: "revised", targetDistanceMeters: 40000 },
+      ctxFor(),
+    );
+    expect(updated.error).toBeUndefined();
+    expect((updated.data as { notes: string }).notes).toBe("revised");
+    expect((updated.data as { targetDistanceMeters: number }).targetDistanceMeters).toBe(40000);
+
+    // Another user cannot touch this plan's weeks.
+    const foreignCtx = ctxFor({ userId: other.id, clerkUserId: other.clerkId });
+    const foreignAdd = await runTool(
+      "add_plan_week",
+      { planId, weekIndex: 1, startDate: "2026-04-13" },
+      foreignCtx,
+    );
+    expect(foreignAdd.error).toBeDefined();
+    const foreignDelete = await runTool("delete_plan_week", { planId, weekId }, foreignCtx);
+    expect(foreignDelete.error).toBeDefined();
+
+    const deleted = await runTool("delete_plan_week", { planId, weekId }, ctxFor());
+    expect(deleted.error).toBeUndefined();
+    expect((deleted.data as { success: boolean }).success).toBe(true);
   });
 });

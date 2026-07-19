@@ -60,6 +60,7 @@ export const trainingPlans = pgTable(
       onDelete: "set null",
     }),
     goalText: text("goal_text"),
+    constraintsText: text("constraints_text"),
     meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),

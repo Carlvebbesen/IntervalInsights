@@ -6,6 +6,7 @@ import {
   type PlanMacroWeek,
 } from "./plan_builder_schemas";
 import type { AthleteContext } from "./plan_builder_state";
+import { constraintsBlock } from "./plan_macro_agent";
 
 function vocabularyBlock(context: AthleteContext): string {
   const v = context.workoutVocabulary;
@@ -45,6 +46,7 @@ export async function invokeGenerateSessionsAgent(
   context: AthleteContext,
   weeks: PlanMacroWeek[],
   feedback: string[],
+  constraintsText?: string | null,
   model: ChatOpenAI = getPlanBuilderModel(),
 ): Promise<GenerateSessionsOutput | null> {
   const feedbackBlock = feedback.length
@@ -61,6 +63,7 @@ ${healthBlock(context)}
 
   ### MACRO PLAN
 ${weeksBlock(weeks)}
+${constraintsBlock(constraintsText)}
 ${feedbackBlock}
 
   ### TASK

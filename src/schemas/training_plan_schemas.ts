@@ -66,6 +66,7 @@ export const TrainingPlanSchema = z
     endDate: z.string(),
     raceEventId: z.number().nullable(),
     goalText: z.string().nullable(),
+    constraintsText: z.string().nullable(),
     createdAt: z.string(),
     updatedAt: z.string(),
   })

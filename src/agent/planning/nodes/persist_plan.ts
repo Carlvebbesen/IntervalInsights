@@ -47,6 +47,7 @@ export async function persistPlan(
     endDate: state.input.endDate,
     raceEventId: state.input.raceEventId ?? null,
     goalText: state.input.goalText ?? null,
+    constraintsText: state.input.constraintsText ?? null,
     status: "active",
     meta: {
       createdVia: "plan_builder",

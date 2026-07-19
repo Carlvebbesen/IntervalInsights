@@ -47,6 +47,7 @@ export function toTrainingPlanDto(dao: TrainingPlanDao): TrainingPlanDto {
     endDate: dao.endDate,
     raceEventId: dao.raceEventId,
     goalText: dao.goalText,
+    constraintsText: dao.constraintsText,
     createdAt: dao.createdAt.toISOString(),
     updatedAt: dao.updatedAt.toISOString(),
   };

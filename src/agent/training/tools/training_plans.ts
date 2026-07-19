@@ -19,7 +19,7 @@ import { defineTool } from "../tool_types";
 const listTrainingPlans = defineTool({
   name: "list_training_plans",
   description:
-    "List the user's training plans (draft, active, completed, or archived), newest first.",
+    "List the user's training plans (draft, active, completed, or archived), newest first, each with its goal and scheduling constraints.",
   keywords: ["training plan", "plan", "training block", "race prep", "schedule"],
   requires: "db",
   params: z.object({
@@ -32,7 +32,7 @@ const listTrainingPlans = defineTool({
 const getTrainingPlan = defineTool({
   name: "get_training_plan",
   description:
-    "Get a training plan's full detail: every week and planned session, including which ones are completed, skipped, or already linked to an activity.",
+    "Get a training plan's full detail: its goal and scheduling constraints, every week and planned session, including which ones are completed, skipped, or already linked to an activity.",
   keywords: ["training plan", "plan detail", "weeks", "sessions", "schedule"],
   requires: "db",
   params: z.object({ planId: z.number().int().positive() }),
@@ -129,7 +129,7 @@ function assertNoDuplicateWeekIndex(weeks: z.infer<typeof planWeekInputSchema>[]
 const createTrainingPlan = defineTool({
   name: "create_training_plan",
   description:
-    "Create a training plan, optionally with nested weeks and planned sessions (including workout structure) in a single call. A week's weekIndex must be unique within the plan.",
+    "Create a training plan, optionally with nested weeks and planned sessions (including workout structure) in a single call. A week's weekIndex must be unique within the plan. Pass constraintsText to record the athlete's fixed scheduling/logistics preferences (e.g. a recurring Saturday club long run, no running Fridays).",
   keywords: ["training plan", "create plan", "new plan", "training block", "plan a race"],
   requires: "db",
   params: z.object({
@@ -138,6 +138,7 @@ const createTrainingPlan = defineTool({
     endDate: z.string().date(),
     raceEventId: z.number().int().positive().optional(),
     goalText: z.string().min(1).optional(),
+    constraintsText: z.string().min(1).optional(),
     status: z.enum(trainingPlanStatusEnum.enumValues).optional(),
     weeks: z.array(planWeekInputSchema).optional(),
   }),
@@ -149,7 +150,8 @@ const createTrainingPlan = defineTool({
 
 const updateTrainingPlan = defineTool({
   name: "update_training_plan",
-  description: "Edit a training plan's top-level fields: name, status, dates, race link, or goal.",
+  description:
+    "Edit a training plan's top-level fields: name, status, dates, race link, goal, or scheduling constraints (free-text recurring commitments / unavailable days).",
   keywords: ["training plan", "update plan", "edit plan"],
   requires: "db",
   params: z.object({
@@ -160,6 +162,7 @@ const updateTrainingPlan = defineTool({
     endDate: z.string().date().optional(),
     raceEventId: z.number().int().positive().nullable().optional(),
     goalText: z.string().min(1).nullable().optional(),
+    constraintsText: z.string().min(1).nullable().optional(),
   }),
   handler: (ctx, args) => {
     const { planId, ...patch } = args;
@@ -175,6 +178,61 @@ const deleteTrainingPlan = defineTool({
   params: z.object({ planId: z.number().int().positive() }),
   handler: (ctx, args) =>
     trainingPlanController.deleteTrainingPlan(ctx.db, ctx.userId, args.planId),
+});
+
+const addPlanWeek = defineTool({
+  name: "add_plan_week",
+  description: "Add a week to an existing training plan. weekIndex must be unique within the plan.",
+  keywords: ["training plan", "add week", "plan week", "schedule week"],
+  requires: "db",
+  params: z.object({
+    planId: z.number().int().positive(),
+    weekIndex: z.number().int().nonnegative(),
+    startDate: z.string().date(),
+    phase: z.enum(planWeekPhaseEnum.enumValues).optional(),
+    targetDistanceMeters: z.number().int().positive().optional(),
+    targetLoad: z.number().int().positive().optional(),
+    notes: z.string().min(1).optional(),
+  }),
+  handler: (ctx, args) => {
+    const { planId, ...input } = args;
+    return trainingPlanController.addWeek(ctx.db, ctx.userId, planId, input);
+  },
+});
+
+const updatePlanWeek = defineTool({
+  name: "update_plan_week",
+  description:
+    "Edit a week belonging to a training plan: its index, start date, phase, targets, or notes.",
+  keywords: ["training plan", "update week", "edit week", "plan week"],
+  requires: "db",
+  params: z.object({
+    planId: z.number().int().positive(),
+    weekId: z.number().int().positive(),
+    weekIndex: z.number().int().nonnegative().optional(),
+    startDate: z.string().date().optional(),
+    phase: z.enum(planWeekPhaseEnum.enumValues).nullable().optional(),
+    targetDistanceMeters: z.number().int().positive().nullable().optional(),
+    targetLoad: z.number().int().positive().nullable().optional(),
+    notes: z.string().min(1).nullable().optional(),
+  }),
+  handler: (ctx, args) => {
+    const { planId, weekId, ...patch } = args;
+    return trainingPlanController.updateWeek(ctx.db, ctx.userId, planId, weekId, patch);
+  },
+});
+
+const deletePlanWeek = defineTool({
+  name: "delete_plan_week",
+  description: "Delete a week from a training plan. Cascades to its planned sessions.",
+  keywords: ["training plan", "delete week", "remove week", "plan week"],
+  requires: "db",
+  params: z.object({
+    planId: z.number().int().positive(),
+    weekId: z.number().int().positive(),
+  }),
+  handler: (ctx, args) =>
+    trainingPlanController.deleteWeek(ctx.db, ctx.userId, args.planId, args.weekId),
 });
 
 const addPlannedSession = defineTool({
@@ -308,6 +366,9 @@ export const trainingPlanTools = [
   createTrainingPlan,
   updateTrainingPlan,
   deleteTrainingPlan,
+  addPlanWeek,
+  updatePlanWeek,
+  deletePlanWeek,
   addPlannedSession,
   updatePlannedSession,
   deletePlannedSession,

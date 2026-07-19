@@ -31,6 +31,7 @@ export const trainingPlanColumns = {
   endDate: trainingPlans.endDate,
   raceEventId: trainingPlans.raceEventId,
   goalText: trainingPlans.goalText,
+  constraintsText: trainingPlans.constraintsText,
   createdAt: trainingPlans.createdAt,
   updatedAt: trainingPlans.updatedAt,
 } as const;
@@ -211,6 +212,7 @@ export interface CreateTrainingPlanInput {
   endDate: string;
   raceEventId?: number | null;
   goalText?: string | null;
+  constraintsText?: string | null;
   status?: TrainingPlanStatus;
   meta?: Record<string, unknown>;
   weeks?: CreateWeekInput[];
@@ -231,6 +233,7 @@ export async function createWithChildren(
         endDate: input.endDate,
         raceEventId: input.raceEventId ?? null,
         goalText: input.goalText ?? null,
+        constraintsText: input.constraintsText ?? null,
         status: input.status ?? "draft",
         meta: input.meta ?? {},
       })

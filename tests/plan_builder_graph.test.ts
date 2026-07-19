@@ -58,6 +58,7 @@ describe("plan-builder graph — guided creation flow (end-to-end)", () => {
     startDate: "2026-01-05",
     endDate: "2026-01-25",
     goalText: "sub-20 5k",
+    constraintsText: "Club long run every Saturday; no running Fridays",
   };
 
   const config = () => ({
@@ -141,6 +142,7 @@ describe("plan-builder graph — guided creation flow (end-to-end)", () => {
     const db = getDb();
     const detail = await getWithDetailForUser(db, userId, planId);
     expect(detail?.plan.status).toBe("active");
+    expect(detail?.plan.constraintsText).toBe("Club long run every Saturday; no running Fridays");
     expect(detail?.weeks).toHaveLength(3);
     expect(detail?.sessions.length).toBeGreaterThan(0);
 

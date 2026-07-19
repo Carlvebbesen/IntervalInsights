@@ -80,6 +80,7 @@ export interface CreateTrainingPlanInput {
   endDate: string;
   raceEventId?: number | null;
   goalText?: string | null;
+  constraintsText?: string | null;
   status?: TrainingPlanStatus;
   weeks?: CreateWeekInput[];
 }
@@ -115,6 +116,7 @@ export interface UpdateTrainingPlanInput {
   endDate?: string;
   raceEventId?: number | null;
   goalText?: string | null;
+  constraintsText?: string | null;
 }
 
 export async function updateTrainingPlan(
@@ -147,6 +149,7 @@ export async function updateTrainingPlan(
   if (patch.endDate !== undefined) updates.endDate = patch.endDate;
   if (patch.raceEventId !== undefined) updates.raceEventId = patch.raceEventId;
   if (patch.goalText !== undefined) updates.goalText = patch.goalText;
+  if (patch.constraintsText !== undefined) updates.constraintsText = patch.constraintsText;
 
   const updated = await planRepo.updateForUser(db, userId, id, updates);
   if (!updated) throw new AppError(404, "Training plan not found or unauthorized");

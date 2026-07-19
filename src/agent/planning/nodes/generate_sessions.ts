@@ -48,7 +48,7 @@ export async function generateSessions(
   for (let i = 0; i < totalWeeks; i += SESSION_BATCH_WEEKS) {
     const batch = macro.weeks.slice(i, i + SESSION_BATCH_WEEKS);
     const raw = await invokeWithRateLimitRetry(() =>
-      invokeGenerateSessionsAgent(ctx, batch, state.sessionsFeedback),
+      invokeGenerateSessionsAgent(ctx, batch, state.sessionsFeedback, state.input.constraintsText),
     );
     for (const week of batch) {
       const llmWeek = raw?.weeks.find((w) => w.weekIndex === week.weekIndex);

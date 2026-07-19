@@ -78,6 +78,24 @@ ${healthBlock(ctx)}
 ${weeks || "  - no recent runs on record"}`;
 }
 
+// Soft LLM guidance rendered from the user's free-text scheduling/preferences
+// constraint. Deterministic guards still run after generation; where a constraint
+// conflicts with an explicit structured input (e.g. a "long run Saturday"
+// constraint vs a `preferredLongRunDay` input), the structured input wins because
+// assembleWeekSessions re-places the long run deterministically after the LLM.
+export function constraintsBlock(constraintsText: string | null | undefined): string {
+  const text = constraintsText?.trim();
+  if (!text) return "";
+  return `
+  ### SCHEDULING CONSTRAINTS (respect these)
+  The athlete stated these fixed scheduling / logistics preferences — honor them:
+  "${text}"
+  - Place fixed recurring sessions on the stated days (e.g. a club long run on
+    Saturday, a track/group intervals session on Wednesday evening).
+  - Do NOT schedule sessions on days the athlete says they are unavailable.
+  - Otherwise honor the stated logistics as closely as the training goals allow.`;
+}
+
 function raceBlock(ctx: AthleteContext): string {
   if (!ctx.race) return "  - No target race — build general fitness toward the goal.";
   const r = ctx.race;
@@ -106,6 +124,7 @@ export async function invokeProposeMacroAgent(
   - End: ${input.endDate}
   - Goal: ${input.goalText ?? "(none stated)"}
 ${raceBlock(context)}
+${constraintsBlock(input.constraintsText)}
 
   ### ATHLETE CONTEXT
 ${athleteContextBlock(context)}

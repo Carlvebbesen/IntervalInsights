@@ -94,6 +94,7 @@ const createTrainingPlanSchema = z
     endDate: z.string().date(),
     raceEventId: z.number().int().positive().optional(),
     goalText: z.string().min(1).optional(),
+    constraintsText: z.string().min(1).optional(),
     status: z.enum(trainingPlanStatusEnum.enumValues).optional(),
     weeks: z.array(createWeekSchema).optional(),
   })
@@ -154,6 +155,7 @@ const generatePlanSchema = z
     startDate: z.string().date(),
     endDate: z.string().date(),
     goalText: z.string().max(2000).optional(),
+    constraintsText: z.string().max(2000).optional(),
     volumeAggressiveness: z.enum(VOLUME_AGGRESSIVENESS).default(DEFAULT_VOLUME_AGGRESSIVENESS),
     intensityAggressiveness: z
       .enum(INTENSITY_AGGRESSIVENESS)
@@ -282,6 +284,7 @@ const updateTrainingPlanSchema = z
     endDate: z.string().date().optional(),
     raceEventId: z.number().int().positive().nullable().optional(),
     goalText: z.string().min(1).nullable().optional(),
+    constraintsText: z.string().min(1).nullable().optional(),
   })
   .refine(atLeastOneField, { message: "At least one field must be provided" });
 

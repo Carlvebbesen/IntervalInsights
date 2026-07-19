@@ -131,6 +131,61 @@ describe("/api/v1/training-plans", () => {
     expect(detail.weeks[1].weekIndex).toBe(1);
   });
 
+  it("round-trips constraintsText through create, GET detail, and PATCH", async () => {
+    const created = await withIdentity(identityA(), async () => {
+      const res = await app.fetch(
+        new Request("http://test/api/v1/training-plans", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Constrained Block",
+            startDate: "2026-03-02",
+            endDate: "2026-03-15",
+            constraintsText: "Club long run every Saturday; no running Fridays",
+          }),
+        }),
+      );
+      expect(res.status).toBe(201);
+      return res.json();
+    });
+    expect(created.constraintsText).toBe("Club long run every Saturday; no running Fridays");
+
+    const detail = await withIdentity(identityA(), async () => {
+      const res = await app.fetch(
+        new Request(`http://test/api/v1/training-plans/${created.id}`),
+      );
+      expect(res.status).toBe(200);
+      return res.json();
+    });
+    expect(detail.constraintsText).toBe("Club long run every Saturday; no running Fridays");
+
+    const patched = await withIdentity(identityA(), async () => {
+      const res = await app.fetch(
+        new Request(`http://test/api/v1/training-plans/${created.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ constraintsText: "Track group Wednesday evenings" }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      return res.json();
+    });
+    expect(patched.constraintsText).toBe("Track group Wednesday evenings");
+
+    const cleared = await withIdentity(identityA(), async () => {
+      const res = await app.fetch(
+        new Request(`http://test/api/v1/training-plans/${created.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ constraintsText: null }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      return res.json();
+    });
+    expect(cleared.constraintsText).toBe(null);
+  });
+
   it("PATCH /:id/sessions/:sessionId moves a session to another week, updating date and status", async () => {
     const created = await createPlanWithChildren(identityA());
     const week0 = created.weeks[0];
