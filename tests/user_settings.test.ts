@@ -32,6 +32,7 @@ describe("/api/v1/user settings", () => {
           analysisReviewMode: "all",
           maxHeartRate: null,
           processHeartRate: false,
+          paceProgression: "mild",
           thresholdPaceMps: null,
           lthr: null,
           restingHr: null,
@@ -59,6 +60,7 @@ describe("/api/v1/user settings", () => {
           analysisReviewMode: "intervals_only",
           maxHeartRate: null,
           processHeartRate: false,
+          paceProgression: "mild",
           thresholdPaceMps: null,
           lthr: null,
           restingHr: null,
@@ -78,6 +80,33 @@ describe("/api/v1/user settings", () => {
         expect(secondBody.waitForStravaUpdate).toBe(false);
         // Unrelated field set by the first PATCH must survive untouched.
         expect(secondBody.analysisReviewMode).toBe("intervals_only");
+      }),
+    ));
+
+  it("PATCH /api/v1/user/settings persists paceProgression and rejects an invalid value", () =>
+    withFreshUser((user) =>
+      withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+        const set = await app.fetch(
+          new Request("http://test/api/v1/user/settings", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ paceProgression: "aggressive" }),
+          }),
+        );
+        expect(set.status).toBe(200);
+        expect(await set.json()).toMatchObject({ paceProgression: "aggressive" });
+
+        const settingsRow = await getOrCreateUserSettings(getDb(), user.id);
+        expect(settingsRow.paceProgression).toBe("aggressive");
+
+        const bad = await app.fetch(
+          new Request("http://test/api/v1/user/settings", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ paceProgression: "turbo" }),
+          }),
+        );
+        expect(bad.status).toBe(400);
       }),
     ));
 

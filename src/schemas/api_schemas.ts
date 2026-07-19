@@ -7,4 +7,6 @@ export * from "./dashboard_schemas";
 export * from "./event_schemas";
 export * from "./gear_schemas";
 export * from "./intervals_schemas";
+export * from "./race_event_schemas";
+export * from "./training_plan_schemas";
 export * from "./user_schemas";

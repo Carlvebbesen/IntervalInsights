@@ -6,6 +6,7 @@ import { awaitUserInput } from "./nodes/await_user_input";
 import { detectEvents } from "./nodes/detect_events";
 import { maybeEnrichWithIntervalsIcu } from "./nodes/enrich_intervals_icu";
 import { fetchActivityContext } from "./nodes/fetch_activity_context";
+import { matchPlannedSession } from "./nodes/match_planned_session";
 import { persistResults } from "./nodes/persist_results";
 import { proposeSegments } from "./nodes/propose_segments";
 import { runCompleteAnalysis } from "./nodes/run_complete_analysis";
@@ -45,6 +46,7 @@ const workflow = new StateGraph(AnalysisStateAnnotation)
   .addNode("runCompleteAnalysis", runCompleteAnalysis)
   .addNode("validateSignature", validateSignature)
   .addNode("persistResults", persistResults)
+  .addNode("matchPlannedSession", matchPlannedSession)
   .addNode("detectEvents", detectEvents)
   .addEdge(START, "fetchActivityContext")
   .addEdge("fetchActivityContext", "maybeEnrichWithIntervalsIcu")
@@ -54,7 +56,8 @@ const workflow = new StateGraph(AnalysisStateAnnotation)
   .addEdge("awaitUserInput", "runCompleteAnalysis")
   .addEdge("runCompleteAnalysis", "validateSignature")
   .addEdge("validateSignature", "persistResults")
-  .addEdge("persistResults", "detectEvents")
+  .addEdge("persistResults", "matchPlannedSession")
+  .addEdge("matchPlannedSession", "detectEvents")
   .addEdge("detectEvents", END);
 
 let _compiledGraphPromise: Promise<ReturnType<typeof workflow.compile>> | null = null;

@@ -36,9 +36,14 @@ import {
   generateIntervalSignature,
   mapSetsToIntervalComponent,
 } from "../src/services/interval_structure_service";
-import { getProposedPaceForStructure, getProposedPaceFromLaps } from "../src/services/pace_service";
-import { activities, intervalSegments, intervalStructures } from "../src/schema";
-import type { ExpandedIntervalSet } from "../src/types/ExpandedIntervalSet";
+import {
+  applyPaceProgression,
+  getProposedPaceForStructure,
+  getProposedPaceFromLaps,
+} from "../src/services/pace_service";
+import { activities, intervalSegments, intervalStructures, userSettings } from "../src/schema";
+import { toWorkoutStructure } from "../src/services/workout_structure_format";
+import type { ExpandedIntervalSet, ExpandedIntervalStep } from "../src/types/ExpandedIntervalSet";
 import type { Lap } from "../src/types/strava/IDetailedActivity";
 import { closePool, createTestUser, deleteTestUser, getDb } from "./helpers/db";
 
@@ -156,6 +161,12 @@ function flatPaces(sets: ExpandedIntervalSet[]): (number | null)[] {
 // globally unique.
 async function freshUser() {
   const u = await createTestUser();
+  // These history tests validate interpolatePaces in isolation; pin the
+  // deterministic progression layer off so it doesn't perturb the assertions.
+  await getDb()
+    .insert(userSettings)
+    .values({ userId: u.id, paceProgression: "off" })
+    .onConflictDoUpdate({ target: userSettings.userId, set: { paceProgression: "off" } });
   return u;
 }
 
@@ -172,7 +183,7 @@ suite("getProposedPaceForStructure (history) — bug surface", () => {
         { set_reps: 1, steps: [{ reps: 3, work_type: "DISTANCE", work_value: 1000 }] },
       ];
       // No structure / activities seeded for this user → empty history.
-      const out = await getProposedPaceForStructure(getDb(), user.id, user.clerkId, sets);
+      const out = await getProposedPaceForStructure(getDb(), user.id, sets);
       expect(out).toHaveLength(1);
       expect(out[0].steps).toHaveLength(3);
       expect(flatPaces(out)).toEqual([null, null, null]);
@@ -200,7 +211,7 @@ suite("getProposedPaceForStructure (history) — bug surface", () => {
           targetPace: null,
         },
       ]);
-      const out = await getProposedPaceForStructure(getDb(), user.id, user.clerkId, sets);
+      const out = await getProposedPaceForStructure(getDb(), user.id, sets);
       // 4.0 m/s. A min/km bug would yield ~4.16 (250s/km → 4:10) or 0.24, etc.
       expect(out[0].steps[0].target_pace).toBeCloseTo(4.0, 6);
       // A plausible-but-wrong min/km value must NOT appear.
@@ -228,7 +239,7 @@ suite("getProposedPaceForStructure (history) — bug surface", () => {
           targetPace: 3.33,
         },
       ]);
-      const out = await getProposedPaceForStructure(getDb(), user.id, user.clerkId, sets);
+      const out = await getProposedPaceForStructure(getDb(), user.id, sets);
       expect(out[0].steps[0].target_pace).toBeCloseTo(3.33, 6);
     } finally {
       await deleteTestUser(user.id);
@@ -264,7 +275,7 @@ suite("getProposedPaceForStructure (history) — bug surface", () => {
           targetPace: null,
         },
       ]);
-      const out = await getProposedPaceForStructure(getDb(), user.id, user.clerkId, sets);
+      const out = await getProposedPaceForStructure(getDb(), user.id, sets);
       const pace = out[0].steps[0].target_pace;
       expect(pace).toBeCloseTo(4.0, 6);
       expect(pace).not.toBeCloseTo(2.0, 2);
@@ -313,7 +324,7 @@ suite("getProposedPaceForStructure (history) — bug surface", () => {
         },
       ]);
 
-      const out = await getProposedPaceForStructure(getDb(), user.id, user.clerkId, sets);
+      const out = await getProposedPaceForStructure(getDb(), user.id, sets);
       const [p0, p1] = out[0].steps;
       // FIXED: both identical reps match the same pool; the recent activity (5.0)
       // is preferred over the stale one (2.5), so both reps propose 5.0 — identical.
@@ -361,7 +372,7 @@ suite("getProposedPaceForStructure (history) — bug surface", () => {
           targetPace: 3.0,
         },
       ]);
-      const out = await getProposedPaceForStructure(getDb(), user.id, user.clerkId, sets);
+      const out = await getProposedPaceForStructure(getDb(), user.id, sets);
       const pace = out[0].steps[0].target_pace;
       // FIXED: unit-aware tolerance (max(5s, 5%)) aligns 91s to the 90s target,
       // so the step uses the 91s rep's own pace (5.0), not the blended fallback.
@@ -398,7 +409,7 @@ suite("getProposedPaceForStructure (history) — bug surface", () => {
           targetPace: 3.0,
         },
       ]);
-      const out = await getProposedPaceForStructure(getDb(), user.id, user.clerkId, sets);
+      const out = await getProposedPaceForStructure(getDb(), user.id, sets);
       // Exact match → recent+aligned → uses the rep's own pace 5.0, not avg 4.0.
       expect(out[0].steps[0].target_pace).toBeCloseTo(5.0, 6);
     } finally {
@@ -435,7 +446,7 @@ suite("getProposedPaceForStructure (history) — bug surface", () => {
           targetPace: 3.0,
         },
       ]);
-      const out = await getProposedPaceForStructure(getDb(), user.id, user.clerkId, sets);
+      const out = await getProposedPaceForStructure(getDb(), user.id, sets);
       const pace = out[0].steps[0].target_pace;
       // FIXED: a TIME step with only DISTANCE history has no same-type match, so
       // it proposes null instead of bleeding distance-derived pace into a time rep.
@@ -549,5 +560,182 @@ suite("getProposedPaceFromLaps (lap-based) — bug 7 surface", () => {
     expect(result[0].set_recovery).toBe(180);
     expect(result[1].set_recovery).toBe(120);
     expect(flatPaces(result)).toEqual([5.0, 4.9]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  applyPaceProgression (deterministic negative-split curve) — pure unit
+// ─────────────────────────────────────────────────────────────────────────────
+
+function wstep(
+  work_value: number,
+  target_pace: number | null,
+  work_type: "DISTANCE" | "TIME" = "DISTANCE",
+): ExpandedIntervalStep {
+  return { work_type, work_value, recovery_type: null, recovery_value: null, target_pace };
+}
+
+const secPerKmOf = (steps: ExpandedIntervalStep[]): number[] =>
+  steps.map((s) => 1000 / (s.target_pace as number));
+
+const mps240 = 1000 / 240; // 240 s/km, a clean anchor
+
+suite("applyPaceProgression (deterministic negative-split)", () => {
+  it("off returns the input unchanged (same reference)", () => {
+    const sets: ExpandedIntervalSet[] = [
+      { set_recovery: null, steps: [wstep(1000, mps240), wstep(1000, mps240)] },
+    ];
+    expect(applyPaceProgression(sets, "off")).toBe(sets);
+  });
+
+  it("mild: strictly monotone negative split, mean preserved, spread ≈ 6 s/km", () => {
+    const sets: ExpandedIntervalSet[] = [
+      { set_recovery: null, steps: Array.from({ length: 4 }, () => wstep(1000, mps240)) },
+    ];
+    const out = applyPaceProgression(sets, "mild");
+    const spk = secPerKmOf(out[0].steps);
+    // negative split: sec/km strictly decreasing (first slowest, last fastest)
+    for (let i = 1; i < spk.length; i++) expect(spk[i]).toBeLessThan(spk[i - 1]);
+    // mps therefore strictly increasing
+    const mps = out[0].steps.map((s) => s.target_pace as number);
+    for (let i = 1; i < mps.length; i++) expect(mps[i]).toBeGreaterThan(mps[i - 1]);
+    // mean preserved in the sec/km domain
+    expect(spk.reduce((a, b) => a + b, 0) / spk.length).toBeCloseTo(240, 6);
+    // total spread ≈ 6 s/km
+    expect(spk[0] - spk[spk.length - 1]).toBeCloseTo(6, 6);
+  });
+
+  it("aggressive: total spread ≈ 12 s/km, mean preserved", () => {
+    const sets: ExpandedIntervalSet[] = [
+      { set_recovery: null, steps: Array.from({ length: 4 }, () => wstep(1000, mps240)) },
+    ];
+    const out = applyPaceProgression(sets, "aggressive");
+    const spk = secPerKmOf(out[0].steps);
+    expect(spk[0] - spk[spk.length - 1]).toBeCloseTo(12, 6);
+    expect(spk.reduce((a, b) => a + b, 0) / spk.length).toBeCloseTo(240, 6);
+  });
+
+  it("N=1 run is untouched", () => {
+    const sets: ExpandedIntervalSet[] = [{ set_recovery: null, steps: [wstep(1000, mps240)] }];
+    const out = applyPaceProgression(sets, "aggressive");
+    expect(out[0].steps[0].target_pace).toBeCloseTo(mps240, 10);
+  });
+
+  it("null-pace reps are untouched", () => {
+    const sets: ExpandedIntervalSet[] = [
+      { set_recovery: null, steps: [wstep(1000, null), wstep(1000, null)] },
+    ];
+    const out = applyPaceProgression(sets, "aggressive");
+    expect(out[0].steps.every((s) => s.target_pace === null)).toBe(true);
+  });
+
+  it("pyramid: progression applies only within same-target runs, never across a run boundary", () => {
+    // [400,400,800,800] → two independent runs of 2; each split, each mean kept.
+    const sets: ExpandedIntervalSet[] = [
+      {
+        set_recovery: null,
+        steps: [wstep(400, mps240), wstep(400, mps240), wstep(800, mps240), wstep(800, mps240)],
+      },
+    ];
+    const out = applyPaceProgression(sets, "mild");
+    const spk = secPerKmOf(out[0].steps);
+    // run A (400s): mean kept, first slower than second
+    expect(spk[0]).toBeGreaterThan(spk[1]);
+    expect((spk[0] + spk[1]) / 2).toBeCloseTo(240, 6);
+    // run B (800s): independent of run A
+    expect(spk[2]).toBeGreaterThan(spk[3]);
+    expect((spk[2] + spk[3]) / 2).toBeCloseTo(240, 6);
+    // the two runs are NOT merged (else it would be one linear ramp across all 4)
+    expect(spk[1]).toBeCloseTo(237, 6);
+    expect(spk[2]).toBeCloseTo(243, 6);
+  });
+
+  it("a same-target run is NOT split across a set boundary", () => {
+    const sets: ExpandedIntervalSet[] = [
+      { set_recovery: null, steps: [wstep(1000, mps240)] },
+      { set_recovery: null, steps: [wstep(1000, mps240)] },
+    ];
+    const out = applyPaceProgression(sets, "aggressive");
+    expect(out[0].steps[0].target_pace).toBeCloseTo(mps240, 10);
+    expect(out[1].steps[0].target_pace).toBeCloseTo(mps240, 10);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  toWorkoutStructure (shared module) — mean frozen, per-rep target_paces added
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Oracle: the OLD mean-only logic the two former local copies implemented.
+// The shared module's `target_pace` must match this byte-for-byte.
+function oldToWorkoutStructure(sets: WorkoutSet[], paced: ExpandedIntervalSet[] | null) {
+  let setCursor = 0;
+  return sets.map((set) => {
+    const group = paced ? paced.slice(setCursor, setCursor + set.set_reps) : [];
+    setCursor += set.set_reps;
+    let stepOffset = 0;
+    const steps = set.steps.map((step) => {
+      const paces: number[] = [];
+      for (const expandedSet of group) {
+        for (let rep = 0; rep < step.reps; rep++) {
+          const p = expandedSet.steps[stepOffset + rep]?.target_pace;
+          if (typeof p === "number") paces.push(p);
+        }
+      }
+      stepOffset += step.reps;
+      const mean = paces.length > 0 ? paces.reduce((a, b) => a + b, 0) / paces.length : null;
+      return {
+        reps: step.reps,
+        work_type: step.work_type,
+        work_value: step.work_value,
+        recovery_type: step.recovery_type ?? null,
+        recovery_value: step.recovery_value ?? null,
+        target_pace: mean === null ? null : Math.round(mean * 100) / 100,
+      };
+    });
+    return { set_reps: set.set_reps, set_recovery: set.set_recovery ?? null, steps };
+  });
+}
+
+const stripPaces = (s: ReturnType<typeof toWorkoutStructure>) =>
+  s.map((set) => ({
+    ...set,
+    steps: set.steps.map(({ target_paces, ...rest }) => rest),
+  }));
+
+suite("toWorkoutStructure (shared workout_structure_format)", () => {
+  it("mean target_pace matches the old averaging; target_paces carries per-rep values in order", () => {
+    const sets: WorkoutSet[] = [
+      { set_reps: 1, steps: [{ reps: 3, work_type: "DISTANCE", work_value: 1000 }] },
+    ];
+    const paced: ExpandedIntervalSet[] = [
+      { set_recovery: null, steps: [wstep(1000, 4.0), wstep(1000, 4.2), wstep(1000, 4.4)] },
+    ];
+    const out = toWorkoutStructure(sets, paced);
+    // legacy shape (incl. rounded mean) byte-identical to the old local copies
+    expect(stripPaces(out)).toEqual(oldToWorkoutStructure(sets, paced));
+    // per-rep paces surfaced in rep order
+    expect(out[0].steps[0].target_paces).toEqual([4.0, 4.2, 4.4]);
+    expect(out[0].steps[0].target_pace).toBeCloseTo(4.2, 6);
+  });
+
+  it("set_reps>1 slices per set and averages a step across every expanded rep; null paced → nulls", () => {
+    const sets: WorkoutSet[] = [
+      { set_reps: 2, steps: [{ reps: 2, work_type: "DISTANCE", work_value: 400 }] },
+    ];
+    const paced: ExpandedIntervalSet[] = [
+      { set_recovery: null, steps: [wstep(400, 5.0), wstep(400, 5.2)] },
+      { set_recovery: null, steps: [wstep(400, 5.4), wstep(400, 5.6)] },
+    ];
+    const out = toWorkoutStructure(sets, paced);
+    expect(out).toHaveLength(1);
+    expect(out[0].set_reps).toBe(2);
+    expect(out[0].steps[0].target_paces).toEqual([5.0, 5.2, 5.4, 5.6]);
+    expect(out[0].steps[0].target_pace).toBeCloseTo((5.0 + 5.2 + 5.4 + 5.6) / 4, 6);
+    // still byte-identical to old mean-only shape
+    expect(stripPaces(out)).toEqual(oldToWorkoutStructure(sets, paced));
+
+    const none = toWorkoutStructure(sets, null);
+    expect(none[0].steps[0].target_pace).toBeNull();
+    expect(none[0].steps[0].target_paces).toBeNull();
   });
 });
