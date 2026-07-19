@@ -225,6 +225,13 @@
       "when": 1784406365443,
       "tag": "0031_sour_lord_hawal",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1784449093698,
+      "tag": "0032_talented_marvel_apes",
+      "breakpoints": true
     }
   ]
 }
