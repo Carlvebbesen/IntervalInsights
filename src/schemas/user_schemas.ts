@@ -1,6 +1,11 @@
 import "zod-openapi/extend";
 import { z } from "zod";
-import { analysisReviewModeEnum, paceProgressionEnum, sexEnum, userRoleEnum } from "../schema/enums";
+import {
+  analysisReviewModeEnum,
+  paceProgressionEnum,
+  sexEnum,
+  userRoleEnum,
+} from "../schema/enums";
 
 export const UserSettingsSchema = z
   .object({

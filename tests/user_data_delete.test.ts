@@ -233,6 +233,10 @@ describe("DELETE /api/v1/user/data", () => {
           conversations: 0,
           messages: 0,
           userSettings: 0,
+          raceEvents: 0,
+          trainingPlans: 0,
+          trainingPlanWeeks: 0,
+          plannedSessions: 0,
         });
 
         checkpointerMock.reset();

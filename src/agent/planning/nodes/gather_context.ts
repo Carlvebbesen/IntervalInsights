@@ -74,7 +74,7 @@ export async function gatherContext(
   let fitness: AthleteContext["fitness"] = null;
   if (user?.intervalsAthleteId) {
     try {
-      const summary = await fetchTrainingSummary(state.userId);
+      const summary = await fetchTrainingSummary(db, state.userId);
       if (summary.status === "ok") {
         const { ctl, atl, rampRate } = summary.data.fitness;
         fitness = { ctl, atl, tsb: ctl != null && atl != null ? ctl - atl : null, rampRate };

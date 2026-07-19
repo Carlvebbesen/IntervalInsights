@@ -129,7 +129,6 @@ export async function deleteAccount(
     }
   }
 
-
   await activityRepo.deleteAllForUser(db, userId);
   await db.delete(events).where(eq(events.userId, userId));
   await db.delete(gears).where(eq(gears.userId, userId));

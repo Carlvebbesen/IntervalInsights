@@ -374,7 +374,7 @@ async function buildPlanSuggestion(
   const sets = structureToWorkoutSets(structure);
   const sessionType = session.sessionType as TrainingType;
 
-  const readiness = await resolveReadiness(userId, date);
+  const readiness = await resolveReadiness(db, userId, date);
   const skeleton: ExpandedIntervalSet[] = generateCompleteIntervalSet(sets);
   const historyPaced = await getProposedPaceForStructure(db, userId, sets);
   const merged = mergeHistoryPaces(skeleton, historyPaced);
