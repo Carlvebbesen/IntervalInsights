@@ -1,7 +1,7 @@
 import "zod-openapi/extend";
 import { z } from "zod";
 import { trainingTypeEnum } from "../schema/enums";
-import { ProposedTrainingArtifactSchema } from "./agent_schemas";
+import { PlanRevisionArtifactSchema, ProposedTrainingArtifactSchema } from "./agent_schemas";
 import { WeatherSchema } from "./common_schemas";
 
 export const CoachChatRequestSchema = z
@@ -109,6 +109,7 @@ export const CoachArtifactSchema = z
     TableArtifactSchema,
     StatCardsArtifactSchema,
     WeeklyPlanArtifactSchema,
+    PlanRevisionArtifactSchema,
   ])
   .openapi({ ref: "CoachArtifact" });
 

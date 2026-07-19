@@ -38,6 +38,8 @@ function summarizeArtifacts(artifacts: CoachArtifact[]): string {
             .join(", ")}`;
         case "weekly_plan":
           return `weekly plan "${a.title}" (${a.days.length} days)`;
+        case "plan_revision":
+          return `plan revision "${a.title}" (${a.changes.length} changes, not yet applied)`;
         default:
           return "card";
       }

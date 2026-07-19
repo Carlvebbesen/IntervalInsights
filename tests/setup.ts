@@ -22,6 +22,7 @@ const ENV_DEFAULTS: Record<string, string> = {
   APP_BASE_URL: "http://localhost:3000/",
   OPENAI_API_KEY: "sk-test-openai-dummy",
   PROGRESS_HEARTBEAT_MS: "200",
+  SSE_HEARTBEAT_MS: "40",
   TOKEN_ENC_KEY: "test-token-enc-key-0123456789-abcdefghij",
   BETTER_AUTH_SECRET: "test-better-auth-secret-0123456789-abcdef",
   BETTER_AUTH_URL: "http://localhost:3000",
@@ -142,12 +143,34 @@ mock.module("../src/services/process_intervals_event.ts", () => ({
 mock.module("../src/services/pace_service.ts", () => ({
   getProposedPaceForStructure: async () => [],
   getProposedPaceFromLaps: () => null,
+  applyPaceProgression: (sets: unknown) => sets,
   easePace: (mps: number | null | undefined) => mps ?? null,
   applyReadinessAdjustment: (basePaces: unknown) => ({
     paces: basePaces,
     penaltySecPerKm: 0,
     advisory: "",
   }),
+}));
+
+// Mutable delegate: the suggest-session LLM seam. Defaults to a no-op that
+// returns null (service then uses the athlete's own structure). A test file may
+// swap the delegate and read `calls` to assert the LLM was / wasn't invoked —
+// call reset() when done (global across files).
+export const suggestSessionAgentMock = {
+  calls: 0,
+  invoke: async (..._args: unknown[]): Promise<unknown> => null,
+  reset() {
+    this.calls = 0;
+    this.invoke = async () => null;
+  },
+};
+
+mock.module("../src/agent/suggest_session_agent.ts", () => ({
+  suggestSessionOutput: z.object({ structure: z.array(z.unknown()) }),
+  invokeSuggestSessionAgent: (...args: unknown[]) => {
+    suggestSessionAgentMock.calls++;
+    return suggestSessionAgentMock.invoke(...args);
+  },
 }));
 
 mock.module("../src/services/lap_derivation_service.ts", () => ({

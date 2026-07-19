@@ -1,6 +1,11 @@
 import "zod-openapi/extend";
 import { z } from "zod";
-import { analysisStatusEnum, trainingTypeEnum, workoutPartEnum } from "../schema/enums";
+import {
+  analysisStatusEnum,
+  planWeekPhaseEnum,
+  trainingTypeEnum,
+  workoutPartEnum,
+} from "../schema/enums";
 import { WeatherSchema } from "./common_schemas";
 
 export const ExpandedIntervalStepSchema = z
@@ -36,6 +41,7 @@ export const WorkoutStructureStepSchema = z
     recovery_type: z.enum(["DISTANCE", "TIME"]).nullable().optional(),
     recovery_value: z.number().nullable().optional(),
     target_pace: z.number().nullable(),
+    target_paces: z.array(z.number()).nullable().optional(),
   })
   .openapi({ ref: "WorkoutStructureStep" });
 
@@ -47,6 +53,8 @@ export const WorkoutStructureSetSchema = z
   })
   .openapi({ ref: "WorkoutStructureSet" });
 
+export type WorkoutStructureSet = z.infer<typeof WorkoutStructureSetSchema>;
+
 export const ProposedTrainingArtifactSchema = z
   .object({
     type: z.literal("proposed_training"),
@@ -57,6 +65,83 @@ export const ProposedTrainingArtifactSchema = z
     structure: z.array(WorkoutStructureSetSchema),
   })
   .openapi({ ref: "ProposedTrainingArtifact" });
+
+export const PlanRevisionMoveSessionSchema = z
+  .object({
+    kind: z.literal("move_session"),
+    sessionId: z.number().int().positive(),
+    toDate: z.string().date(),
+  })
+  .openapi({ ref: "PlanRevisionMoveSession" });
+
+export const PlanRevisionUpdateSessionSchema = z
+  .object({
+    kind: z.literal("update_session"),
+    sessionId: z.number().int().positive(),
+    patch: z.object({
+      title: z.string().min(1).optional(),
+      sessionType: z.enum(trainingTypeEnum.enumValues).optional(),
+      description: z.string().nullable().optional(),
+      structure: z.array(WorkoutStructureSetSchema).nullable().optional(),
+    }),
+  })
+  .openapi({ ref: "PlanRevisionUpdateSession" });
+
+export const PlanRevisionDropSessionSchema = z
+  .object({
+    kind: z.literal("drop_session"),
+    sessionId: z.number().int().positive(),
+  })
+  .openapi({ ref: "PlanRevisionDropSession" });
+
+export const PlanRevisionAddSessionSchema = z
+  .object({
+    kind: z.literal("add_session"),
+    weekId: z.number().int().positive(),
+    session: z.object({
+      date: z.string().date(),
+      sessionType: z.enum(trainingTypeEnum.enumValues),
+      title: z.string().min(1),
+      description: z.string().min(1).optional(),
+      structure: z.array(WorkoutStructureSetSchema).nullable().optional(),
+    }),
+  })
+  .openapi({ ref: "PlanRevisionAddSession" });
+
+export const PlanRevisionUpdateWeekSchema = z
+  .object({
+    kind: z.literal("update_week"),
+    weekId: z.number().int().positive(),
+    patch: z.object({
+      targetDistanceMeters: z.number().int().positive().nullable().optional(),
+      targetLoad: z.number().int().positive().nullable().optional(),
+      notes: z.string().nullable().optional(),
+      phase: z.enum(planWeekPhaseEnum.enumValues).nullable().optional(),
+    }),
+  })
+  .openapi({ ref: "PlanRevisionUpdateWeek" });
+
+export const PlanRevisionChangeSchema = z.discriminatedUnion("kind", [
+  PlanRevisionMoveSessionSchema,
+  PlanRevisionUpdateSessionSchema,
+  PlanRevisionDropSessionSchema,
+  PlanRevisionAddSessionSchema,
+  PlanRevisionUpdateWeekSchema,
+]);
+export type PlanRevisionChange = z.infer<typeof PlanRevisionChangeSchema>;
+
+export const PlanRevisionArtifactSchema = z
+  .object({
+    type: z.literal("plan_revision"),
+    id: z.string(),
+    planId: z.number().int().positive(),
+    title: z.string(),
+    rationale: z.string(),
+    changes: z.array(PlanRevisionChangeSchema).min(1),
+  })
+  .openapi({ ref: "PlanRevisionArtifact" });
+
+export type PlanRevisionArtifact = z.infer<typeof PlanRevisionArtifactSchema>;
 
 export const PendingActivitySchema = z
   .object({
@@ -129,22 +214,18 @@ export const SuggestSessionRequestSchema = z
       "Optional device weather snapshot; when present, target paces are also heat-adjusted by session type.",
     ),
     mode: z
-      .enum(["signature", "recommended"])
+      .enum(["plan", "signature", "ai"])
       .optional()
-      .default("signature")
       .describe(
-        "'signature' keeps the picked structure's shape (only modest readiness tweaks). 'recommended' lets the coach recommend the best-fitting session for today from the athlete's training context, free to reshape it.",
+        "Absent = auto: a planned session due today/tomorrow in an active plan is used as the default suggestion, otherwise 'signature'. 'plan' forces the due planned session (404 if none). 'signature' keeps the picked structure's shape (only modest readiness tweaks). 'ai' lets the coach recommend the best-fitting session for today, free to reshape it.",
       ),
     recentlySuggested: z
       .array(z.string().max(200))
       .max(10)
       .optional()
       .describe(
-        "Titles of sessions already suggested to the athlete in this sitting (client-held state). Passed back on a 'suggest another' tap so the coach proposes something different and the brief response cache is bypassed. Recommended mode only.",
+        "Titles of sessions already suggested to the athlete in this sitting (client-held state). Passed back on a 'suggest another' tap so the coach proposes something different and the brief response cache is bypassed. AI mode only.",
       ),
-  })
-  .refine((b) => b.structureId != null || (b.structure != null && b.structure.length > 0), {
-    message: "Provide either structureId or a non-empty structure.",
   })
   .openapi({ ref: "SuggestSessionRequest" });
 
@@ -165,5 +246,18 @@ export const SuggestSessionResponseSchema = z
     paces: z.array(ExpandedIntervalSetSchema),
     readiness: ReadinessSignalsSchema,
     advisory: z.string(),
+    mode: z
+      .enum(["plan", "signature", "ai"])
+      .describe("The resolved suggestion mode this response was built with."),
+    plannedSessionId: z
+      .number()
+      .nullable()
+      .optional()
+      .describe("In plan mode, the planned session this suggestion was built from."),
+    planId: z
+      .number()
+      .nullable()
+      .optional()
+      .describe("In plan mode, the training plan the session belongs to."),
   })
   .openapi({ ref: "SuggestSessionResponse" });

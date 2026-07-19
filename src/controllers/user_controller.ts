@@ -10,6 +10,8 @@ import { logger } from "../logger";
 import { getStravaAccessTokens } from "../middlewares/strava_middleware";
 import * as activityRepo from "../repositories/activity_repository";
 import * as chatRepo from "../repositories/chat_repository";
+import * as raceEventRepo from "../repositories/race_event_repository";
+import * as trainingPlanRepo from "../repositories/training_plan_repository";
 import * as userRepo from "../repositories/user_repository";
 import type { UpdateUserSettingsInput } from "../repositories/user_settings_repository";
 import * as userSettingsRepo from "../repositories/user_settings_repository";
@@ -110,6 +112,8 @@ export async function deleteAccount(
     });
   } catch {}
 
+  await trainingPlanRepo.deleteAllForUser(db, userId);
+  await raceEventRepo.deleteAllForUser(db, userId);
   // Chat conversation rows cascade with the user, but their LangGraph
   // checkpointer threads are keyed by conversationId and survive — drop each
   // one first. A single failed thread delete must not abort the deletion.

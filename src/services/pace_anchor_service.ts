@@ -4,6 +4,8 @@ import {
   raceEfforts,
   type StoredEffortRow,
 } from "../repositories/pace_anchor_repository";
+import { type TrainingType, trainingBucketFor } from "../schema/enums";
+import type { ExpandedIntervalSet, ExpandedIntervalStep } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import { fetchBestEffortCurve } from "./intervals_curve_service";
 
@@ -368,4 +370,93 @@ export async function fetchPaceAnchor(
 
 function toISODate(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+function firstNonNull(...values: (number | null)[]): number | null {
+  for (const v of values) if (v != null && v > 0) return v;
+  return null;
+}
+
+/**
+ * Pick an anchor pace (sec/km) for a single work step from the athlete's pace
+ * set, used to fill plan-mode steps that have no direct history. Non-interval
+ * session types map to easy/threshold; interval types classify by rep size.
+ * Falls through the pace set in a sensible priority when a category is missing.
+ */
+export function anchorSecPerKmForStep(
+  step: Pick<ExpandedIntervalStep, "work_type" | "work_value">,
+  sessionType: TrainingType,
+  paces: PaceSet,
+): number | null {
+  const bucket = trainingBucketFor(sessionType);
+  if (bucket === "EASY" || bucket === "LONG") {
+    return firstNonNull(
+      paces.easySecPerKm,
+      paces.thresholdSecPerKm,
+      paces.intervalSecPerKm,
+      paces.repSecPerKm,
+    );
+  }
+  if (sessionType === "TEMPO") {
+    return firstNonNull(
+      paces.thresholdSecPerKm,
+      paces.intervalSecPerKm,
+      paces.easySecPerKm,
+      paces.repSecPerKm,
+    );
+  }
+  const v = step.work_value;
+  const isRep = step.work_type === "DISTANCE" ? v <= 600 : v <= 120;
+  const isInterval = step.work_type === "DISTANCE" ? v <= 2000 : v <= 360;
+  const isThreshold = step.work_type === "DISTANCE" ? v <= 8000 : v <= 1200;
+  if (isRep) {
+    return firstNonNull(
+      paces.repSecPerKm,
+      paces.intervalSecPerKm,
+      paces.thresholdSecPerKm,
+      paces.easySecPerKm,
+    );
+  }
+  if (isInterval) {
+    return firstNonNull(
+      paces.intervalSecPerKm,
+      paces.repSecPerKm,
+      paces.thresholdSecPerKm,
+      paces.easySecPerKm,
+    );
+  }
+  if (isThreshold) {
+    return firstNonNull(
+      paces.thresholdSecPerKm,
+      paces.intervalSecPerKm,
+      paces.easySecPerKm,
+      paces.repSecPerKm,
+    );
+  }
+  return firstNonNull(
+    paces.easySecPerKm,
+    paces.thresholdSecPerKm,
+    paces.intervalSecPerKm,
+    paces.repSecPerKm,
+  );
+}
+
+/**
+ * Fill any step whose `target_pace` is still null (no history) from the athlete's
+ * pace anchor. `target_pace` is stored in m/s, so the sec/km anchor is inverted
+ * at the boundary. Already-paced steps pass through untouched.
+ */
+export function fillPacesFromAnchor(
+  sets: ExpandedIntervalSet[],
+  paces: PaceSet,
+  sessionType: TrainingType,
+): ExpandedIntervalSet[] {
+  return sets.map((set) => ({
+    ...set,
+    steps: set.steps.map((step) => {
+      if (step.target_pace != null) return step;
+      const secPerKm = anchorSecPerKmForStep(step, sessionType, paces);
+      return secPerKm != null && secPerKm > 0 ? { ...step, target_pace: 1000 / secPerKm } : step;
+    }),
+  }));
 }
