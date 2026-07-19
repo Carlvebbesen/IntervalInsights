@@ -19,17 +19,41 @@ mock.module("../src/services/intervals_api_service.ts", () => ({
   },
 }));
 
+// Loaded via a query-suffix specifier (a DIFFERENT module registry key) so this
+// file's own mock.module below doesn't shadow it — used to (a) re-export the
+// real module's other exports (fillPacesFromAnchor, anchorSecPerKmForStep, …)
+// so downstream files importing them don't crash, and (b) hand control back to
+// the real DB-backed implementation once this file's tests are done, instead
+// of leaving fetchPaceAnchor permanently stuck on this file's last stub value
+// for every test file that runs afterward (bun's mock.module is process-global
+// and never torn down — see the pace_service/lap_derivation_service precedent
+// in process_strava_event.test.ts).
+const realPaceAnchorService = (await import(
+  "../src/services/pace_anchor_service.ts?real=1"
+)) as typeof import("../src/services/pace_anchor_service");
+
 let anchorResult: PaceAnchorResult = { status: "not_linked", data: null };
 let anchorByDate: ((now: Date) => PaceAnchorResult) | null = null;
+let delegateToReal = false;
 mock.module("../src/services/pace_anchor_service.ts", () => ({
-  fetchPaceAnchor: async (_db: unknown, _userId: string, now: Date = new Date()) =>
-    anchorByDate ? anchorByDate(now) : anchorResult,
+  ...realPaceAnchorService,
+  fetchPaceAnchor: async (db: unknown, userId: string, now: Date = new Date()) => {
+    if (delegateToReal) {
+      return realPaceAnchorService.fetchPaceAnchor(
+        db as Parameters<typeof realPaceAnchorService.fetchPaceAnchor>[0],
+        userId,
+        now,
+      );
+    }
+    return anchorByDate ? anchorByDate(now) : anchorResult;
+  },
 }));
 
 const { resolveThresholds, buildHistoricalThresholdResolver, nearestRestingHrAtOrBefore } =
   await import("../src/services/threshold_service");
 
 afterAll(async () => {
+  delegateToReal = true;
   await closePool();
 });
 
