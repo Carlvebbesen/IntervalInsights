@@ -239,6 +239,13 @@
       "when": 1784453698646,
       "tag": "0033_friendly_gambit",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1784461984154,
+      "tag": "0034_spooky_red_hulk",
+      "breakpoints": true
     }
   ]
 }
