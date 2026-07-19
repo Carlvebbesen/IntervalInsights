@@ -12,19 +12,11 @@ import type {
   SuggestSessionResponseSchema,
   Weather,
 } from "../schemas/api_schemas";
-import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import { buildAthleteProfileBlock } from "./athlete_profile_service";
-import { fetchFitnessDayBlock } from "./fitness_service";
 import { applyHeatAdjustment, heatZoneForTrainingType } from "./heat_service";
-import { fetchTrainingSummary } from "./intervals_wellness_service";
-import { fetchPaceAnchor, fillPacesFromAnchor } from "./pace_anchor_service";
-import {
-  applyReadinessAdjustment,
-  getProposedPaceForStructure,
-  type ReadinessSignals,
-} from "./pace_service";
-import { generateCompleteIntervalSet, toISODate } from "./utils";
+import { computeAdjustedPace, resolveReadiness } from "./prescription_pace_service";
+import { toISODate } from "./utils";
 import { toWorkoutStructure } from "./workout_structure_format";
 
 type Db = IGlobalBindings["db"];
@@ -263,24 +255,6 @@ async function buildTrainingHistorySummary(db: Db, userId: string): Promise<stri
   return lines.join("\n");
 }
 
-async function resolveReadiness(db: Db, userId: string, date: string): Promise<ReadinessSignals> {
-  const [day, summary] = await Promise.all([
-    fetchFitnessDayBlock(db, userId, date).catch(() => null),
-    fetchTrainingSummary(db, userId).catch(() => null),
-  ]);
-
-  const ramp = summary && summary.status === "ok" ? summary.data.fitness.rampRate : null;
-  const summaryData = summary && summary.status === "ok" ? summary.data : null;
-  return {
-    tsb: day?.tsb ?? null,
-    ctl: day?.ctl ?? summaryData?.fitness.ctl ?? null,
-    atl: day?.atl ?? summaryData?.fitness.atl ?? null,
-    ramp: ramp ?? null,
-    hrvStatus: day?.hrvStatus ?? null,
-    sleepScore: day?.sleepScore ?? summaryData?.sleep.sleepScore ?? null,
-  };
-}
-
 function writeCache(key: string, value: SuggestSessionResponse): void {
   const nowMs = Date.now();
   for (const [staleKey, entry] of cache) {
@@ -308,25 +282,6 @@ function structureToWorkoutSets(structure: WorkoutStructureSet[]): WorkoutSet[] 
       recovery_value: step.recovery_value ?? null,
     })),
   }));
-}
-
-/** Lay the history paces (same expanded shape) onto the skeleton; shape mismatches pass through. */
-function mergeHistoryPaces(
-  skeleton: ExpandedIntervalSet[],
-  history: ExpandedIntervalSet[],
-): ExpandedIntervalSet[] {
-  if (history.length !== skeleton.length) return skeleton;
-  return skeleton.map((set, i) => {
-    const h = history[i];
-    if (!h || h.steps.length !== set.steps.length) return set;
-    return {
-      ...set,
-      steps: set.steps.map((step, j) => ({
-        ...step,
-        target_pace: h.steps[j]?.target_pace ?? step.target_pace,
-      })),
-    };
-  });
 }
 
 interface ResolvedRequestMode {
@@ -375,27 +330,13 @@ async function buildPlanSuggestion(
   const sessionType = session.sessionType as TrainingType;
 
   const readiness = await resolveReadiness(db, userId, date);
-  const skeleton: ExpandedIntervalSet[] = generateCompleteIntervalSet(sets);
-  const historyPaced = await getProposedPaceForStructure(db, userId, sets);
-  const merged = mergeHistoryPaces(skeleton, historyPaced);
+  const { paces: finalPaces, advisory: combinedAdvisory } = await computeAdjustedPace(db, userId, {
+    sets,
+    sessionType,
+    readiness,
+    weather,
+  });
 
-  const anchor = await fetchPaceAnchor(db, userId).catch(() => null);
-  const filled =
-    anchor && anchor.status === "ok"
-      ? fillPacesFromAnchor(merged, anchor.data.paces, sessionType)
-      : merged;
-
-  const { paces: readinessPaces, advisory } = applyReadinessAdjustment(filled, readiness);
-
-  let finalPaces = readinessPaces;
-  let heatAdvisory = "";
-  if (weather) {
-    const heat = applyHeatAdjustment(finalPaces, weather, heatZoneForTrainingType(sessionType));
-    finalPaces = heat.paces;
-    heatAdvisory = heat.advisory;
-  }
-
-  const combinedAdvisory = [advisory, heatAdvisory].filter(Boolean).join(" ");
   const notes: string | null = session.description || combinedAdvisory || null;
 
   const proposedTraining: ProposedTraining = {
@@ -513,8 +454,11 @@ export async function suggestSession(
   }
 
   const readiness = await resolveReadiness(db, userId, date);
-  const basePaces = await getProposedPaceForStructure(db, userId, baseStructure);
-  const { paces, advisory } = applyReadinessAdjustment(basePaces, readiness);
+  const { paces, advisory } = await computeAdjustedPace(db, userId, {
+    sets: baseStructure,
+    sessionType: null,
+    readiness,
+  });
   const [historySummary, athleteProfile] = await Promise.all([
     agentMode === "recommended"
       ? buildTrainingHistorySummary(db, userId)
@@ -543,8 +487,13 @@ export async function suggestSession(
     finalSets = suggestion.structure;
     title = suggestion.title;
     trainingType = suggestion.trainingType ?? null;
-    const reshapedBase = await getProposedPaceForStructure(db, userId, finalSets);
-    finalPaces = applyReadinessAdjustment(reshapedBase, readiness).paces;
+    finalPaces = (
+      await computeAdjustedPace(db, userId, {
+        sets: finalSets,
+        sessionType: trainingType,
+        readiness,
+      })
+    ).paces;
   } else {
     log.warn("suggest-session agent returned null — using the athlete's own structure unchanged");
   }

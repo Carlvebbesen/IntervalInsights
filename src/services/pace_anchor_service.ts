@@ -385,7 +385,7 @@ function firstNonNull(...values: (number | null)[]): number | null {
  */
 export function anchorSecPerKmForStep(
   step: Pick<ExpandedIntervalStep, "work_type" | "work_value">,
-  sessionType: TrainingType,
+  sessionType: TrainingType | null,
   paces: PaceSet,
 ): number | null {
   const bucket = trainingBucketFor(sessionType);
@@ -449,7 +449,7 @@ export function anchorSecPerKmForStep(
 export function fillPacesFromAnchor(
   sets: ExpandedIntervalSet[],
   paces: PaceSet,
-  sessionType: TrainingType,
+  sessionType: TrainingType | null,
 ): ExpandedIntervalSet[] {
   return sets.map((set) => ({
     ...set,
