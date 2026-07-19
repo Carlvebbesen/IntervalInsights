@@ -79,11 +79,11 @@ describe("enforcePlanWriteInvariants", () => {
             recovery_type: "TIME" as const,
             recovery_value: 60,
             target_pace: 240,
-            target_paces: { lower: 235, upper: 245 },
+            target_paces: [235, 245],
           },
         ],
       },
-    ] as unknown as WorkoutStructureSet[];
+    ];
 
     const out = enforcePlanWriteInvariants(structure);
     expect(out?.[0].steps[0].target_pace).toBeNull();

@@ -117,7 +117,7 @@ trainingPlansRouter.post(
   "/",
   describeRoute({
     description:
-      "Create a training plan, optionally with nested weeks and sessions in a single call.",
+      "Create a training plan, optionally with nested weeks and sessions in a single call. Target paces are stripped from any submitted structure (the plan stores intent, not paces). The response may carry advisory `warnings` where a week breaches the athlete's ramp/polarization/volume guards — the write still applies.",
     responses: {
       201: {
         description: "Created training plan with its full week/session tree",
@@ -364,7 +364,8 @@ const addWeekSchema = z.object({
 trainingPlansRouter.post(
   "/:id/weeks",
   describeRoute({
-    description: "Add a week to a training plan.",
+    description:
+      "Add a week to a training plan. The response may carry advisory `warnings` for the week's guard breaches — the write still applies.",
     responses: {
       201: {
         description: "Created week",
@@ -496,7 +497,8 @@ const addSessionSchema = z.object({
 trainingPlansRouter.post(
   "/:id/sessions",
   describeRoute({
-    description: "Add a planned session to a training plan week.",
+    description:
+      "Add a planned session to a training plan week. Target paces are stripped from any submitted structure. The response may carry advisory `warnings` for the affected week's guard breaches — the write still applies.",
     responses: {
       201: {
         description: "Created planned session",
@@ -548,7 +550,7 @@ trainingPlansRouter.patch(
   "/:id/sessions/:sessionId",
   describeRoute({
     description:
-      "Edit a planned session. Providing `weekId` moves it to another week of the same plan.",
+      "Edit a planned session. Providing `weekId` moves it to another week of the same plan. Target paces are stripped from any submitted structure. The response may carry advisory `warnings` for the affected week's guard breaches — the write still applies.",
     responses: {
       200: {
         description: "Updated planned session",

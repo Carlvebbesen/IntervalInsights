@@ -33,12 +33,15 @@ export function enforcePlanWriteInvariants<T extends WorkoutStructureSet[] | nul
   return stripPaces(structure) as Result;
 }
 
-export type PlanGuardWarningCode =
-  | "weekly_ramp_exceeded"
-  | "long_run_spike"
-  | "quality_sessions_exceeded"
-  | "days_per_week_exceeded"
-  | "max_weekly_volume_exceeded";
+export const PLAN_GUARD_WARNING_CODES = [
+  "weekly_ramp_exceeded",
+  "long_run_spike",
+  "quality_sessions_exceeded",
+  "days_per_week_exceeded",
+  "max_weekly_volume_exceeded",
+] as const;
+
+export type PlanGuardWarningCode = (typeof PLAN_GUARD_WARNING_CODES)[number];
 
 export type PlanGuardWarning = {
   code: PlanGuardWarningCode;

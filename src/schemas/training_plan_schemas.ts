@@ -6,7 +6,24 @@ import {
   trainingPlanStatusEnum,
   trainingTypeEnum,
 } from "../schema/enums";
+import { PLAN_GUARD_WARNING_CODES } from "../services/plan_guard_service";
 import { WorkoutStructureSetSchema } from "./agent_schemas";
+
+export const PlanGuardWarningSchema = z
+  .object({
+    code: z.enum(PLAN_GUARD_WARNING_CODES),
+    message: z.string(),
+    observed: z.number(),
+    limit: z.number(),
+    weekIndex: z.number(),
+  })
+  .openapi({ ref: "PlanGuardWarning" });
+
+/**
+ * Advisory only — the write already succeeded. Absent when the write touched no
+ * week, or when the athlete context could not be loaded.
+ */
+const planGuardWarnings = z.array(PlanGuardWarningSchema).optional();
 
 export const PlannedSessionSchema = z
   .object({
@@ -23,6 +40,7 @@ export const PlannedSessionSchema = z
     sortOrder: z.number(),
     createdAt: z.string(),
     updatedAt: z.string(),
+    warnings: planGuardWarnings,
   })
   .openapi({ ref: "PlannedSession" });
 
@@ -38,6 +56,7 @@ export const TrainingPlanWeekSchema = z
     notes: z.string().nullable(),
     createdAt: z.string(),
     updatedAt: z.string(),
+    warnings: planGuardWarnings,
   })
   .openapi({ ref: "TrainingPlanWeek" });
 
@@ -83,6 +102,7 @@ export const TrainingPlanDetailSchema = TrainingPlanSchema.extend({
   completionPct: z
     .number()
     .describe("Completed sessions as a percentage of non-skipped sessions (0-100 integer)."),
+  warnings: planGuardWarnings,
 }).openapi({ ref: "TrainingPlanDetail" });
 
 export const TrainingPlanListResponseSchema = z
