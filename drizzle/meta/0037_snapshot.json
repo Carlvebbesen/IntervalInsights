@@ -1,6 +1,6 @@
 {
-  "id": "a9054f0e-2ac8-4a9a-a43f-1fe732aeaf2a",
-  "prevId": "555cc2f1-3941-4c10-bc3d-6a716b363d59",
+  "id": "adce4441-06f2-41d2-a9b8-f133a9ba390d",
+  "prevId": "1331c866-f358-471e-9b44-ef0ab772f6ce",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1425,12 +1425,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
         },
         "start_time": {
           "name": "start_time",

@@ -1,5 +1,5 @@
 {
-  "id": "4bc75910-2bab-421d-afc8-380b11714008",
+  "id": "555cc2f1-3941-4c10-bc3d-6a716b363d59",
   "prevId": "888a769b-985b-437e-bc89-891a6cabd114",
   "version": "7",
   "dialect": "postgresql",
@@ -698,6 +698,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "impersonated_by": {
+          "name": "impersonated_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -1225,155 +1231,6 @@
         "event_attributes_user_id_users_id_fk": {
           "name": "event_attributes_user_id_users_id_fk",
           "tableFrom": "event_attributes",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.event_notes": {
-      "name": "event_notes",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "event_id": {
-          "name": "event_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "note": {
-          "name": "note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "source": {
-          "name": "source",
-          "type": "note_source",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "occurred_at": {
-          "name": "occurred_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "trend": {
-          "name": "trend",
-          "type": "note_trend",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "severity": {
-          "name": "severity",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "is_anchor": {
-          "name": "is_anchor",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "event_notes_event_occurred_idx": {
-          "name": "event_notes_event_occurred_idx",
-          "columns": [
-            {
-              "expression": "event_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "occurred_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "event_notes_anchor_idx": {
-          "name": "event_notes_anchor_idx",
-          "columns": [
-            {
-              "expression": "event_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"event_notes\".\"is_anchor\"",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "event_notes_event_id_events_id_fk": {
-          "name": "event_notes_event_id_events_id_fk",
-          "tableFrom": "event_notes",
-          "tableTo": "events",
-          "columnsFrom": [
-            "event_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "event_notes_user_id_users_id_fk": {
-          "name": "event_notes_user_id_users_id_fk",
-          "tableFrom": "event_notes",
           "tableTo": "users",
           "columnsFrom": [
             "user_id"
@@ -3154,9 +3011,59 @@
           "type": "timestamp",
           "primaryKey": false,
           "notNull": false
+        },
+        "banned": {
+          "name": "banned",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "ban_reason": {
+          "name": "ban_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ban_expires": {
+          "name": "ban_expires",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "users_last_seen_at_idx": {
+          "name": "users_last_seen_at_idx",
+          "columns": [
+            {
+              "expression": "last_seen_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "users_created_at_idx": {
+          "name": "users_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
@@ -3299,23 +3206,6 @@
         "CRITICAL_VELOCITY",
         "FARTLEK",
         "RECOVERY_INTERVALS"
-      ]
-    },
-    "public.note_source": {
-      "name": "note_source",
-      "schema": "public",
-      "values": [
-        "ai",
-        "user"
-      ]
-    },
-    "public.note_trend": {
-      "name": "note_trend",
-      "schema": "public",
-      "values": [
-        "improving",
-        "worsening",
-        "unchanged"
       ]
     },
     "public.oauth_provider": {
