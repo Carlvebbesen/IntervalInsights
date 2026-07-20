@@ -51,7 +51,11 @@ async function emitTerminalEvent(
     JSON.stringify({
       planId: state.values.persistedPlanId,
       threadId,
-      notices: [...(state.values.feedbackNotices ?? []), ...(state.values.guardNotices ?? [])],
+      notices: [
+        ...(state.values.contextNotices ?? []),
+        ...(state.values.feedbackNotices ?? []),
+        ...(state.values.guardNotices ?? []),
+      ],
     }),
   );
 }

@@ -61,7 +61,7 @@ export async function sessionsReview(state: PlanBuilderState): Promise<Partial<P
     sampleWeek,
     weeks,
     totals,
-    notices: [...state.feedbackNotices, ...state.guardNotices],
+    notices: [...state.contextNotices, ...state.feedbackNotices, ...state.guardNotices],
     round,
     maxRounds: MAX_REVIEW_ROUNDS,
     roundsRemaining: Math.max(0, MAX_REVIEW_ROUNDS - round),

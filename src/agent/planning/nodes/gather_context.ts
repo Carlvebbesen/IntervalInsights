@@ -12,6 +12,7 @@ import { RUNNING_SPORT_TYPES, type TrainingType, trainingTypeEnum } from "../../
 import { computeFitnessDay } from "../../../services/fitness_metrics_service";
 import { fetchPaceAnchor, predictRaceTimeSecFromVdot } from "../../../services/pace_anchor_service";
 import { DEFAULT_BASELINE_WEEKLY_METERS, MIN_BASELINE_WEEKLY_METERS } from "../guards";
+import type { PlanNotice } from "../plan_builder_schemas";
 import type {
   ActiveHealthEvent,
   AthleteBaselineVolume,
@@ -210,6 +211,14 @@ export async function gatherContext(
     };
   }
 
+  // Every degradation below MUST surface to the athlete, not just the logs: a
+  // plan silently built without injury records is the bug this list prevents.
+  // `kind: "clamped"` is reused because the wizard parses kind as a closed enum.
+  const contextNotices: PlanNotice[] = [];
+  const degraded = (code: string, message: string) => {
+    contextNotices.push({ kind: "clamped", code, message });
+  };
+
   const now = new Date();
   const since = new Date(now);
   since.setUTCDate(since.getUTCDate() - 8 * 7);
@@ -237,6 +246,10 @@ export async function gatherContext(
   } catch (err) {
     log.warn({ err }, "computeFitnessDay failed — degrading fitness to null");
     fitness = null;
+    degraded(
+      "context_fitness_unavailable",
+      "Your current fitness metrics (form/fatigue) could not be read, so this plan was built without them — review the early weeks carefully or retry later.",
+    );
   }
 
   let raceAbility: AthleteContext["raceAbility"] = null;
@@ -261,6 +274,10 @@ export async function gatherContext(
   } catch (err) {
     log.warn({ err }, "pace anchor failed — degrading raceAbility to null");
     raceAbility = null;
+    degraded(
+      "context_race_ability_unavailable",
+      "Your race-ability estimate (recent best efforts) could not be read, so paces and targets were set without it — review them carefully or retry later.",
+    );
   }
 
   let baselineVolume: AthleteContext["baselineVolume"] = null;
@@ -278,6 +295,10 @@ export async function gatherContext(
   } catch (err) {
     log.warn({ err }, "baseline volume failed — degrading to null");
     baselineVolume = null;
+    degraded(
+      "context_baseline_unavailable",
+      "Your recent running volume could not be read, so this plan starts from a generic baseline instead of what you actually run — review the first weeks carefully or retry later.",
+    );
   }
 
   let activeHealthEvents: ActiveHealthEvent[] = [];
@@ -287,6 +308,10 @@ export async function gatherContext(
   } catch (err) {
     log.warn({ err }, "active health events failed — degrading to empty");
     activeHealthEvents = [];
+    degraded(
+      "context_health_events_unavailable",
+      "Your injury/illness records could not be read, so this plan was built WITHOUT injury accommodations — review it carefully or retry later.",
+    );
   }
 
   let workoutVocabulary: WorkoutVocabulary = {
@@ -300,6 +325,10 @@ export async function gatherContext(
   } catch (err) {
     log.warn({ err }, "workout vocabulary failed — degrading to empty");
     workoutVocabulary = { types: [], hasStructuredIntervalHistory: false, structures: [] };
+    degraded(
+      "context_vocabulary_unavailable",
+      "Your workout history could not be read, so sessions were chosen without knowing which workout types you already do — review them carefully or retry later.",
+    );
   }
 
   return {
@@ -315,5 +344,6 @@ export async function gatherContext(
       activeHealthEvents,
       workoutVocabulary,
     },
+    contextNotices,
   };
 }

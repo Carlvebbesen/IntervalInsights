@@ -15,7 +15,7 @@ export async function macroReview(state: PlanBuilderState): Promise<Partial<Plan
   const raw = interrupt({
     phase: "macro_review",
     macro: state.macro,
-    notices: [...state.feedbackNotices, ...state.guardNotices],
+    notices: [...state.contextNotices, ...state.feedbackNotices, ...state.guardNotices],
     round,
     maxRounds: MAX_REVIEW_ROUNDS,
     roundsRemaining: Math.max(0, MAX_REVIEW_ROUNDS - round),

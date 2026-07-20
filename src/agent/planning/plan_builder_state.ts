@@ -126,6 +126,10 @@ export const PlanBuilderStateAnnotation = Annotation.Root({
   // same round; the interrupt payload concatenates the two.
   feedbackNotices: Annotation<PlanNotice[]>({ reducer: overwrite, default: () => [] }),
   guardNotices: Annotation<PlanNotice[]>({ reducer: overwrite, default: () => [] }),
+  // Set once by gatherContext and never written by regeneration/review nodes, so
+  // a degraded context ("built WITHOUT injury records") stays visible through
+  // every review loop and on the terminal done event.
+  contextNotices: Annotation<PlanNotice[]>({ reducer: overwrite, default: () => [] }),
   action: Annotation<PlanReviewAction | null>({ reducer: overwrite, default: () => null }),
   persistedPlanId: Annotation<number | null>({ reducer: overwrite, default: () => null }),
 });
