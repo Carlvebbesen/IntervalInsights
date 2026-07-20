@@ -91,6 +91,7 @@ export async function generateSessions(
         state.sessionsFeedback,
         state.input.constraintsText,
         priorQualitySessions,
+        state.input.intakeBriefText,
       ),
     );
     for (const week of batch) {

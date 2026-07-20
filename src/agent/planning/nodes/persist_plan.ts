@@ -55,6 +55,7 @@ export async function persistPlan(
       createdVia: "plan_builder",
       inputs: state.input,
       settings: {
+        intakeBriefText: state.input.intakeBriefText ?? null,
         volumeAggressiveness: state.input.volumeAggressiveness ?? DEFAULT_VOLUME_AGGRESSIVENESS,
         intensityAggressiveness:
           state.input.intensityAggressiveness ?? DEFAULT_INTENSITY_AGGRESSIVENESS,

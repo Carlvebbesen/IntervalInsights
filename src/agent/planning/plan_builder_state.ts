@@ -26,6 +26,7 @@ export type PlanBuilderInput = {
   endDate: string;
   goalText?: string | null;
   constraintsText?: string | null;
+  intakeBriefText?: string | null;
   volumeAggressiveness?: VolumeAggressiveness;
   intensityAggressiveness?: IntensityAggressiveness;
   maxWeeklyVolumeMeters?: number | null;

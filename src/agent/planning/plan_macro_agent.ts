@@ -96,6 +96,19 @@ export function constraintsBlock(constraintsText: string | null | undefined): st
   - Otherwise honor the stated logistics as closely as the training goals allow.`;
 }
 
+// Qualitative context from the pre-plan intake chat: what the interviewer
+// learned that is NOT in the structured inputs (injury story, history,
+// preferences, motivations, method preference).
+export function intakeBriefBlock(briefText: string | null | undefined): string {
+  const text = briefText?.trim();
+  if (!text) return "";
+  return `
+  ### ATHLETE INTERVIEW NOTES (from the intake conversation)
+  A pre-plan intake interview surfaced this qualitative context — weigh it when
+  shaping the plan:
+  "${text}"`;
+}
+
 function raceBlock(ctx: AthleteContext): string {
   if (!ctx.race) return "  - No target race — build general fitness toward the goal.";
   const r = ctx.race;
@@ -125,6 +138,7 @@ export async function invokeProposeMacroAgent(
   - Goal: ${input.goalText ?? "(none stated)"}
 ${raceBlock(context)}
 ${constraintsBlock(input.constraintsText)}
+${intakeBriefBlock(input.intakeBriefText)}
 
   ### ATHLETE CONTEXT
 ${athleteContextBlock(context)}

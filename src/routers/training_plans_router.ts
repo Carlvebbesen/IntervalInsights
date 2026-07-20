@@ -165,6 +165,7 @@ const generatePlanSchema = z
     endDate: z.string().date(),
     goalText: z.string().max(2000).optional(),
     constraintsText: z.string().max(2000).optional(),
+    intakeBriefText: z.string().max(2000).optional(),
     volumeAggressiveness: z.enum(VOLUME_AGGRESSIVENESS).default(DEFAULT_VOLUME_AGGRESSIVENESS),
     intensityAggressiveness: z
       .enum(INTENSITY_AGGRESSIVENESS)
