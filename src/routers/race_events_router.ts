@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
 import * as raceEventController from "../controllers/race_event_controller";
+import { requireRole } from "../middlewares/role_middleware";
 import { raceEventStatusEnum, racePriorityEnum } from "../schema";
 import {
   DeleteRaceEventResponseSchema,
@@ -12,6 +13,10 @@ import {
 import type { TGlobalEnv } from "../types/IRouters";
 
 const raceEventsRouter = new Hono<TGlobalEnv>();
+
+// Race events exist only to anchor a training plan, so they carry the same
+// premium gate — a free user cannot reach half of a premium feature.
+raceEventsRouter.use("*", requireRole("premium", "admin"));
 
 const listQuerySchema = z.object({
   status: z.enum(raceEventStatusEnum.enumValues).optional(),

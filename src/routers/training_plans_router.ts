@@ -14,6 +14,7 @@ import {
   PLAN_BUILDER_DAILY_MAX,
   PLAN_BUILDER_QUOTA,
 } from "../middlewares/quota_middleware";
+import { requireRole } from "../middlewares/role_middleware";
 import {
   plannedSessionStatusEnum,
   planWeekPhaseEnum,
@@ -33,6 +34,10 @@ import {
 import type { TGlobalEnv } from "../types/IRouters";
 
 const trainingPlansRouter = new Hono<TGlobalEnv>();
+
+// Training plans are a premium feature in full — plan CRUD and the plan-builder
+// wizard's generate/resume alike, matching coach chat (`training_router.ts`).
+trainingPlansRouter.use("*", requireRole("premium", "admin"));
 
 function atLeastOneField(data: Record<string, unknown>) {
   return Object.values(data).some((v) => v !== undefined);

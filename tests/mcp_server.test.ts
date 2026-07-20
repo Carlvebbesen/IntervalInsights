@@ -32,35 +32,35 @@ function ctxFor(overrides?: Partial<CoachCtx>): CoachCtx {
 
 describe("selectMcpTools", () => {
   it("exposes only db-backed tools when nothing is connected", () => {
-    const tools = selectMcpTools({ stravaLinked: false, intervalsConnected: false });
+    const tools = selectMcpTools({ stravaLinked: false, intervalsConnected: false, premium: true });
     expect(tools.length).toBeGreaterThan(0);
     expect(tools.every((t) => t.requires === "db")).toBe(true);
   });
 
   it("unlocks strava and intervals tools once connected", () => {
-    const tools = selectMcpTools({ stravaLinked: true, intervalsConnected: true });
+    const tools = selectMcpTools({ stravaLinked: true, intervalsConnected: true, premium: true });
     expect(tools.some((t) => t.requires === "strava")).toBe(true);
     expect(tools.some((t) => t.requires === "intervals")).toBe(true);
   });
 
   it("excludes tools that make their own OpenAI calls, keeping pure-db siblings", () => {
-    const tools = selectMcpTools({ stravaLinked: true, intervalsConnected: true });
+    const tools = selectMcpTools({ stravaLinked: true, intervalsConnected: true, premium: true });
     expect(tools.some((t) => t.name === "parse_workout")).toBe(false);
     expect(tools.some((t) => t.name === "propose_paces")).toBe(true);
   });
 
   it("exposes activity-source tools for an intervals-only user", () => {
-    const tools = selectMcpTools({ stravaLinked: false, intervalsConnected: true });
+    const tools = selectMcpTools({ stravaLinked: false, intervalsConnected: true, premium: true });
     expect(tools.some((t) => t.name === "get_activity_streams_summary")).toBe(true);
   });
 
   it("exposes activity-source tools for a strava-only user", () => {
-    const tools = selectMcpTools({ stravaLinked: true, intervalsConnected: false });
+    const tools = selectMcpTools({ stravaLinked: true, intervalsConnected: false, premium: true });
     expect(tools.some((t) => t.name === "get_activity_streams_summary")).toBe(true);
   });
 
   it("includes the db-only training plan tools with nothing connected", () => {
-    const tools = selectMcpTools({ stravaLinked: false, intervalsConnected: false });
+    const tools = selectMcpTools({ stravaLinked: false, intervalsConnected: false, premium: true });
     const names = tools.map((t) => t.name);
     expect(names).toContain("list_training_plans");
     expect(names).toContain("create_training_plan");
@@ -120,7 +120,7 @@ describe("isToolAvailable", () => {
 
 describe("buildMcpServer", () => {
   it("registers every selected tool without name collisions", () => {
-    const tools = selectMcpTools({ stravaLinked: true, intervalsConnected: true });
+    const tools = selectMcpTools({ stravaLinked: true, intervalsConnected: true, premium: true });
     expect(() => buildMcpServer(ctxFor(), tools)).not.toThrow();
   });
 });

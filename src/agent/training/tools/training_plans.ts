@@ -14,7 +14,7 @@ import {
   PlanRevisionChangeSchema,
   WorkoutStructureSetSchema,
 } from "../../../schemas/agent_schemas";
-import { defineTool } from "../tool_types";
+import { type CoachTool, defineTool } from "../tool_types";
 
 const listTrainingPlans = defineTool({
   name: "list_training_plans",
@@ -357,7 +357,11 @@ const applyPlanRevision = defineTool({
     ),
 });
 
-export const trainingPlanTools = [
+// The whole training-plan feature is premium-only, matching the REST gate on
+// `training_plans_router` / `race_events_router` — these tools reach the very
+// same controllers. Stamped on the array rather than per tool so a tool added
+// here can't silently arrive ungated.
+export const trainingPlanTools: CoachTool[] = [
   listTrainingPlans,
   getTrainingPlan,
   listRaceEvents,
@@ -376,4 +380,4 @@ export const trainingPlanTools = [
   linkPlannedSession,
   unlinkPlannedSession,
   applyPlanRevision,
-];
+].map((tool) => ({ ...tool, premium: true }));
