@@ -35,10 +35,50 @@ describe("computeBaselineVolume", () => {
     const runs = [
       { startDateLocal: daysAgo(40).toISOString(), distance: "9000" },
       { startDateLocal: daysAgo(2).toISOString(), distance: "6000" },
+      { startDateLocal: daysAgo(9).toISOString(), distance: "8000" },
+      { startDateLocal: daysAgo(16).toISOString(), distance: "10000" },
     ];
     expect(computeBaselineVolume(runs, today)).toEqual({
-      trailing4WeekAvgWeeklyMeters: 1500, // only the 6000 run in 28d → /4
-      longestRunLast30dMeters: 6000,
+      trailing4WeekAvgWeeklyMeters: 6000, // (6000+8000+10000)/4; the 40d run is excluded
+      longestRunLast30dMeters: 10000,
+    });
+  });
+
+  it("reports no baseline when the 28-day window holds too few runs", () => {
+    const runs = [
+      { startDateLocal: daysAgo(2), distance: 12000 },
+      { startDateLocal: daysAgo(9), distance: 14000 },
+    ];
+    // 2 runs → below MIN_BASELINE_RUNS: a 6.5 km/wk average off 2 runs is an
+    // artefact of dividing by 4, not a training baseline.
+    expect(computeBaselineVolume(runs, today).trailing4WeekAvgWeeklyMeters).toBeNull();
+  });
+
+  it("reports no baseline when the computed average is implausibly low", () => {
+    const runs = [1, 5, 9, 13].map((n) => ({ startDateLocal: daysAgo(n), distance: 1000 }));
+    // 4 runs but only 1 km/wk — treat as absent so the 20 km default anchors.
+    expect(computeBaselineVolume(runs, today).trailing4WeekAvgWeeklyMeters).toBeNull();
+  });
+
+  it("never lets a null or unparsable distance contribute a silent zero", () => {
+    const runs = [
+      { startDateLocal: daysAgo(2), distance: null },
+      { startDateLocal: daysAgo(5), distance: "not-a-number" },
+      { startDateLocal: daysAgo(9), distance: 10000 },
+      { startDateLocal: daysAgo(13), distance: 11000 },
+      { startDateLocal: daysAgo(20), distance: 12000 },
+    ];
+    expect(computeBaselineVolume(runs, today)).toEqual({
+      trailing4WeekAvgWeeklyMeters: 8250, // (10000+11000+12000)/4 — the 2 bad rows are skipped
+      longestRunLast30dMeters: 12000,
+    });
+  });
+
+  it("a single short run yields no baseline rather than a 1.25 km week", () => {
+    const runs = [{ startDateLocal: daysAgo(3), distance: 5000 }];
+    expect(computeBaselineVolume(runs, today)).toEqual({
+      trailing4WeekAvgWeeklyMeters: null,
+      longestRunLast30dMeters: 5000,
     });
   });
 });

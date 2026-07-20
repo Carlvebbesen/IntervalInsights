@@ -48,39 +48,61 @@ function toISODate(d: Date | string): string {
   return (typeof d === "string" ? new Date(d) : d).toISOString().slice(0, 10);
 }
 
+// Minimum evidence before a computed trailing average is trusted as a real
+// training baseline. Below either threshold the 28-day window is too thin for
+// the divide-by-4 to mean anything (one 5 km run would imply a 1.25 km week),
+// so we report ABSENT and let the documented DEFAULT_BASELINE_WEEKLY_METERS
+// re-entry floor take over rather than anchoring a plan to a phantom number.
+export const MIN_BASELINE_RUNS = 3;
+export const MIN_BASELINE_WEEKLY_METERS = 5_000;
+
+/** A row's distance in meters, or null when absent/unparsable (never a silent 0). */
+function runDistanceMeters(distance: number | string | null): number | null {
+  if (distance == null) return null;
+  const n = typeof distance === "string" ? Number.parseFloat(distance) : distance;
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 /**
  * Real baseline running volume — the anti-over-ramp anchor. `trailing4WeekAvg`
  * is the mean weekly running distance over the last 28 days; `longestRun` is
- * the single longest run in the last 30 days. Pure over the supplied rows so
- * it is unit-testable against fixtures.
+ * the single longest run in the last 30 days. Either is null when the evidence
+ * is too thin to trust — callers must treat null as "no baseline on record",
+ * never as zero. Pure over the supplied rows so it is unit-testable.
  */
 export function computeBaselineVolume(runs: RunRow[], today: Date): AthleteBaselineVolume {
-  if (runs.length === 0) {
-    return { trailing4WeekAvgWeeklyMeters: null, longestRunLast30dMeters: null };
-  }
+  const absent = { trailing4WeekAvgWeeklyMeters: null, longestRunLast30dMeters: null };
+  if (runs.length === 0) return absent;
   const nowMs = today.getTime();
   const cutoff28 = nowMs - 28 * DAY_MS;
   const cutoff30 = nowMs - 30 * DAY_MS;
 
   let sum28 = 0;
+  let count28 = 0;
   let longest30 = 0;
   let any30 = false;
   for (const r of runs) {
     const t = (
       typeof r.startDateLocal === "string" ? new Date(r.startDateLocal) : r.startDateLocal
     ).getTime();
-    const dist = Number(r.distance ?? 0);
     if (!Number.isFinite(t)) continue;
+    const dist = runDistanceMeters(r.distance);
+    if (dist == null) continue;
     if (t >= cutoff30) {
       any30 = true;
       if (dist > longest30) longest30 = dist;
     }
-    if (t >= cutoff28) sum28 += dist;
+    if (t >= cutoff28) {
+      sum28 += dist;
+      count28 += 1;
+    }
   }
 
+  const avg = Math.round(sum28 / 4);
+  const trusted = count28 >= MIN_BASELINE_RUNS && avg >= MIN_BASELINE_WEEKLY_METERS;
   return {
-    trailing4WeekAvgWeeklyMeters: Math.round(sum28 / 4),
-    longestRunLast30dMeters: any30 ? Math.round(longest30) : null,
+    trailing4WeekAvgWeeklyMeters: trusted ? avg : null,
+    longestRunLast30dMeters: any30 && longest30 > 0 ? Math.round(longest30) : null,
   };
 }
 

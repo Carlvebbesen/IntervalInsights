@@ -153,12 +153,18 @@ export const DOWN_WEEK_FACTOR = 0.72;
 /**
  * Force week 1 to the athlete's REAL trailing baseline (or a conservative floor
  * when there is no history) — never the race goal. Starting above what they are
- * actually running is the top cause of over-ramp injury.
+ * actually running is the top cause of over-ramp injury. A non-positive or
+ * non-finite baseline is treated as ABSENT: anchoring week 1 to 0 propagates
+ * through the whole ramp and yields a plan of zero-kilometre weeks.
  */
 export function anchorWeekOne(targets: number[], baselineWeeklyMeters: number | null): number[] {
   if (targets.length === 0) return targets;
+  const usable =
+    baselineWeeklyMeters != null && Number.isFinite(baselineWeeklyMeters) && baselineWeeklyMeters > 0
+      ? baselineWeeklyMeters
+      : DEFAULT_BASELINE_WEEKLY_METERS;
   const out = [...targets];
-  out[0] = Math.round(baselineWeeklyMeters ?? DEFAULT_BASELINE_WEEKLY_METERS);
+  out[0] = Math.round(usable);
   return out;
 }
 
