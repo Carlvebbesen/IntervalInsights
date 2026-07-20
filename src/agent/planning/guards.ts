@@ -594,10 +594,29 @@ function downgradeToEasy(s: GeneratedSession): GeneratedSession {
   return { ...s, sessionType: "EASY", structure: null, title: "Easy run", description: null };
 }
 
+const isLongBucket = (s: GeneratedSession) => trainingBucketFor(s.sessionType) === "LONG";
+
 /**
- * Enforce the polarization cap: keep at most `qualityCap` hard sessions (the
- * earliest by date), downgrading any excess hard session to an easy run. Never
- * fabricates hard work when there are too few — the cap is a ceiling.
+ * Strip the *quality* out of a long run while keeping the long run: a
+ * PROGRESSIVE_LONG demoted for the quality cap or for adjacency becomes a plain
+ * LONG (which `isHardSession` does not count), not an EASY run. The week's long
+ * run is its aerobic anchor and the one session an athlete plans their week
+ * around — losing it is a worse outcome than losing its fast finish. Anything
+ * that is not a long run still demotes to EASY.
+ */
+function demoteHardSession(s: GeneratedSession): GeneratedSession {
+  if (!isLongBucket(s)) return downgradeToEasy(s);
+  return { ...s, sessionType: "LONG", structure: null, title: "Long run", description: null };
+}
+
+/**
+ * Enforce the polarization cap: keep at most `qualityCap` hard sessions,
+ * demoting any excess. Slots go to the long run first and then to the earliest
+ * remaining hard sessions — a PROGRESSIVE_LONG is usually the last session of
+ * the week, so an unqualified earliest-first rule made the long run the *first*
+ * thing sacrificed to the cap (and in a base week, where the cap is 0, it was
+ * sacrificed every time). Never fabricates hard work when there are too few —
+ * the cap is a ceiling.
  */
 export function enforceQualityCount(
   sessions: GeneratedSession[],
@@ -606,23 +625,45 @@ export function enforceQualityCount(
 ): GeneratedSession[] {
   const cap = qualityCap(phase, intensity);
   const out = [...sessions].sort((a, b) => a.date.localeCompare(b.date));
+  const longIdx = out.findIndex(
+    (s) => isLongBucket(s) && isHardSession(s.sessionType, s.structure),
+  );
+  const reserved = longIdx >= 0 && cap > 0 ? 1 : 0;
   let kept = 0;
-  return out.map((s) => {
+  return out.map((s, i) => {
     if (!isHardSession(s.sessionType, s.structure)) return s;
+    if (i === longIdx) return cap > 0 ? s : demoteHardSession(s);
     kept += 1;
-    return kept > cap ? downgradeToEasy(s) : s;
+    return kept > cap - reserved ? demoteHardSession(s) : s;
   });
 }
 
 /**
  * Space hard sessions so no two land on consecutive calendar days: when a hard
- * session sits within 1 day of the previous hard one, swap its date with a later
- * easy session that clears the gap. Best-effort — a no-op when nothing swappable.
- * Each swap strictly moves a hard session later, so the scan terminates.
+ * session sits within 1 day of the previous hard one, swap one of them with an
+ * easy session on a day that clears every other hard session.
+ *
+ * `pinnedDate` is the long run's slot once `placeLongRun` has claimed it. The
+ * session sitting there is immovable — neither as the session being spaced nor
+ * as an easy swap *partner*, since a plain LONG is not "hard" and would
+ * otherwise be swapped off the preferred day as if it were filler. When the
+ * later of an adjacent pair is pinned we move the earlier one instead, which is
+ * what makes the Saturday-group-run + Sunday-long-run week resolvable at all.
+ *
+ * Best-effort — a no-op when nothing is swappable; `downgradeAdjacentHardSessions`
+ * is the backstop. Bounded by `guard` since swaps may now move either direction.
  */
-export function spaceHardSessions(sessions: GeneratedSession[]): GeneratedSession[] {
+export function spaceHardSessions(
+  sessions: GeneratedSession[],
+  pinnedDate?: string | null,
+): GeneratedSession[] {
   const s = sessions.map((x) => ({ ...x })).sort((a, b) => a.date.localeCompare(b.date));
   const hard = (x: GeneratedSession) => isHardSession(x.sessionType, x.structure);
+  const movable = (x: GeneratedSession) => pinnedDate == null || x.date !== pinnedDate;
+  // Would moving s[idx] onto `date` clear every *other* hard session?
+  const clears = (idx: number, date: string) =>
+    s.every((o, k) => k === idx || !hard(o) || daysBetween(o.date, date) > 1);
+
   for (let guard = 0, i = 1; i < s.length && guard < 64; i++) {
     if (!hard(s[i])) continue;
     let prev = -1;
@@ -633,15 +674,28 @@ export function spaceHardSessions(sessions: GeneratedSession[]): GeneratedSessio
       }
     }
     if (prev < 0 || daysBetween(s[prev].date, s[i].date) > 1) continue;
-    for (let j = i + 1; j < s.length; j++) {
-      if (hard(s[j]) || daysBetween(s[prev].date, s[j].date) < 2) continue;
-      const tmp = s[i].date;
-      s[i].date = s[j].date;
-      s[j].date = tmp;
+
+    let swapped = false;
+    for (const m of movable(s[i]) ? [i, prev] : [prev]) {
+      if (!movable(s[m])) continue;
+      // Nearest clearing day first, so a session moves as little as the rule allows.
+      const candidates = s
+        .map((_, j) => j)
+        .filter((j) => j !== m && !hard(s[j]) && movable(s[j]) && clears(m, s[j].date))
+        .sort((a, b) => daysBetween(s[a].date, s[m].date) - daysBetween(s[b].date, s[m].date));
+      if (candidates.length > 0) {
+        const j = candidates[0];
+        const tmp = s[m].date;
+        s[m].date = s[j].date;
+        s[j].date = tmp;
+        swapped = true;
+      }
+      if (swapped) break;
+    }
+    if (swapped) {
       s.sort((a, b) => a.date.localeCompare(b.date));
       guard += 1;
       i = 0; // restart: dates shifted
-      break;
     }
   }
   return s;
@@ -650,19 +704,28 @@ export function spaceHardSessions(sessions: GeneratedSession[]): GeneratedSessio
 /**
  * Guarantee the "never two hard days back-to-back" rule that `spaceHardSessions`
  * can only best-effort: when the week has no swappable easy day (e.g. 3 quality
- * sessions on a 3-run-day week), re-dating cannot separate them, so the later
- * hard session is downgraded to easy instead — same choice `enforceQualityCount`
- * makes for excess quality. Run last, after all date shuffling.
+ * sessions on a 3-run-day week), re-dating cannot separate them, so one of the
+ * pair is demoted instead. The long run is never the session sacrificed while
+ * the other one can go — and when it is the only candidate it demotes to a plain
+ * LONG, so the week still has its long run. Run last, after all date shuffling.
  */
 export function downgradeAdjacentHardSessions(sessions: GeneratedSession[]): GeneratedSession[] {
-  const s = [...sessions].sort((a, b) => a.date.localeCompare(b.date));
-  let lastHard: string | null = null;
-  return s.map((x) => {
-    if (!isHardSession(x.sessionType, x.structure)) return x;
-    if (lastHard != null && daysBetween(lastHard, x.date) <= 1) return downgradeToEasy(x);
-    lastHard = x.date;
-    return x;
-  });
+  const out = [...sessions]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((x) => ({ ...x }) as GeneratedSession);
+  const hard = (x: GeneratedSession) => isHardSession(x.sessionType, x.structure);
+  let lastHardIdx = -1;
+  for (let i = 0; i < out.length; i++) {
+    if (!hard(out[i])) continue;
+    if (lastHardIdx >= 0 && daysBetween(out[lastHardIdx].date, out[i].date) <= 1) {
+      const victim = isLongBucket(out[i]) && !isLongBucket(out[lastHardIdx]) ? lastHardIdx : i;
+      out[victim] = demoteHardSession(out[victim]);
+      if (victim === lastHardIdx) lastHardIdx = i;
+      continue;
+    }
+    lastHardIdx = i;
+  }
+  return out;
 }
 
 // Number of run days per week when the athlete gives no explicit preference.
@@ -682,10 +745,12 @@ export function resolveDaysPerWeek(
 }
 
 /**
- * Cap the week at `daysPerWeek` run days (the rest are rest days): drop the
- * latest easy/recovery fill runs first, protecting hard and long sessions; only
- * if still over do we drop protected sessions from the tail. Never adds sessions
- * (too-few is handled by the volume-fill logic).
+ * Cap the week at `daysPerWeek` run days (the rest are rest days). Sessions are
+ * dropped latest-first in three tiers, so the long run is the last thing to go:
+ * easy/recovery fill runs, then quality sessions, then long runs. At
+ * `daysPerWeek: 1` that leaves the long run standing, which is the right single
+ * run for a week. Never adds sessions (too-few is handled by the volume-fill
+ * logic).
  */
 export function enforceDaysPerWeek(
   sessions: GeneratedSession[],
@@ -696,18 +761,14 @@ export function enforceDaysPerWeek(
   const s = [...sessions].sort((a, b) => a.date.localeCompare(b.date));
   const keep = s.map(() => true);
   let excess = s.length - cap;
-  const protectedSession = (x: GeneratedSession) =>
-    isHardSession(x.sessionType, x.structure) || trainingBucketFor(x.sessionType) === "LONG";
-  for (let i = s.length - 1; i >= 0 && excess > 0; i--) {
-    if (!protectedSession(s[i])) {
-      keep[i] = false;
-      excess -= 1;
-    }
-  }
-  for (let i = s.length - 1; i >= 0 && excess > 0; i--) {
-    if (keep[i]) {
-      keep[i] = false;
-      excess -= 1;
+  const tier = (x: GeneratedSession) =>
+    isLongBucket(x) ? 2 : isHardSession(x.sessionType, x.structure) ? 1 : 0;
+  for (const t of [0, 1, 2]) {
+    for (let i = s.length - 1; i >= 0 && excess > 0; i--) {
+      if (keep[i] && tier(s[i]) === t) {
+        keep[i] = false;
+        excess -= 1;
+      }
     }
   }
   return s.filter((_, i) => keep[i]);
@@ -723,7 +784,11 @@ export function longRunOffset(preferredLongRunDay: number | null | undefined): n
   return Math.min(6, Math.max(0, preferredLongRunDay ?? DEFAULT_LONG_RUN_OFFSET));
 }
 
-/** Move the week's long-bucket session (LONG / PROGRESSIVE_LONG) onto the preferred long-run day. */
+/**
+ * Move the week's long-bucket session (LONG / PROGRESSIVE_LONG) onto the
+ * preferred long-run day, swapping dates with whatever already occupied that day
+ * so the week does not end up with two sessions stacked on one date.
+ */
 export function placeLongRun(
   sessions: GeneratedSession[],
   weekStart: string,
@@ -732,8 +797,17 @@ export function placeLongRun(
   const target = addDays(weekStart, longRunOffset(preferredLongRunDay));
   const s = sessions.map((x) => ({ ...x }));
   const idx = s.findIndex((x) => trainingBucketFor(x.sessionType) === "LONG");
-  if (idx >= 0) s[idx].date = target;
+  if (idx >= 0) {
+    const occupant = s.findIndex((x, i) => i !== idx && x.date === target);
+    if (occupant >= 0) s[occupant].date = s[idx].date;
+    s[idx].date = target;
+  }
   return s.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** The date the week's long run occupies, if it has one. */
+function longRunDate(sessions: GeneratedSession[]): string | null {
+  return sessions.find(isLongBucket)?.date ?? null;
 }
 
 // A cross-training session is represented as a plain `OTHER` run-type with no
@@ -817,9 +891,10 @@ function appendDistanceHint(description: string | null | undefined, meters: numb
 /**
  * Deterministically finalize one week's sessions. Order: repair dates into the
  * week + null every pace → cap at 7/week → enforce the polarization quality cap
- * (downgrade excess hard runs) → cap to the athlete's run-day count → space hard
- * sessions off consecutive days → pin the long run to the preferred day →
- * downgrade any hard session spacing could not separate → substitute easy runs with cross-training around an active injury → distribute
+ * (demote excess hard runs) → cap to the athlete's run-day count → pin the long
+ * run to the preferred day → space the remaining hard sessions off consecutive
+ * days around it → demote any hard session spacing could not separate →
+ * substitute easy runs with cross-training around an active injury → distribute
  * the remaining volume budget across the structureless fill runs (cross-training
  * sessions have null structure, so pace-nulling and this fill both apply to them
  * unchanged). All shaping steps are pure; the node passes settings in `params`.
@@ -874,11 +949,14 @@ export function assembleWeekSessionsWithNotices(
 
   sessions = enforceQualityCount(sessions, week.phase, params.intensityAggressiveness);
   sessions = enforceDaysPerWeek(sessions, params.daysPerWeek);
-  // Pin the long run AFTER spacing: `spaceHardSessions` swaps a hard session's
-  // date with a later easy one, and the long run is an eligible swap partner —
-  // pinning first let spacing move it straight back off the preferred day.
-  sessions = spaceHardSessions(sessions);
+  // Pin the long run FIRST, then space the rest around it. Spacing used to run
+  // first and pin afterwards, which moved the long run onto a day adjacent to a
+  // hard session that spacing never got to see — and the adjacency backstop then
+  // ate the long run itself. Spacing now treats the pinned day as immovable and
+  // re-dates the *other* session, so the classic Saturday-group-run +
+  // Sunday-long-run week resolves by moving the Saturday session.
   sessions = placeLongRun(sessions, week.startDate, params.preferredLongRunDay);
+  sessions = spaceHardSessions(sessions, longRunDate(sessions));
   const hardBeforeSpacing = sessions.filter((s) =>
     isHardSession(s.sessionType, s.structure),
   ).length;
@@ -888,7 +966,7 @@ export function assembleWeekSessionsWithNotices(
     notices.push({
       kind: "clamped",
       code: "hard_sessions_adjacent",
-      message: `Week ${week.weekIndex} drops ${hardBeforeSpacing - hardAfterSpacing} quality session${hardBeforeSpacing - hardAfterSpacing === 1 ? "" : "s"} to an easy run: with ${params.daysPerWeek} run days there was no way to keep two hard days off back-to-back. More run days would make room.`,
+      message: `Week ${week.weekIndex} drops ${hardBeforeSpacing - hardAfterSpacing} quality session${hardBeforeSpacing - hardAfterSpacing === 1 ? "" : "s"} to an easier run: with ${params.daysPerWeek} run days there was no free day left to separate them, once the long run was placed on your preferred day. More run days would make room.`,
       observed: hardBeforeSpacing,
       limit: hardAfterSpacing,
       weekIndex: week.weekIndex,

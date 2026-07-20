@@ -322,22 +322,130 @@ describe("assembleWeekSessions composition invariants (adversarial LLM weeks)", 
     }
   });
 
-  it("pins a long run to the preferred day whenever one survives the cuts", () => {
-    for (const { seed, week, params, out } of cases) {
-      const longs = out.filter(
-        (s) => s.sessionType === "LONG" || s.sessionType === "PROGRESSIVE_LONG",
-      );
-      if (longs.length === 0) continue;
-      const expected = new Date(`${week.startDate}T00:00:00Z`);
-      expected.setUTCDate(expected.getUTCDate() + longRunOffset(params.preferredLongRunDay));
-      const target = expected.toISOString().slice(0, 10);
-      // `placeLongRun` is documented as moving THE week's long run; when a
-      // malformed week carries several, only one is pinned.
-      expect({ seed, pinned: longs.some((s) => s.date === target) }).toEqual({
+  // This assertion used to `continue` when zero long runs survived — which made
+  // it vacuous on exactly the weeks where the guards had destroyed the long run,
+  // the bug it was written to catch. The long run is the week's anchor and the
+  // LAST thing the guards may sacrifice, so survival is the assertion.
+  const isLong = (s: GeneratedSession) =>
+    s.sessionType === "LONG" || s.sessionType === "PROGRESSIVE_LONG";
+  const preferredDay = (week: PlanMacroWeek, params: SessionGuardParams) => {
+    const d = new Date(`${week.startDate}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + longRunOffset(params.preferredLongRunDay));
+    return d.toISOString().slice(0, 10);
+  };
+
+  it("never destroys a long run the LLM asked for, and pins it to the preferred day", () => {
+    for (const { seed, week, params, raw, out } of cases) {
+      // Precondition on the INPUT only (never the outcome): the week asked for a
+      // long run, and no session was lost to the 7-per-week truncation.
+      if (raw.length > 7 || !raw.some(isLong)) continue;
+      const longs = out.filter(isLong);
+      expect({ seed, survived: longs.length > 0 }).toEqual({ seed, survived: true });
+      expect({ seed, pinned: longs.some((s) => s.date === preferredDay(week, params)) }).toEqual({
         seed,
         pinned: true,
       });
     }
+  });
+
+  // Fixed-shape cases: exactly one long run in an otherwise adversarial week, so
+  // survival is unconditional rather than dependent on what the PRNG emitted.
+  it("keeps the week's long run under every day-count / intensity / phase combination", () => {
+    for (const seed of SEEDS) {
+      const r = rng(seed);
+      const week: PlanMacroWeek = {
+        weekIndex: 1,
+        startDate: "2026-01-05",
+        phase: pick(r, planWeekPhaseEnum.enumValues),
+        targetDistanceMeters: 45_000,
+        notes: null,
+        keySessions: [],
+      };
+      const params: SessionGuardParams = {
+        intensityAggressiveness: pick(r, INTENSITY_AGGRESSIVENESS),
+        daysPerWeek: int(r, 1, 7),
+        preferredLongRunDay: pick(r, [null, 0, 3, 6]),
+        crossTrainingCount: int(r, 0, 3),
+      };
+      const hardType = pick(r, ["TEMPO", "LONG_INTERVALS", "HILL_SPRINTS"] as const);
+      const raw: GeneratedSession[] = [
+        { date: "2026-01-05", sessionType: "EASY", title: "e", description: null, structure: null },
+        { date: "2026-01-07", sessionType: "EASY", title: "e", description: null, structure: null },
+        { date: "2026-01-09", sessionType: "EASY", title: "e", description: null, structure: null },
+        {
+          date: "2026-01-10",
+          sessionType: hardType,
+          title: "q",
+          description: null,
+          structure: null,
+        },
+        {
+          date: pick(r, ["2026-01-07", "2026-01-09", "2026-01-11"]),
+          sessionType: pick(r, ["LONG", "PROGRESSIVE_LONG"] as const),
+          title: "l",
+          description: null,
+          structure: null,
+        },
+      ] as GeneratedSession[];
+      const out = assembleWeekSessions(week, raw, params);
+      const longs = out.filter(isLong);
+      expect({ seed, survived: longs.length > 0 }).toEqual({ seed, survived: true });
+      expect({ seed, pinned: longs.some((s) => s.date === preferredDay(week, params)) }).toEqual({
+        seed,
+        pinned: true,
+      });
+    }
+  });
+
+  // The layout this product exists to serve: Saturday club/group session plus a
+  // Sunday long run. Guards must resolve the adjacency by moving the SATURDAY
+  // session, never by eating the long run.
+  it("keeps both the Saturday group session and the Sunday long run (club-runner week)", () => {
+    const week: PlanMacroWeek = {
+      weekIndex: 1,
+      startDate: "2026-01-05",
+      phase: "build",
+      targetDistanceMeters: 50_000,
+      notes: null,
+      keySessions: [],
+    };
+    const structure = [
+      {
+        set_reps: 1,
+        steps: [
+          {
+            reps: 1,
+            work_type: "TIME" as const,
+            work_value: 1200,
+            target_pace: null,
+            target_paces: null,
+          },
+        ],
+      },
+    ];
+    const raw = [
+      { date: "2026-01-05", sessionType: "EASY", title: "e", description: null, structure: null },
+      { date: "2026-01-06", sessionType: "EASY", title: "e", description: null, structure: null },
+      { date: "2026-01-07", sessionType: "PROGRESSIVE_LONG", title: "l", description: null, structure },
+      { date: "2026-01-08", sessionType: "EASY", title: "e", description: null, structure: null },
+      { date: "2026-01-09", sessionType: "EASY", title: "e", description: null, structure: null },
+      { date: "2026-01-10", sessionType: "TEMPO", title: "t", description: null, structure },
+    ] as GeneratedSession[];
+
+    const out = assembleWeekSessions(week, raw, {
+      intensityAggressiveness: "balanced",
+      daysPerWeek: 6,
+      preferredLongRunDay: 6, // Sunday
+      crossTrainingCount: 0,
+    });
+
+    const long = out.find(isLong);
+    expect(long?.sessionType).toBe("PROGRESSIVE_LONG");
+    expect(long?.date).toBe("2026-01-11"); // Sunday, the preferred day
+    // The tempo survives too — it moved off Saturday rather than being downgraded.
+    const tempo = out.find((s) => s.sessionType === "TEMPO");
+    expect(tempo).toBeDefined();
+    expect(daysApart(tempo?.date ?? "", "2026-01-11") > 1).toBe(true);
   });
 
   it("never invents sessions the LLM did not return", () => {
