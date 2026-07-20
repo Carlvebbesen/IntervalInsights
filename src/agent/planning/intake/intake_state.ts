@@ -29,7 +29,9 @@ export const IntakeDraftSchema = z.object({
     .max(6)
     .nullable()
     .optional()
-    .describe("preferred long-run day, 0=Monday … 6=Sunday"),
+    .describe(
+      "preferred long-run day on a MONDAY-FIRST week: 0=Monday, 1=Tuesday … 5=Saturday, 6=Sunday. Sunday is 6, NOT 0.",
+    ),
   volumeAggressiveness: z.enum(VOLUME_AGGRESSIVENESS).nullable().optional(),
   intensityAggressiveness: z.enum(INTENSITY_AGGRESSIVENESS).nullable().optional(),
   maxWeeklyVolumeMeters: z
