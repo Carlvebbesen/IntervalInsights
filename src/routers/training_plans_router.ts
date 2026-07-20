@@ -1,18 +1,22 @@
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
+import { IntakeDraftSchema } from "../agent/planning/intake/intake_state";
 import {
   DEFAULT_INTENSITY_AGGRESSIVENESS,
   DEFAULT_VOLUME_AGGRESSIVENESS,
   INTENSITY_AGGRESSIVENESS,
   VOLUME_AGGRESSIVENESS,
 } from "../agent/planning/plan_builder_state";
+import * as intakeController from "../controllers/intake_controller";
 import * as planBuilderController from "../controllers/plan_builder_controller";
 import * as trainingPlanController from "../controllers/training_plan_controller";
 import {
   dailyQuota,
   PLAN_BUILDER_DAILY_MAX,
   PLAN_BUILDER_QUOTA,
+  PLAN_INTAKE_DAILY_MAX,
+  PLAN_INTAKE_QUOTA,
 } from "../middlewares/quota_middleware";
 import { requireRole } from "../middlewares/role_middleware";
 import {
@@ -249,6 +253,76 @@ trainingPlansRouter.post(
         : ({ action } as const);
     return planBuilderController.resumeTrainingPlan(c, threadId, resume);
   },
+);
+
+const intakeTurnSchema = z.object({
+  threadId: z
+    .string()
+    .regex(/^plan-intake:[0-9a-f-]{36}$/)
+    .optional(),
+  message: z.string().min(1).max(2000),
+});
+
+const IntakeTurnResponseSchema = z.object({
+  threadId: z.string(),
+  reply: z.string(),
+  draft: IntakeDraftSchema,
+  ready: z.boolean(),
+  brief: z.string().optional(),
+});
+
+const IntakeResetResponseSchema = z.object({ success: z.literal(true) });
+
+trainingPlansRouter.post(
+  "/intake",
+  describeRoute({
+    description:
+      "One turn of the pre-plan intake chat. Omit threadId to start a new conversation; pass it back to continue. The interviewer fills the plan-builder draft conversationally; `ready: true` (with `brief`) means the intake is finalized and the draft can be submitted to POST .../generate.",
+    responses: {
+      200: {
+        description: "Intake turn result",
+        content: { "application/json": { schema: resolver(IntakeTurnResponseSchema) } },
+      },
+      404: {
+        description: "Unknown thread or not owned by the authenticated user",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      409: {
+        description: "A reply is already in progress for this conversation",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      429: {
+        description: "Daily intake quota reached",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  dailyQuota(PLAN_INTAKE_QUOTA, PLAN_INTAKE_DAILY_MAX),
+  validator("json", intakeTurnSchema),
+  async (c) => c.json(await intakeController.runIntakeTurn(c, c.req.valid("json"))),
+);
+
+const intakeThreadParamSchema = z.object({
+  threadId: z.string().regex(/^plan-intake:[0-9a-f-]{36}$/),
+});
+
+trainingPlansRouter.delete(
+  "/intake/:threadId",
+  describeRoute({
+    description: "Reset (delete) an intake conversation thread.",
+    responses: {
+      200: {
+        description: "Reset result",
+        content: { "application/json": { schema: resolver(IntakeResetResponseSchema) } },
+      },
+      404: {
+        description: "Unknown thread or not owned by the authenticated user",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("param", intakeThreadParamSchema),
+  async (c) => c.json(await intakeController.resetIntake(c, c.req.valid("param").threadId)),
 );
 
 const planIdParamSchema = z.object({
