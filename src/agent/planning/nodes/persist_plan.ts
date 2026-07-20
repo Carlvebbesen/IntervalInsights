@@ -5,6 +5,7 @@ import {
   type CreateWeekInput,
   createWithChildren,
 } from "../../../repositories/training_plan_repository";
+import { assertPlanHasSessions } from "../guards";
 import {
   DEFAULT_INTENSITY_AGGRESSIVENESS,
   DEFAULT_VOLUME_AGGRESSIVENESS,
@@ -20,6 +21,7 @@ export async function persistPlan(
   const log = logger.child({ node: "persistPlan", userId: state.userId });
   const macro = state.macro;
   if (!macro) throw new Error("persistPlan requires a macro");
+  assertPlanHasSessions(macro.weeks, state.sessionsByWeek);
 
   const weeks: CreateWeekInput[] = macro.weeks.map((w) => {
     const wk = state.sessionsByWeek.find((s) => s.weekIndex === w.weekIndex);

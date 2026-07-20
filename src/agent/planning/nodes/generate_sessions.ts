@@ -1,7 +1,12 @@
 import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 import { logger } from "../../../logger";
 import { invokeWithRateLimitRetry } from "../../model";
-import { assembleWeekSessions, MAX_CROSS_TRAINING_PER_WEEK, resolveDaysPerWeek } from "../guards";
+import {
+  assembleWeekSessions,
+  assertPlanHasSessions,
+  MAX_CROSS_TRAINING_PER_WEEK,
+  resolveDaysPerWeek,
+} from "../guards";
 import type { GeneratedWeekSessions } from "../plan_builder_schemas";
 import {
   type AthleteContext,
@@ -63,6 +68,8 @@ export async function generateSessions(
       totalWeeks,
     });
   }
+
+  assertPlanHasSessions(macro.weeks, sessionsByWeek);
 
   const total = sessionsByWeek.reduce((n, w) => n + w.sessions.length, 0);
   log.info({ weeks: sessionsByWeek.length, sessions: total }, "generated sessions");

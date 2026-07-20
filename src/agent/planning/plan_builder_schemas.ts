@@ -24,7 +24,10 @@ export const PlanMacroSchema = z.object({
 export type PlanMacro = z.infer<typeof PlanMacroSchema>;
 
 export const GeneratedSessionSchema = z.object({
-  date: z.string().describe("YYYY-MM-DD; must fall within the target week"),
+  // Same strictness the user-facing API applies to a caller-supplied date: a
+  // bare z.string() let a malformed LLM date through repairSessionDate (NaN
+  // fails both bound comparisons) straight into the persisted session.
+  date: z.string().date().describe("YYYY-MM-DD; must fall within the target week"),
   sessionType: z.enum(trainingTypeEnum.enumValues),
   title: z.string(),
   description: z.string().nullable().optional(),

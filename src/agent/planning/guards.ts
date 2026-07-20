@@ -1,3 +1,4 @@
+import { AppError } from "../../error";
 import type { TrainingType } from "../../schema/enums";
 import { INTERVAL_TRAINING_TYPES, type PlanWeekPhase, trainingBucketFor } from "../../schema/enums";
 import type { WorkoutStructureSet } from "../../schemas/agent_schemas";
@@ -52,12 +53,18 @@ export function expectedWeekStarts(startDate: string, endDate: string): string[]
   return out;
 }
 
-/** Clamp a date into [weekStart, weekStart+6] (its Monday-aligned week bounds). */
+/**
+ * Clamp a date into [weekStart, weekStart+6] (its Monday-aligned week bounds).
+ * An unparsable date falls back to the week start — a NaN date fails BOTH bound
+ * comparisons, so returning it unchanged would pass malformed text through to
+ * the persisted session.
+ */
 export function repairSessionDate(date: string, weekStart: string): string {
   const d = parseUTC(date);
   const start = parseUTC(weekStart);
   const end = new Date(start);
   end.setUTCDate(end.getUTCDate() + 6);
+  if (Number.isNaN(d.getTime())) return fmt(start);
   if (d < start) return fmt(start);
   if (d > end) return fmt(end);
   return date;
@@ -651,6 +658,28 @@ export function substituteCrossTraining(
   if (easyIdx.length < 2) return sessions;
   const convert = new Set(easyIdx.slice(0, Math.min(want, easyIdx.length)));
   return sessions.map((s, i) => (convert.has(i) ? toCrossTraining(s) : s));
+}
+
+/**
+ * Post-condition before a generated plan is shown or persisted: a plan with no
+ * sessions at all, or with any single week left empty, is a FAILED generation —
+ * almost always a null/unparsable LLM response that the `?? []` fallbacks
+ * quietly turned into an empty week. Persisting it produces an `active` plan
+ * containing nothing, reported to the client as a successful `done` with a
+ * planId. Throw instead so the SSE stream emits `error` and nothing is written.
+ */
+export function assertPlanHasSessions(
+  weeks: { weekIndex: number }[],
+  sessionsByWeek: { weekIndex: number; sessions: unknown[] }[],
+): void {
+  const empty = weeks.filter(
+    (w) => (sessionsByWeek.find((s) => s.weekIndex === w.weekIndex)?.sessions.length ?? 0) === 0,
+  );
+  if (empty.length === 0) return;
+  throw new AppError(
+    502,
+    `Plan generation produced no sessions for week(s) ${empty.map((w) => w.weekIndex).join(", ")}`,
+  );
 }
 
 /** Everything the session guards need beyond the macro week itself. */
