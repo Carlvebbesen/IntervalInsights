@@ -134,6 +134,17 @@ export function clampVolumeRamp(targets: number[]): number[] {
 // rather than the race goal. ~20 km/wk is a safe restart base.
 export const DEFAULT_BASELINE_WEEKLY_METERS = 20_000;
 
+// Below this, a computed trailing average is not a training baseline — it is an
+// artefact of a near-empty 28-day window (see gather_context's minimum-evidence
+// rule, which shares this constant). Treated as ABSENT so the default anchors.
+export const MIN_BASELINE_WEEKLY_METERS = 5_000;
+
+// Below this, a WEEKLY TARGET is missing/garbage LLM data rather than a coaching
+// choice — a sub-kilometre week is not a prescription. Well under the smallest
+// value the pipeline can legitimately produce (a taper week off the minimum
+// baseline is ~1.4 km), so this only ever screens raw LLM output.
+export const MIN_PLAUSIBLE_WEEKLY_METERS = 1_000;
+
 // Weekly ramp ceilings by the volume-aggressiveness dial. 10%/wk is the classic
 // (folklore-but-standard) safe-progression rule; gradual/progressive bracket it.
 // `burst` is a one-off week-over-week jump the clamp tolerates once — only
@@ -160,14 +171,17 @@ export const DOWN_WEEK_FACTOR = 0.72;
 /**
  * Force week 1 to the athlete's REAL trailing baseline (or a conservative floor
  * when there is no history) — never the race goal. Starting above what they are
- * actually running is the top cause of over-ramp injury. A non-positive or
- * non-finite baseline is treated as ABSENT: anchoring week 1 to 0 propagates
- * through the whole ramp and yields a plan of zero-kilometre weeks.
+ * actually running is the top cause of over-ramp injury. A baseline that is
+ * non-finite or below `MIN_BASELINE_WEEKLY_METERS` is treated as ABSENT:
+ * anchoring week 1 to 0 (or to 1 metre) propagates through the whole ramp and
+ * yields a plan of zero-kilometre weeks.
  */
 export function anchorWeekOne(targets: number[], baselineWeeklyMeters: number | null): number[] {
   if (targets.length === 0) return targets;
   const usable =
-    baselineWeeklyMeters != null && Number.isFinite(baselineWeeklyMeters) && baselineWeeklyMeters > 0
+    baselineWeeklyMeters != null &&
+    Number.isFinite(baselineWeeklyMeters) &&
+    baselineWeeklyMeters >= MIN_BASELINE_WEEKLY_METERS
       ? baselineWeeklyMeters
       : DEFAULT_BASELINE_WEEKLY_METERS;
   const out = [...targets];
@@ -176,14 +190,16 @@ export function anchorWeekOne(targets: number[], baselineWeeklyMeters: number | 
 }
 
 /**
- * A non-positive weekly target is missing LLM data, not a prescribed rest week —
- * carry the previous week forward rather than leaving a 0 km hole. Flat, so it
+ * A weekly target below `MIN_PLAUSIBLE_WEEKLY_METERS` is missing LLM data, not a
+ * prescribed rest week — carry the previous week forward rather than leaving a
+ * hole. Without this a single garbage `0` or `1` propagates for the rest of the
+ * plan, because the ramp clamp lets every drop through untouched. Flat, so it
  * invents no ramp; the deliberate drops (down weeks, taper) are applied later.
  */
 export function floorWeeklyTargets(targets: number[]): number[] {
   const out = [...targets];
   for (let i = 1; i < out.length; i++) {
-    if (!(out[i] > 0)) out[i] = out[i - 1];
+    if (!(out[i] >= MIN_PLAUSIBLE_WEEKLY_METERS)) out[i] = out[i - 1];
   }
   return out;
 }
@@ -698,8 +714,8 @@ function appendDistanceHint(description: string | null | undefined, meters: numb
 /**
  * Deterministically finalize one week's sessions. Order: repair dates into the
  * week + null every pace → cap at 7/week → enforce the polarization quality cap
- * (downgrade excess hard runs) → cap to the athlete's run-day count → pin the
- * long run to the preferred day → space hard sessions off consecutive days →
+ * (downgrade excess hard runs) → cap to the athlete's run-day count → space hard
+ * sessions off consecutive days → pin the long run to the preferred day →
  * downgrade any hard session spacing could not separate → substitute easy runs with cross-training around an active injury → distribute
  * the remaining volume budget across the structureless fill runs (cross-training
  * sessions have null structure, so pace-nulling and this fill both apply to them
@@ -724,8 +740,11 @@ export function assembleWeekSessions(
 
   sessions = enforceQualityCount(sessions, week.phase, params.intensityAggressiveness);
   sessions = enforceDaysPerWeek(sessions, params.daysPerWeek);
-  sessions = placeLongRun(sessions, week.startDate, params.preferredLongRunDay);
+  // Pin the long run AFTER spacing: `spaceHardSessions` swaps a hard session's
+  // date with a later easy one, and the long run is an eligible swap partner —
+  // pinning first let spacing move it straight back off the preferred day.
   sessions = spaceHardSessions(sessions);
+  sessions = placeLongRun(sessions, week.startDate, params.preferredLongRunDay);
   sessions = downgradeAdjacentHardSessions(sessions);
   sessions = substituteCrossTraining(sessions, params.crossTrainingCount);
   sessions.sort((a, b) => a.date.localeCompare(b.date));

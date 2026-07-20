@@ -11,6 +11,7 @@ import { findOrCreateUserSettings } from "../../../repositories/user_settings_re
 import { RUNNING_SPORT_TYPES, type TrainingType, trainingTypeEnum } from "../../../schema/enums";
 import { computeFitnessDay } from "../../../services/fitness_metrics_service";
 import { fetchPaceAnchor, predictRaceTimeSecFromVdot } from "../../../services/pace_anchor_service";
+import { MIN_BASELINE_WEEKLY_METERS } from "../guards";
 import type {
   ActiveHealthEvent,
   AthleteBaselineVolume,
@@ -53,8 +54,9 @@ function toISODate(d: Date | string): string {
 // the divide-by-4 to mean anything (one 5 km run would imply a 1.25 km week),
 // so we report ABSENT and let the documented DEFAULT_BASELINE_WEEKLY_METERS
 // re-entry floor take over rather than anchoring a plan to a phantom number.
+// The volume floor is shared with `anchorWeekOne`, which applies the same rule
+// defensively to whatever baseline it is handed.
 export const MIN_BASELINE_RUNS = 3;
-export const MIN_BASELINE_WEEKLY_METERS = 5_000;
 
 /** A row's distance in meters, or null when absent/unparsable (never a silent 0). */
 function runDistanceMeters(distance: number | string | null): number | null {
