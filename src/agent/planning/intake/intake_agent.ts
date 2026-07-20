@@ -1,5 +1,5 @@
 import type { AIMessage, BaseMessage } from "@langchain/core/messages";
-import { gptMiniModel } from "../../model";
+import { getIntakeModel } from "../../model";
 import { intakeTools } from "./intake_tools";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -22,7 +22,7 @@ RULES
 - After finalizing, tell the athlete they can review the settings and start the plan builder.`;
 }
 
-const model = gptMiniModel.bindTools(intakeTools);
+const model = getIntakeModel().bindTools(intakeTools);
 
 // The intake graph's single LLM seam — tests stub this to avoid live calls.
 export function invokeIntakeModel(messages: BaseMessage[]): Promise<AIMessage> {
