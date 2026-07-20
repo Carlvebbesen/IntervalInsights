@@ -15,15 +15,17 @@ import {
 } from "../plan_builder_state";
 import { invokeGenerateSessionsAgent, SESSION_BATCH_WEEKS } from "../plan_sessions_agent";
 
-/** Observed average run days/week from the athlete's recent weeks (null when no history). */
-function observedRunDaysPerWeek(ctx: AthleteContext): number | null {
-  const weeks = ctx.recentWeeks;
-  if (weeks.length === 0) return null;
-  const total = weeks.reduce(
-    (n, w) => n + Object.values(w.typeCounts).reduce((a, b) => a + b, 0),
-    0,
-  );
-  return total / weeks.length;
+/**
+ * Observed average run days/week from the athlete's recent weeks (null when no
+ * week has a run). Zero-run weeks (vacation, injury) are gaps, not routine —
+ * averaging them in resolved a 5-day runner with two weeks off to ~3 days.
+ */
+export function observedRunDaysPerWeek(ctx: AthleteContext): number | null {
+  const active = ctx.recentWeeks
+    .map((w) => Object.values(w.typeCounts).reduce((a, b) => a + b, 0))
+    .filter((runs) => runs > 0);
+  if (active.length === 0) return null;
+  return active.reduce((a, b) => a + b, 0) / active.length;
 }
 
 export async function generateSessions(

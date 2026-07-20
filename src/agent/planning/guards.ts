@@ -531,7 +531,16 @@ export function shapeMacro(
     ),
     params.maxWeeklyVolumeMeters,
   );
-  const final = shaped.map((w, i) => ({ ...w, targetDistanceMeters: capped[i] }));
+  // The LLM wrote each week's notes against its own proposed volume; once the
+  // shaping stages move a week by more than this, the prose ("recovery week,
+  // ~18% drop") contradicts the stored number — drop it rather than lie.
+  const NOTES_DRIFT_TOLERANCE = 0.15;
+  const final = shaped.map((w, i) => {
+    const req = requested[i];
+    const invalidated =
+      req >= MIN_PLAUSIBLE_WEEKLY_METERS && Math.abs(capped[i] - req) > req * NOTES_DRIFT_TOLERANCE;
+    return { ...w, targetDistanceMeters: capped[i], notes: invalidated ? null : w.notes };
+  });
 
   if (rampIdx < 0) {
     const peakIdx = firstReduced(
@@ -822,9 +831,9 @@ function longRunDate(sessions: GeneratedSession[]): string | null {
 // A cross-training session is represented as a plain `OTHER` run-type with no
 // structure — the schema has no dedicated cross-training value (OTHER is the
 // catch-all). The app renders OTHER; the title/description carry the intent.
-export const CROSS_TRAINING_TITLE = "Cross-training (elliptical / bike / pool)";
+export const CROSS_TRAINING_TITLE = "Cross-training (elliptical / spinning)";
 const CROSS_TRAINING_DESCRIPTION =
-  "Cross-training substitute for an easy run to protect the active injury — same duration/load.";
+  "Elliptical or spinning (indoor bike) substitute for an easy run to protect the active injury — same duration/load.";
 export const MAX_CROSS_TRAINING_PER_WEEK = 2;
 
 function toCrossTraining(s: GeneratedSession): GeneratedSession {
@@ -891,6 +900,12 @@ export type SessionGuardParams = {
   preferredLongRunDay: number | null;
   crossTrainingCount: number;
 };
+
+// A long run beyond ~40% of the week's volume is an outsized injury risk —
+// same family as `capLongestRunSpike`'s 35% implied-share assumption. Applied
+// to the volume FILL: with few unstructured sessions the even split otherwise
+// dumps nearly the whole weekly target onto the long run (observed: 71 km).
+export const LONG_RUN_MAX_FILL_SHARE = 0.4;
 
 function appendDistanceHint(description: string | null | undefined, meters: number): string {
   const hint = `~${(meters / 1000).toFixed(1)} km`;
@@ -990,8 +1005,29 @@ export function assembleWeekSessionsWithNotices(
   );
   const fill = sessions.filter((s) => !s.structure || s.structure.length === 0);
   if (fill.length > 0) {
-    const per = Math.round(Math.max(0, week.targetDistanceMeters - structuredMeters) / fill.length);
-    for (const s of fill) s.description = appendDistanceHint(s.description, per);
+    const budget = Math.max(0, week.targetDistanceMeters - structuredMeters);
+    const per = Math.round(budget / fill.length);
+    const longFill = sessions.length >= 2 ? fill.find(isLongBucket) : undefined;
+    const longMax = Math.round(week.targetDistanceMeters * LONG_RUN_MAX_FILL_SHARE);
+    if (longFill && per > longMax) {
+      const others = fill.filter((s) => s !== longFill);
+      // No other fill run to absorb the excess → it is simply not planned;
+      // planned < target is the honest outcome, a 71 km long run is not.
+      const perOther = others.length > 0 ? Math.round((budget - longMax) / others.length) : 0;
+      for (const s of fill) {
+        s.description = appendDistanceHint(s.description, s === longFill ? longMax : perOther);
+      }
+      notices.push({
+        kind: "clamped",
+        code: "long_run_share_capped",
+        message: `Week ${week.weekIndex}'s long run was held to ${fmtKm(longMax)} instead of ${fmtKm(per)}: a single long run beyond ${Math.round(LONG_RUN_MAX_FILL_SHARE * 100)}% of the week's volume is an outsized injury risk. The remaining distance ${others.length > 0 ? "moves to the week's other runs" : "is left unplanned"}.`,
+        observed: per,
+        limit: longMax,
+        weekIndex: week.weekIndex,
+      });
+    } else {
+      for (const s of fill) s.description = appendDistanceHint(s.description, per);
+    }
   }
 
   return { sessions, notices };
