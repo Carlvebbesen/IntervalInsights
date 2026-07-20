@@ -81,11 +81,14 @@ export function resolvePlanBuilderModelName(configured?: string | null): string 
 
 export function getPlanBuilderModel(): ChatOpenAI {
   const model = resolvePlanBuilderModelName(config.PLAN_BUILDER_MODEL);
+  const effort = config.PLAN_BUILDER_REASONING_EFFORT;
   return new ChatOpenAI({
     model,
     maxRetries: 2,
     timeout: 300_000,
     callbacks: [new TokenUsageCallback(model)],
+    // Unset keeps the provider default; the option is ignored by non-reasoning models.
+    ...(effort ? { reasoning: { effort } } : {}),
   });
 }
 
