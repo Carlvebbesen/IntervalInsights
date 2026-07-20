@@ -4,6 +4,7 @@ import {
   applyPlanInputPatch,
   describePlanInputPatch,
   extractPlanInputPatch,
+  FEEDBACK_PROSE_ONLY_NOTICE,
 } from "../feedback_intent";
 import { MAX_REVIEW_ROUNDS, PlanReviewResumeSchema } from "../plan_builder_schemas";
 import type { PlanBuilderState } from "../plan_builder_state";
@@ -53,6 +54,7 @@ export async function macroReview(state: PlanBuilderState): Promise<Partial<Plan
     action: "adjust",
     macroFeedback: [...state.macroFeedback, parsed.data.feedback],
     input: applyPlanInputPatch(state.input, patch),
-    feedbackNotices: describePlanInputPatch(patch),
+    feedbackNotices:
+      Object.keys(patch).length > 0 ? describePlanInputPatch(patch) : [FEEDBACK_PROSE_ONLY_NOTICE],
   };
 }

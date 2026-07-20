@@ -421,6 +421,11 @@ function firstReduced(before: number[], after: number[]): number {
   return -1;
 }
 
+// LLM wording that claims a week is a cutback: recovery vocabulary or a bare
+// negative percentage ("-20%", "~-20%"). Only ever tested against weeks whose
+// final volume did not drop, where any such claim is false by construction.
+const RECOVERY_NOTE_PATTERN = /recovery|cutback|down week|deload|~?\s*[-−]\s*\d+(\.\d+)?\s*%/i;
+
 export function repairMacro(
   raw: PlanMacro,
   input: PlanBuilderInput,
@@ -475,52 +480,9 @@ export function shapeMacro(
   const maxCapped = capMaxWeekly(longCapped, params.maxWeeklyVolumeMeters);
   const targets = enforceDownWeeks(maxCapped, buildWeeks);
 
-  if (requested[0] > 0 && anchored[0] < requested[0] * 0.99) {
-    notices.push({
-      kind: "clamped",
-      code: "baseline_anchor",
-      message: `Week 1 starts at ${fmtKm(anchored[0])} instead of ${fmtKm(requested[0])}: the plan anchors your first week to what you are actually running now, not to the goal. Starting above your real baseline is the top cause of injury.`,
-      observed: requested[0],
-      limit: anchored[0],
-      weekIndex: 1,
-    });
-  }
-
   const rampIdx = firstReduced(floored, ramped);
-  if (rampIdx >= 0) {
-    notices.push({
-      kind: "clamped",
-      code: "weekly_ramp_exceeded",
-      message: `Week ${rampIdx + 1} was cut from ${fmtKm(floored[rampIdx])} to ${fmtKm(ramped[rampIdx])}: your ${params.volumeAggressiveness} build-up allows about +${Math.round(ramp.ceiling * 100)}% a week. Ramping faster is the top cause of running injury, so this ceiling is not negotiable — pick a more aggressive build-up or a longer plan to get there safely.`,
-      observed: floored[rampIdx],
-      limit: ramped[rampIdx],
-      weekIndex: rampIdx + 1,
-    });
-  }
-
   const longIdx = firstReduced(ramped, longCapped);
-  if (longIdx >= 0) {
-    notices.push({
-      kind: "clamped",
-      code: "long_run_spike",
-      message: `Week ${longIdx + 1} was cut from ${fmtKm(ramped[longIdx])} to ${fmtKm(longCapped[longIdx])}: that volume implies a long run well beyond your recent longest of ${fmtKm(params.longestRunMeters ?? 0)}. A sudden long-run jump is a stronger injury signal than weekly volume.`,
-      observed: ramped[longIdx],
-      limit: longCapped[longIdx],
-      weekIndex: longIdx + 1,
-    });
-  }
-
   const maxIdx = firstReduced(longCapped, maxCapped);
-  if (maxIdx >= 0) {
-    notices.push({
-      kind: "clamped",
-      code: "max_weekly_volume_exceeded",
-      message: `Week ${maxIdx + 1} was capped at ${fmtKm(maxCapped[maxIdx])} by your own ${fmtKm(params.maxWeeklyVolumeMeters ?? 0)} weekly ceiling. Raise the ceiling if you want more.`,
-      observed: longCapped[maxIdx],
-      limit: maxCapped[maxIdx],
-      weekIndex: maxIdx + 1,
-    });
-  }
 
   let shaped: PlanMacroWeek[] = phased.map((w, i) => ({ ...w, targetDistanceMeters: targets[i] }));
   if (taperCount > 0) shaped = applyTaper(shaped, taperCount, raceAnchored);
@@ -537,15 +499,80 @@ export function shapeMacro(
     ),
     params.maxWeeklyVolumeMeters,
   );
+
+  // Each rule is DETECTED at its own stage (that is what names the refusal),
+  // but the notice quotes the FINAL capped value: an intermediate number (pre
+  // down-weeks/taper) is one the athlete never sees in the printed plan.
+  if (requested[0] > 0 && anchored[0] < requested[0] * 0.99) {
+    notices.push({
+      kind: "clamped",
+      code: "baseline_anchor",
+      message: `Week 1 starts at ${fmtKm(capped[0])} instead of ${fmtKm(requested[0])}: the plan anchors your first week to what you are actually running now, not to the goal. Starting above your real baseline is the top cause of injury.`,
+      observed: requested[0],
+      limit: capped[0],
+      weekIndex: 1,
+    });
+  }
+
+  if (rampIdx >= 0) {
+    notices.push({
+      kind: "clamped",
+      code: "weekly_ramp_exceeded",
+      message: `Week ${rampIdx + 1} was cut from ${fmtKm(floored[rampIdx])} to ${fmtKm(capped[rampIdx])}: your ${params.volumeAggressiveness} build-up allows about +${Math.round(ramp.ceiling * 100)}% a week. Ramping faster is the top cause of running injury, so this ceiling is not negotiable — pick a more aggressive build-up or a longer plan to get there safely.`,
+      observed: floored[rampIdx],
+      limit: capped[rampIdx],
+      weekIndex: rampIdx + 1,
+    });
+  }
+
+  if (longIdx >= 0) {
+    notices.push({
+      kind: "clamped",
+      code: "long_run_spike",
+      message: `Week ${longIdx + 1} was cut from ${fmtKm(ramped[longIdx])} to ${fmtKm(capped[longIdx])}: that volume implies a long run well beyond your recent longest of ${fmtKm(params.longestRunMeters ?? 0)}. A sudden long-run jump is a stronger injury signal than weekly volume.`,
+      observed: ramped[longIdx],
+      limit: capped[longIdx],
+      weekIndex: longIdx + 1,
+    });
+  }
+
+  if (maxIdx >= 0) {
+    notices.push({
+      kind: "clamped",
+      code: "max_weekly_volume_exceeded",
+      message: `Week ${maxIdx + 1} was capped at ${fmtKm(capped[maxIdx])} by your own ${fmtKm(params.maxWeeklyVolumeMeters ?? 0)} weekly ceiling. Raise the ceiling if you want more.`,
+      observed: longCapped[maxIdx],
+      limit: capped[maxIdx],
+      weekIndex: maxIdx + 1,
+    });
+  }
+
   // The LLM wrote each week's notes against its own proposed volume; once the
   // shaping stages move a week by more than this, the prose ("recovery week,
   // ~18% drop") contradicts the stored number — drop it rather than lie.
   const NOTES_DRIFT_TOLERANCE = 0.15;
-  const final = shaped.map((w, i) => {
+  const drifted = shaped.map((w, i) => {
     const req = requested[i];
     const invalidated =
       req >= MIN_PLAUSIBLE_WEEKLY_METERS && Math.abs(capped[i] - req) > req * NOTES_DRIFT_TOLERANCE;
     return { ...w, targetDistanceMeters: capped[i], notes: invalidated ? null : w.notes };
+  });
+
+  // Recovery labelling is deterministic: the guards decide where the cutback
+  // weeks are, so a real dip (≥10% below the prior week, taper/race excluded)
+  // gets a note computed from the final numbers — replacing whatever the LLM
+  // wrote — and a week that does NOT drop can never claim to be one.
+  const final = drifted.map((w, i) => {
+    const prev = i > 0 ? capped[i - 1] : null;
+    const tail = w.phase === "taper" || w.phase === "race";
+    if (!tail && prev != null && prev > 0 && capped[i] <= prev * 0.9) {
+      const drop = Math.round((1 - capped[i] / prev) * 100);
+      return { ...w, notes: `Recovery week (−${drop}%).` };
+    }
+    if ((prev == null || capped[i] >= prev) && w.notes && RECOVERY_NOTE_PATTERN.test(w.notes)) {
+      return { ...w, notes: null };
+    }
+    return w;
   });
 
   if (rampIdx < 0) {

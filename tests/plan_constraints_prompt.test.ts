@@ -79,6 +79,20 @@ describe("plan-builder prompts wire in scheduling constraints", () => {
     expect(without[0]).not.toContain("SCHEDULING CONSTRAINTS");
   });
 
+  // The macro must not promise quality the sessions layer's qualityCap denies
+  // (base weeks allow 1 quality session; promising a tempo AND an interval set
+  // is an undeliverable keySessions list the athlete will notice).
+  it("macro prompt caps promised key sessions to what each phase can deliver", async () => {
+    const prompts = capturePrompt();
+    await invokeProposeMacroAgent(
+      ctx,
+      { startDate: "2026-01-05", endDate: "2026-01-25" },
+      [],
+    );
+    expect(prompts[0]).toContain("at most ONE quality key session");
+    expect(prompts[0]).toContain("build and peak weeks may list");
+  });
+
   it("sessions prompt includes the constraints block when constraintsText is set, omits it when null", async () => {
     const withConstraints = capturePrompt();
     await invokeGenerateSessionsAgent(ctx, [macroWeek], [], CONSTRAINTS);

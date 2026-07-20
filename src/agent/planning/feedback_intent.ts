@@ -133,6 +133,12 @@ ${settings}
     the Tuesday session", "make it better", "the second week looks odd" must
     return null for every field. Those are handled elsewhere as prose; do not
     guess a setting from them.
+  - A request explicitly scoped to a PART of the plan — "to start", "at first",
+    "early weeks", "in the beginning", "for the first few weeks", or a specific
+    week range — is NOT a global setting change: return null for
+    volumeAggressiveness and intensityAggressiveness. The prose reaches the
+    coach and is handled locally in those weeks.
+    Worked example: "keep it easier to start" → all fields null.
   - "I want to run 6 days" → daysPerWeek 6. "Long run on Saturday" →
     preferredLongRunDay 5. "Cap me at 60 km a week" → maxWeeklyVolumeMeters 60000.
   - "Build up faster / add more mileage over time" → volumeAggressiveness
@@ -204,6 +210,18 @@ const FIELD_LABELS: Record<keyof PlanInputPatch, string> = {
   intensityAggressiveness: "Intensity",
   maxWeeklyVolumeMeters: "Weekly distance ceiling",
   crossTrainingPerWeek: "Cross-training sessions per week",
+};
+
+/**
+ * The acknowledgment owed when a feedback round patches nothing: the prose
+ * still reaches the coach, but a round with zero notices reads as a silent
+ * refusal once the guards override what the coach wrote.
+ */
+export const FEEDBACK_PROSE_ONLY_NOTICE: PlanNotice = {
+  kind: "applied",
+  code: "feedback_prose_only",
+  message:
+    "Your feedback was passed to the coach as written — it didn't match any adjustable plan setting, so the safety rules (starting volume, weekly ramp) still apply unchanged.",
 };
 
 /** One "I applied this" notice per patched field, for the next review gate. */

@@ -153,6 +153,9 @@ ${feedbackBlock}
     add a short accommodation note in the notes of the affected weeks.
   - Use taper/race phases only in the final weeks, and only when a race anchors
     the plan.
+  - keySessions must be deliverable under the plan's quality caps: base-phase
+    weeks list at most ONE quality key session; build and peak weeks may list
+    two. Never promise both a tempo and an interval set in the same base week.
   - Do NOT output paces, heart-rate targets, or per-session structure — only
     weekly intent and key-session labels.`;
 

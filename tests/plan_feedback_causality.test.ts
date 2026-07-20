@@ -132,6 +132,25 @@ describe("extractPlanInputPatch", () => {
     nulled.mockRestore();
   });
 
+  it("prompts the extractor to keep time-scoped feedback away from the global dials", async () => {
+    const prompts: string[] = [];
+    const spy = spyOn(model, "invokeStructured").mockImplementation((async (
+      _schema,
+      prompt: string,
+    ) => {
+      prompts.push(prompt);
+      return null;
+    }) as typeof model.invokeStructured);
+
+    await extractPlanInputPatch("keep it lower intensity to start", baseInput, "macro");
+
+    expect(prompts[0]).toContain("scoped to a PART of the plan");
+    expect(prompts[0]).toContain('"to start"');
+    expect(prompts[0]).toContain("volumeAggressiveness and intensityAggressiveness");
+    expect(prompts[0]).toContain('"keep it easier to start" → all fields null');
+    spy.mockRestore();
+  });
+
   it("drops a value that already matches the current setting", async () => {
     const spy = spyOn(model, "invokeStructured").mockResolvedValue({
       daysPerWeek: 3,
@@ -205,6 +224,42 @@ describe("safety clamps refuse out loud", () => {
     expect(cap?.observed).toBe(2);
     expect(cap?.limit).toBe(0);
     expect(sessions.every((s) => s.sessionType === "EASY")).toBe(true);
+  });
+
+  // The Kim bug: the ramp notice quoted its own stage's value ("cut to 48.4 km")
+  // while later stages (down week) lowered the printed week to 31.7 km.
+  it("cites the FINAL week volume when a later stage lowers a ramp-clamped week further", () => {
+    const raw: PlanMacro = {
+      name: "P",
+      rationale: "r",
+      weeks: [30_000, 33_000, 36_300, 60_000, 43_000].map((targetDistanceMeters, i) => ({
+        weekIndex: i + 1,
+        startDate: "ignored",
+        phase: "build" as const,
+        targetDistanceMeters,
+        keySessions: [],
+      })),
+    };
+
+    const { macro, notices } = shapeMacro(
+      raw,
+      { startDate: "2026-01-05", endDate: "2026-02-08" },
+      {
+        baselineWeeklyMeters: 30_000,
+        longestRunMeters: null,
+        volumeAggressiveness: "steady",
+        maxWeeklyVolumeMeters: null,
+        raceDistanceMeters: null,
+      },
+    );
+
+    // Ramp clamp bit week 4 (60 km), then enforceDownWeeks lowered it further.
+    expect(macro.weeks[3].targetDistanceMeters).toBe(26_136);
+    const ramp = notices.find((n) => n.code === "weekly_ramp_exceeded");
+    expect(ramp?.weekIndex).toBe(4);
+    expect(ramp?.observed).toBe(60_000);
+    expect(ramp?.limit).toBe(26_136);
+    expect(ramp?.message).toContain("26.1 km");
   });
 
   it("stays silent when nothing was refused", () => {
@@ -364,6 +419,47 @@ describe("feedback changes the guarded output (real graph)", () => {
     const payload = await payloadOf(graph, thread);
     const applied = (payload.notices as PlanNotice[]).find((n) => n.kind === "applied");
     expect(applied?.code).toBe("crossTrainingPerWeek");
+  });
+
+  it("acknowledges a feedback round whose patch is empty with a prose-only notice", async () => {
+    const graph = await buildPlanBuilderGraph();
+    const thread = newThread();
+    await resetPlanBuilderThread(thread);
+
+    nextIntent = {
+      daysPerWeek: null,
+      preferredLongRunDay: null,
+      volumeAggressiveness: null,
+      intensityAggressiveness: null,
+      maxWeeklyVolumeMeters: null,
+    };
+    await graph.invoke({ userId, input: baseInput }, config(thread));
+    await graph.invoke(
+      new Command({ resume: { action: "adjust", feedback: "make week 1 about 5 km" } }),
+      config(thread),
+    );
+
+    const state = await graph.getState(config(thread));
+    const stateNotices = state.values.feedbackNotices as PlanNotice[];
+    expect(stateNotices).toHaveLength(1);
+    expect(stateNotices[0].code).toBe("feedback_prose_only");
+    expect(stateNotices[0].kind).toBe("applied");
+
+    const payload = await payloadOf(graph, thread);
+    const notice = (payload.notices as PlanNotice[]).find((n) => n.code === "feedback_prose_only");
+    expect(notice?.kind).toBe("applied");
+    expect(notice?.message).toContain("passed to the coach");
+
+    // The sessions gate owes the same acknowledgment.
+    await graph.invoke(new Command({ resume: { action: "accept" } }), config(thread));
+    await graph.invoke(
+      new Command({ resume: { action: "adjust", feedback: "the Tuesday run feels wrong" } }),
+      config(thread),
+    );
+    const sessionsPayload = await payloadOf(graph, thread);
+    expect((sessionsPayload.notices as PlanNotice[]).map((n) => n.code)).toContain(
+      "feedback_prose_only",
+    );
   });
 
   it("surfaces guard notices and a per-week summary in the review payloads", async () => {

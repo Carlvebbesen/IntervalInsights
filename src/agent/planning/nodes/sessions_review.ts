@@ -5,6 +5,7 @@ import {
   applyPlanInputPatch,
   describePlanInputPatch,
   extractPlanInputPatch,
+  FEEDBACK_PROSE_ONLY_NOTICE,
 } from "../feedback_intent";
 import { estimatePlannedSessionDistanceMeters, isHardSession } from "../guards";
 import { MAX_REVIEW_ROUNDS, PlanReviewResumeSchema } from "../plan_builder_schemas";
@@ -102,6 +103,7 @@ export async function sessionsReview(state: PlanBuilderState): Promise<Partial<P
     action: "adjust",
     sessionsFeedback: [...state.sessionsFeedback, parsed.data.feedback],
     input: applyPlanInputPatch(state.input, patch),
-    feedbackNotices: describePlanInputPatch(patch),
+    feedbackNotices:
+      Object.keys(patch).length > 0 ? describePlanInputPatch(patch) : [FEEDBACK_PROSE_ONLY_NOTICE],
   };
 }

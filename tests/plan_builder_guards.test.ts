@@ -812,6 +812,93 @@ describe("assembleWeekSessionsWithNotices (RACE sessions pinned at race distance
   });
 });
 
+describe("shapeMacro (deterministic recovery-week notes)", () => {
+  const macroOf = (rows: [number, string | null][]): PlanMacro => ({
+    name: "P",
+    rationale: "r",
+    weeks: rows.map(([targetDistanceMeters, notes], i) => ({
+      weekIndex: i + 1,
+      startDate: "ignored",
+      phase: "build" as const,
+      targetDistanceMeters,
+      notes,
+      keySessions: [],
+    })),
+  });
+  const params: MacroShapingParams = {
+    baselineWeeklyMeters: 30000,
+    longestRunMeters: null,
+    volumeAggressiveness: "steady",
+    maxWeeklyVolumeMeters: null,
+    raceDistanceMeters: null,
+  };
+
+  // The Kim shape: the guard-made down week carried no note while the RISING
+  // week after it carried the LLM's "Recovery week (~-20%)".
+  it("labels the guard-made cutback week and scrubs the LLM's recovery note from a rising week", () => {
+    const macro = repairMacro(
+      macroOf([
+        [14600, null],
+        [16000, null],
+        [17600, "Focus on form"],
+        [19300, null],
+        [20300, "Recovery week (~-20%)"],
+        [20300, "Steady effort"],
+      ]),
+      { startDate: "2026-01-05", endDate: "2026-02-15" },
+      params,
+    );
+    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([
+      14600, 16000, 17600, 12672, 19360, 20300,
+    ]);
+    expect(macro.weeks[3].notes).toBe("Recovery week (−28%).");
+    expect(macro.weeks[4].notes).toBeNull();
+    expect(macro.weeks[2].notes).toBe("Focus on form");
+    expect(macro.weeks[5].notes).toBe("Steady effort");
+  });
+
+  it("replaces a correct LLM cutback note with the deterministic one, without duplication", () => {
+    const macro = repairMacro(
+      macroOf([
+        [20000, null],
+        [14000, "Cutback week (~-30%)"],
+        [15400, "Rebuild"],
+      ]),
+      { startDate: "2026-01-05", endDate: "2026-01-25" },
+      params,
+    );
+    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([20000, 14000, 15400]);
+    expect(macro.weeks[1].notes).toBe("Recovery week (−30%).");
+    expect(macro.weeks[2].notes).toBe("Rebuild");
+  });
+
+  it("taper and race weeks keep their own notes", () => {
+    const macro = repairMacro(
+      macroOf([
+        [40000, null],
+        [40000, null],
+        [40000, null],
+        [32000, "Taper: ~-20% volume"],
+        [24000, "Taper: ~-40% volume"],
+        [16000, "Race week"],
+      ]),
+      { startDate: "2026-01-05", endDate: "2026-02-15", raceEventId: 5 },
+      { ...params, baselineWeeklyMeters: 40000, raceDistanceMeters: 42195 },
+    );
+    expect(macro.weeks.map((w) => w.phase)).toEqual([
+      "build",
+      "build",
+      "build",
+      "taper",
+      "taper",
+      "race",
+    ]);
+    expect(macro.weeks[3].notes).toBe("Taper: ~-20% volume");
+    expect(macro.weeks[4].notes).toBe("Taper: ~-40% volume");
+    expect(macro.weeks[5].notes).toBe("Race week");
+  });
+});
+
 describe("shapeMacro (invalidated week notes)", () => {
   it("drops the LLM's note on a week reshaped >15%, keeps notes within 15%", () => {
     const raw: PlanMacro = {
