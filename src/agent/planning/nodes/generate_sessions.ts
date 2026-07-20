@@ -2,12 +2,12 @@ import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 import { logger } from "../../../logger";
 import { invokeWithRateLimitRetry } from "../../model";
 import {
-  assembleWeekSessions,
+  assembleWeekSessionsWithNotices,
   assertPlanHasSessions,
   MAX_CROSS_TRAINING_PER_WEEK,
   resolveDaysPerWeek,
 } from "../guards";
-import type { GeneratedWeekSessions } from "../plan_builder_schemas";
+import type { GeneratedWeekSessions, PlanNotice } from "../plan_builder_schemas";
 import {
   type AthleteContext,
   DEFAULT_INTENSITY_AGGRESSIVENESS,
@@ -38,6 +38,7 @@ export async function generateSessions(
 
   const totalWeeks = macro.weeks.length;
   const sessionsByWeek: GeneratedWeekSessions[] = [];
+  const notices: PlanNotice[] = [];
 
   const guardParams = {
     intensityAggressiveness:
@@ -57,10 +58,13 @@ export async function generateSessions(
     );
     for (const week of batch) {
       const llmWeek = raw?.weeks.find((w) => w.weekIndex === week.weekIndex);
-      sessionsByWeek.push({
-        weekIndex: week.weekIndex,
-        sessions: assembleWeekSessions(week, llmWeek?.sessions ?? [], guardParams),
-      });
+      const assembled = assembleWeekSessionsWithNotices(week, llmWeek?.sessions ?? [], guardParams);
+      sessionsByWeek.push({ weekIndex: week.weekIndex, sessions: assembled.sessions });
+      // One notice per distinct reason, from the first week it bit: a 20-week
+      // plan hitting the same cap every week must not send 20 SSE notices.
+      for (const notice of assembled.notices) {
+        if (!notices.some((n) => n.code === notice.code)) notices.push(notice);
+      }
     }
     config?.writer?.({
       phase: "sessions_progress",
@@ -72,6 +76,9 @@ export async function generateSessions(
   assertPlanHasSessions(macro.weeks, sessionsByWeek);
 
   const total = sessionsByWeek.reduce((n, w) => n + w.sessions.length, 0);
-  log.info({ weeks: sessionsByWeek.length, sessions: total }, "generated sessions");
-  return { sessionsByWeek, action: null };
+  log.info(
+    { weeks: sessionsByWeek.length, sessions: total, guardNotices: notices.length },
+    "generated sessions",
+  );
+  return { sessionsByWeek, action: null, guardNotices: notices };
 }

@@ -1,7 +1,12 @@
 import { Annotation } from "@langchain/langgraph";
 import type { EventType, TrainingType } from "../../schema/enums";
 import type { GraphDb } from "../graph_state";
-import type { GeneratedWeekSessions, PlanMacro, PlanReviewAction } from "./plan_builder_schemas";
+import type {
+  GeneratedWeekSessions,
+  PlanMacro,
+  PlanNotice,
+  PlanReviewAction,
+} from "./plan_builder_schemas";
 
 // Runna-style 2-axis aggressiveness dial (per-plan). The volume axis drives the
 // deterministic macro ramp ceiling (see guards.VOLUME_RAMP); the intensity axis
@@ -108,6 +113,11 @@ export const PlanBuilderStateAnnotation = Annotation.Root({
   macroFeedback: Annotation<string[]>({ reducer: overwrite, default: () => [] }),
   sessionsByWeek: Annotation<GeneratedWeekSessions[]>({ reducer: overwrite, default: () => [] }),
   sessionsFeedback: Annotation<string[]>({ reducer: overwrite, default: () => [] }),
+  // Split so a regeneration node can overwrite its own guard notices without
+  // clobbering the "I applied this" notices the review gate produced for the
+  // same round; the interrupt payload concatenates the two.
+  feedbackNotices: Annotation<PlanNotice[]>({ reducer: overwrite, default: () => [] }),
+  guardNotices: Annotation<PlanNotice[]>({ reducer: overwrite, default: () => [] }),
   action: Annotation<PlanReviewAction | null>({ reducer: overwrite, default: () => null }),
   persistedPlanId: Annotation<number | null>({ reducer: overwrite, default: () => null }),
 });

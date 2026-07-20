@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { Command } from "@langchain/langgraph";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import * as feedbackIntent from "../src/agent/planning/feedback_intent";
 import * as macroAgent from "../src/agent/planning/plan_macro_agent";
 import { buildPlanBuilderGraph, resetPlanBuilderThread } from "../src/agent/planning/plan_builder_graph";
 import type { GenerateSessionsOutput, PlanMacro } from "../src/agent/planning/plan_builder_schemas";
@@ -74,6 +75,7 @@ describe("plan-builder graph — guided creation flow (end-to-end)", () => {
     spies.push(
       spyOn(sessionsAgent, "invokeGenerateSessionsAgent").mockResolvedValue(sessionsOutput()),
     );
+    spies.push(spyOn(feedbackIntent, "extractPlanInputPatch").mockResolvedValue({}));
 
     await resetPlanBuilderThread(threadId);
   });

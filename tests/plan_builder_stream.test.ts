@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import * as feedbackIntent from "../src/agent/planning/feedback_intent";
 import * as macroAgent from "../src/agent/planning/plan_macro_agent";
 import type { GenerateSessionsOutput, PlanMacro } from "../src/agent/planning/plan_builder_schemas";
 import * as sessionsAgent from "../src/agent/planning/plan_sessions_agent";
@@ -61,6 +62,9 @@ beforeAll(async () => {
   spies.push(
     spyOn(sessionsAgent, "invokeGenerateSessionsAgent").mockResolvedValue(sessionsOutput()),
   );
+  // Third LLM seam: the review gates map free-text feedback onto planner
+  // inputs. Neutral here — feedback causality has its own suite.
+  spies.push(spyOn(feedbackIntent, "extractPlanInputPatch").mockResolvedValue({}));
 });
 
 afterAll(async () => {

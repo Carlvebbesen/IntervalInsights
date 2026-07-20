@@ -2,7 +2,12 @@ import { AppError } from "../../error";
 import type { TrainingType } from "../../schema/enums";
 import { INTERVAL_TRAINING_TYPES, type PlanWeekPhase, trainingBucketFor } from "../../schema/enums";
 import type { WorkoutStructureSet } from "../../schemas/agent_schemas";
-import type { GeneratedSession, PlanMacro, PlanMacroWeek } from "./plan_builder_schemas";
+import type {
+  GeneratedSession,
+  PlanMacro,
+  PlanMacroWeek,
+  PlanNotice,
+} from "./plan_builder_schemas";
 import type {
   IntensityAggressiveness,
   PlanBuilderInput,
@@ -384,11 +389,44 @@ export type MacroShapingParams = {
  * recovery weeks → taper the tail → re-clamp the ramp against the running peak →
  * hard-cap again. The guarantees are asserted on the FINAL array, not per stage.
  */
+export type MacroShapingResult = { macro: PlanMacro; notices: PlanNotice[] };
+
+function fmtKm(meters: number): string {
+  return `${(meters / 1000).toFixed(1)} km`;
+}
+
+/**
+ * First week a shaping stage lowered by more than a rounding artefact. The 1%
+ * band keeps `Math.round` noise from being reported to the athlete as a refusal.
+ */
+function firstReduced(before: number[], after: number[]): number {
+  for (let i = 0; i < after.length; i++) {
+    if (after[i] < before[i] * 0.99) return i;
+  }
+  return -1;
+}
+
 export function repairMacro(
   raw: PlanMacro,
   input: PlanBuilderInput,
   params: MacroShapingParams,
 ): PlanMacro {
+  return shapeMacro(raw, input, params).macro;
+}
+
+/**
+ * `repairMacro` plus the notices the review gate owes the athlete. The volume
+ * ceilings here are injury guards and stay deliberately un-patchable by
+ * feedback ("add more mileage" past the ramp is refused) — but every refusal
+ * that actually bit is reported, with the reason, instead of vanishing.
+ * Coaching-shape reductions (down weeks, taper) are NOT notices: they are the
+ * plan working as intended, not a request being denied.
+ */
+export function shapeMacro(
+  raw: PlanMacro,
+  input: PlanBuilderInput,
+  params: MacroShapingParams,
+): MacroShapingResult {
   const starts = expectedWeekStarts(input.startDate, input.endDate);
   const raceAnchored = input.raceEventId != null;
 
@@ -410,16 +448,64 @@ export function repairMacro(
   const buildWeeks = Math.max(0, phased.length - taperCount);
   const ramp = VOLUME_RAMP[params.volumeAggressiveness];
 
-  let targets = phased.map((w) => w.targetDistanceMeters);
-  targets = anchorWeekOne(targets, params.baselineWeeklyMeters);
-  targets = floorWeeklyTargets(targets);
-  targets = clampWeeklyRamp(targets, ramp.ceiling, ramp.burst);
-  targets = capLongestRunSpike(targets, params.longestRunMeters);
+  const notices: PlanNotice[] = [];
+  const requested = phased.map((w) => w.targetDistanceMeters);
+  const anchored = anchorWeekOne(requested, params.baselineWeeklyMeters);
+  const floored = floorWeeklyTargets(anchored);
+  const ramped = clampWeeklyRamp(floored, ramp.ceiling, ramp.burst);
+  const longCapped = capLongestRunSpike(ramped, params.longestRunMeters);
   // Hard-cap BEFORE the taper so the taper's staged fractions come off an
   // already-capped build week and stay strictly decreasing (capping afterwards
   // flattens the first taper weeks onto the same ceiling value).
-  targets = capMaxWeekly(targets, params.maxWeeklyVolumeMeters);
-  targets = enforceDownWeeks(targets, buildWeeks);
+  const maxCapped = capMaxWeekly(longCapped, params.maxWeeklyVolumeMeters);
+  const targets = enforceDownWeeks(maxCapped, buildWeeks);
+
+  if (requested[0] > 0 && anchored[0] < requested[0] * 0.99) {
+    notices.push({
+      kind: "clamped",
+      code: "baseline_anchor",
+      message: `Week 1 starts at ${fmtKm(anchored[0])} instead of ${fmtKm(requested[0])}: the plan anchors your first week to what you are actually running now, not to the goal. Starting above your real baseline is the top cause of injury.`,
+      observed: requested[0],
+      limit: anchored[0],
+      weekIndex: 1,
+    });
+  }
+
+  const rampIdx = firstReduced(floored, ramped);
+  if (rampIdx >= 0) {
+    notices.push({
+      kind: "clamped",
+      code: "weekly_ramp_exceeded",
+      message: `Week ${rampIdx + 1} was cut from ${fmtKm(floored[rampIdx])} to ${fmtKm(ramped[rampIdx])}: your ${params.volumeAggressiveness} build-up allows about +${Math.round(ramp.ceiling * 100)}% a week. Ramping faster is the top cause of running injury, so this ceiling is not negotiable — pick a more aggressive build-up or a longer plan to get there safely.`,
+      observed: floored[rampIdx],
+      limit: ramped[rampIdx],
+      weekIndex: rampIdx + 1,
+    });
+  }
+
+  const longIdx = firstReduced(ramped, longCapped);
+  if (longIdx >= 0) {
+    notices.push({
+      kind: "clamped",
+      code: "long_run_spike",
+      message: `Week ${longIdx + 1} was cut from ${fmtKm(ramped[longIdx])} to ${fmtKm(longCapped[longIdx])}: that volume implies a long run well beyond your recent longest of ${fmtKm(params.longestRunMeters ?? 0)}. A sudden long-run jump is a stronger injury signal than weekly volume.`,
+      observed: ramped[longIdx],
+      limit: longCapped[longIdx],
+      weekIndex: longIdx + 1,
+    });
+  }
+
+  const maxIdx = firstReduced(longCapped, maxCapped);
+  if (maxIdx >= 0) {
+    notices.push({
+      kind: "clamped",
+      code: "max_weekly_volume_exceeded",
+      message: `Week ${maxIdx + 1} was capped at ${fmtKm(maxCapped[maxIdx])} by your own ${fmtKm(params.maxWeeklyVolumeMeters ?? 0)} weekly ceiling. Raise the ceiling if you want more.`,
+      observed: longCapped[maxIdx],
+      limit: maxCapped[maxIdx],
+      weekIndex: maxIdx + 1,
+    });
+  }
 
   let shaped: PlanMacroWeek[] = phased.map((w, i) => ({ ...w, targetDistanceMeters: targets[i] }));
   if (taperCount > 0) shaped = applyTaper(shaped, taperCount, raceAnchored);
@@ -438,7 +524,24 @@ export function repairMacro(
   );
   const final = shaped.map((w, i) => ({ ...w, targetDistanceMeters: capped[i] }));
 
-  return { name: raw.name, rationale: raw.rationale, weeks: final };
+  if (rampIdx < 0) {
+    const peakIdx = firstReduced(
+      shaped.map((w) => w.targetDistanceMeters),
+      capped,
+    );
+    if (peakIdx >= 0) {
+      notices.push({
+        kind: "clamped",
+        code: "weekly_ramp_exceeded",
+        message: `Week ${peakIdx + 1} was held to ${fmtKm(capped[peakIdx])}: no week may climb more than about +${Math.round(ramp.ceiling * 100)}% above the highest week before it, even coming out of a recovery week.`,
+        observed: shaped[peakIdx].targetDistanceMeters,
+        limit: capped[peakIdx],
+        weekIndex: peakIdx + 1,
+      });
+    }
+  }
+
+  return { macro: { name: raw.name, rationale: raw.rationale, weeks: final }, notices };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -726,6 +829,37 @@ export function assembleWeekSessions(
   raw: GeneratedSession[],
   params: SessionGuardParams,
 ): GeneratedSession[] {
+  return assembleWeekSessionsWithNotices(week, raw, params).sessions;
+}
+
+export type WeekAssemblyResult = { sessions: GeneratedSession[]; notices: PlanNotice[] };
+
+/**
+ * `assembleWeekSessions` plus the refusals worth telling the athlete about.
+ * Only the two that deny an explicit "give me more hard work" request are
+ * reported — the polarization cap and the no-two-hard-days-in-a-row rule.
+ * Day-count and long-run placement are driven by the athlete's own (now
+ * feedback-patchable) settings, so trimming to them is not a refusal.
+ */
+export function assembleWeekSessionsWithNotices(
+  week: PlanMacroWeek,
+  raw: GeneratedSession[],
+  params: SessionGuardParams,
+): WeekAssemblyResult {
+  const notices: PlanNotice[] = [];
+  const cap = qualityCap(week.phase, params.intensityAggressiveness);
+  const requestedHard = raw.filter((s) => isHardSession(s.sessionType, s.structure)).length;
+  if (requestedHard > cap) {
+    notices.push({
+      kind: "clamped",
+      code: "quality_sessions_exceeded",
+      message: `Week ${week.weekIndex} keeps ${cap} quality session${cap === 1 ? "" : "s"} instead of ${requestedHard}: a ${week.phase} week at ${params.intensityAggressiveness} intensity supports ${cap}, and polarized training wants at least 80% of running easy. Raise the intensity setting, or ask again in a build week, to get more.`,
+      observed: requestedHard,
+      limit: cap,
+      weekIndex: week.weekIndex,
+    });
+  }
+
   let sessions: GeneratedSession[] = raw.map((s) => ({
     ...s,
     date: repairSessionDate(s.date, week.startDate),
@@ -745,7 +879,21 @@ export function assembleWeekSessions(
   // pinning first let spacing move it straight back off the preferred day.
   sessions = spaceHardSessions(sessions);
   sessions = placeLongRun(sessions, week.startDate, params.preferredLongRunDay);
+  const hardBeforeSpacing = sessions.filter((s) =>
+    isHardSession(s.sessionType, s.structure),
+  ).length;
   sessions = downgradeAdjacentHardSessions(sessions);
+  const hardAfterSpacing = sessions.filter((s) => isHardSession(s.sessionType, s.structure)).length;
+  if (hardAfterSpacing < hardBeforeSpacing) {
+    notices.push({
+      kind: "clamped",
+      code: "hard_sessions_adjacent",
+      message: `Week ${week.weekIndex} drops ${hardBeforeSpacing - hardAfterSpacing} quality session${hardBeforeSpacing - hardAfterSpacing === 1 ? "" : "s"} to an easy run: with ${params.daysPerWeek} run days there was no way to keep two hard days off back-to-back. More run days would make room.`,
+      observed: hardBeforeSpacing,
+      limit: hardAfterSpacing,
+      weekIndex: week.weekIndex,
+    });
+  }
   sessions = substituteCrossTraining(sessions, params.crossTrainingCount);
   sessions.sort((a, b) => a.date.localeCompare(b.date));
 
@@ -759,5 +907,5 @@ export function assembleWeekSessions(
     for (const s of fill) s.description = appendDistanceHint(s.description, per);
   }
 
-  return sessions;
+  return { sessions, notices };
 }

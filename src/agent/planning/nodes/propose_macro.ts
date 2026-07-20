@@ -1,6 +1,6 @@
 import { logger } from "../../../logger";
 import { invokeWithRateLimitRetry } from "../../model";
-import { repairMacro } from "../guards";
+import { shapeMacro } from "../guards";
 import { DEFAULT_VOLUME_AGGRESSIVENESS, type PlanBuilderState } from "../plan_builder_state";
 import { invokeProposeMacroAgent } from "../plan_macro_agent";
 
@@ -14,7 +14,7 @@ export async function proposeMacro(state: PlanBuilderState): Promise<Partial<Pla
   );
   if (!raw) throw new Error("proposeMacro: LLM returned no macro plan");
 
-  const macro = repairMacro(raw, state.input, {
+  const { macro, notices } = shapeMacro(raw, state.input, {
     baselineWeeklyMeters: ctx.baselineVolume?.trailing4WeekAvgWeeklyMeters ?? null,
     longestRunMeters: ctx.baselineVolume?.longestRunLast30dMeters ?? null,
     volumeAggressiveness: state.input.volumeAggressiveness ?? DEFAULT_VOLUME_AGGRESSIVENESS,
@@ -22,8 +22,12 @@ export async function proposeMacro(state: PlanBuilderState): Promise<Partial<Pla
     raceDistanceMeters: ctx.race?.distanceMeters ?? null,
   });
   log.info(
-    { weeks: macro.weeks.length, feedbackRounds: state.macroFeedback.length },
+    {
+      weeks: macro.weeks.length,
+      feedbackRounds: state.macroFeedback.length,
+      guardNotices: notices.length,
+    },
     "proposed macro",
   );
-  return { macro, action: null };
+  return { macro, action: null, guardNotices: notices };
 }
