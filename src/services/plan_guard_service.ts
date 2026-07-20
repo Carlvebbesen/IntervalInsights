@@ -132,7 +132,12 @@ export function evaluatePlanWeek(
   const peak = week.peakPrecedingWeekDistanceMeters;
   if (peak != null && peak > 0 && observed > 0) {
     const ramp = VOLUME_RAMP[ctx.volumeAggressiveness];
-    const [, allowed] = clampRampAgainstPeak([peak, observed], ramp.ceiling, ramp.burst);
+    // gridStep mirrors the builder's final invariant: quantized plans may take
+    // one full grid step above the peak, so the advisory check must not flag
+    // the very shape the builder emits.
+    const [, allowed] = clampRampAgainstPeak([peak, observed], ramp.ceiling, ramp.burst, {
+      gridStep: true,
+    });
     if (exceeds(observed, allowed)) {
       warnings.push({
         code: "weekly_ramp_exceeded",

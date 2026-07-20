@@ -22,6 +22,10 @@ describe("computeBaselineVolume", () => {
     expect(computeBaselineVolume(runs, today)).toEqual({
       trailing4WeekAvgWeeklyMeters: 7500, // (10000+8000+12000)/4
       longestRunLast30dMeters: 12000,
+      // Best trailing-4-week slice is weeks 2..5 back: (12000+5000+20000)/4,
+      // with 3 active weeks. The proven longest sees the whole 26-week window.
+      provenWeeklyMeters: 9250,
+      provenLongestRunMeters: 20000,
     });
   });
 
@@ -29,6 +33,8 @@ describe("computeBaselineVolume", () => {
     expect(computeBaselineVolume([], today)).toEqual({
       trailing4WeekAvgWeeklyMeters: null,
       longestRunLast30dMeters: null,
+      provenWeeklyMeters: null,
+      provenLongestRunMeters: null,
     });
   });
 
@@ -42,6 +48,8 @@ describe("computeBaselineVolume", () => {
     expect(computeBaselineVolume(runs, today)).toEqual({
       trailing4WeekAvgWeeklyMeters: 6000, // (6000+8000+10000)/4; the 40d run is excluded
       longestRunLast30dMeters: 10000,
+      provenWeeklyMeters: 6000,
+      provenLongestRunMeters: 10000,
     });
   });
 
@@ -88,6 +96,8 @@ describe("computeBaselineVolume", () => {
     expect(computeBaselineVolume(runs, today)).toEqual({
       trailing4WeekAvgWeeklyMeters: 8250, // (10000+11000+12000)/4 — the 2 bad rows are skipped
       longestRunLast30dMeters: 12000,
+      provenWeeklyMeters: null, // only 2 active weeks — no proven 4-week block
+      provenLongestRunMeters: 12000,
     });
   });
 
@@ -99,6 +109,8 @@ describe("computeBaselineVolume", () => {
     expect(computeBaselineVolume(runs, today)).toEqual({
       trailing4WeekAvgWeeklyMeters: 1250,
       longestRunLast30dMeters: 5000,
+      provenWeeklyMeters: null,
+      provenLongestRunMeters: 5000,
     });
   });
 });

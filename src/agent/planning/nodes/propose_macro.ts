@@ -17,6 +17,8 @@ export async function proposeMacro(state: PlanBuilderState): Promise<Partial<Pla
   const { macro, notices } = shapeMacro(raw, state.input, {
     baselineWeeklyMeters: ctx.baselineVolume?.trailing4WeekAvgWeeklyMeters ?? null,
     longestRunMeters: ctx.baselineVolume?.longestRunLast30dMeters ?? null,
+    provenWeeklyMeters: ctx.baselineVolume?.provenWeeklyMeters ?? null,
+    provenLongestRunMeters: ctx.baselineVolume?.provenLongestRunMeters ?? null,
     volumeAggressiveness: state.input.volumeAggressiveness ?? DEFAULT_VOLUME_AGGRESSIVENESS,
     maxWeeklyVolumeMeters: state.input.maxWeeklyVolumeMeters ?? null,
     raceDistanceMeters: ctx.race?.distanceMeters ?? null,

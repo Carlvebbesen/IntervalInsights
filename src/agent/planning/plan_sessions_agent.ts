@@ -110,6 +110,9 @@ ${feedbackBlock}
   - Cover each week's keySessions as structured quality sessions; fill the rest
     with EASY / LONG / RECOVERY runs to reach the weekly target. At most 7
     sessions per week.
+  - For an experienced athlete, never propose a run shorter than 5 km — prefer
+    fewer, meaningful sessions early in a comeback rather than 2–3 km filler
+    runs. Only a true beginner with no running history keeps short run-walks.
   - Structure: EASY, LONG and RECOVERY sessions get NO structure (null). Only
     interval-type sessions (intervals, tempo, hills, sprints, fartlek) get a
     structure with sets/steps carrying reps + work values.

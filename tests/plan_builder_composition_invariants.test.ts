@@ -8,6 +8,8 @@ import {
   LONG_RUN_SPIKE_CAP,
   LONG_RUN_WEEKLY_GROWTH,
   longRunOffset,
+  longRunSpikeReference,
+  peakRampAllowance,
   qualityCap,
   repairMacro,
   type SessionGuardParams,
@@ -93,6 +95,8 @@ describe("repairMacro composition invariants (adversarial macros)", () => {
     const params = {
       baselineWeeklyMeters: pick(r, [null, 0, -1, 1, 20_000, 45_000, 300_000]),
       longestRunMeters: pick(r, [null, 0, 3_000, 12_000, 500_000]),
+      provenWeeklyMeters: pick(r, [null, 0, 18_000, 42_000, 90_000]),
+      provenLongestRunMeters: pick(r, [null, 0, 16_000, 32_000]),
       volumeAggressiveness,
       maxWeeklyVolumeMeters: pick(r, [null, 25_000, 60_000]),
       raceDistanceMeters,
@@ -105,7 +109,12 @@ describe("repairMacro composition invariants (adversarial macros)", () => {
     };
   });
 
-  it("never ramps a week above the aggressiveness ceiling relative to the running peak", () => {
+  // The ramp contract on the emitted array: the aggressiveness ceiling off the
+  // running peak, plus the two documented allowances — the comeback return lane
+  // below 85% of proven capacity, and one quantization grid step above the peak
+  // (the plateau-then-step shape; without it a coarse grid whose step exceeds
+  // the percentage headroom could never step at all).
+  it("never ramps a week above the allowed ceiling relative to the running peak", () => {
     for (const { seed, params, out } of cases) {
       const { ceiling, burst } = VOLUME_RAMP[params.volumeAggressiveness];
       const v = out.map((w) => w.targetDistanceMeters);
@@ -113,13 +122,34 @@ describe("repairMacro composition invariants (adversarial macros)", () => {
       let prevBurst = false;
       for (let i = 1; i < v.length; i++) {
         const allowed = prevBurst ? ceiling : burst;
+        const max = peakRampAllowance(peak, allowed, {
+          provenWeeklyMeters: params.provenWeeklyMeters,
+          gridStep: true,
+        });
         expect({ seed, i, value: v[i] }).toEqual({
           seed,
           i,
-          value: Math.min(v[i], Math.round(peak * (1 + allowed))),
+          value: Math.min(v[i], max),
         });
         prevBurst = v[i] > Math.round(peak * (1 + ceiling));
         peak = Math.max(peak, v[i]);
+      }
+    }
+  });
+
+  // Item-1 contract: build-week volumes land on the step grid (2 km below
+  // 30 km/wk, 5 km at/above — both whole kilometres); only sub-grid volumes,
+  // where a grid point does not exist below the caps, may stay unrounded.
+  it("emits build-week volumes on the quantization grid", () => {
+    for (const { seed, out } of cases) {
+      for (const w of out) {
+        if (w.phase === "taper" || w.phase === "race") continue;
+        const v = w.targetDistanceMeters;
+        expect({ seed, week: w.weekIndex, onGrid: v % 1000 === 0 || v < 5000 }).toEqual({
+          seed,
+          week: w.weekIndex,
+          onGrid: true,
+        });
       }
     }
   });
@@ -143,11 +173,11 @@ describe("repairMacro composition invariants (adversarial macros)", () => {
 
   it("holds the long-run spike cap on the FINAL output, not just after its own stage", () => {
     for (const { seed, params, out } of cases) {
-      const longest = params.longestRunMeters;
-      if (longest == null || longest <= 0) continue;
+      const ref = longRunSpikeReference(params.longestRunMeters, params.provenLongestRunMeters);
+      if (ref == null) continue;
       out.forEach((w, i) => {
         const allowed =
-          longest * (1 + LONG_RUN_SPIKE_CAP) * (1 + LONG_RUN_WEEKLY_GROWTH) ** i +
+          ref * (1 + LONG_RUN_SPIKE_CAP) * (1 + LONG_RUN_WEEKLY_GROWTH) ** i +
           // the cap is applied via a rounded volume, so allow 1 m of rounding slack
           IMPLIED_LONG_RUN_FRACTION;
         const implied = w.targetDistanceMeters * IMPLIED_LONG_RUN_FRACTION;
@@ -258,6 +288,7 @@ describe("assembleWeekSessions composition invariants (adversarial LLM weeks)", 
       crossTrainingCount: int(r, 0, 3),
       crossTrainingInjuryDriven: r() < 0.5,
       raceDistanceMeters: pick(r, [null, 10_000, 42_195]),
+      provenWeeklyMeters: pick(r, [null, 8_000, 40_000]),
     };
     const raw = adversarialSessions(r, week.startDate);
     return { seed, week, params, raw, out: assembleWeekSessions(week, raw, params) };
@@ -370,6 +401,7 @@ describe("assembleWeekSessions composition invariants (adversarial LLM weeks)", 
         crossTrainingCount: int(r, 0, 3),
         crossTrainingInjuryDriven: r() < 0.5,
         raceDistanceMeters: pick(r, [null, 21_097]),
+        provenWeeklyMeters: pick(r, [null, 40_000]),
       };
       const hardType = pick(r, ["TEMPO", "LONG_INTERVALS", "HILL_SPRINTS"] as const);
       const raw: GeneratedSession[] = [
@@ -443,6 +475,7 @@ describe("assembleWeekSessions composition invariants (adversarial LLM weeks)", 
       crossTrainingCount: 0,
       crossTrainingInjuryDriven: false,
       raceDistanceMeters: null,
+      provenWeeklyMeters: null,
     });
 
     const long = out.find(isLong);

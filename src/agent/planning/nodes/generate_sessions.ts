@@ -71,6 +71,7 @@ export async function generateSessions(
     crossTrainingCount: crossTraining.count,
     crossTrainingInjuryDriven: crossTraining.injuryDriven,
     raceDistanceMeters: ctx.race?.distanceMeters ?? null,
+    provenWeeklyMeters: ctx.baselineVolume?.provenWeeklyMeters ?? null,
   };
 
   for (let i = 0; i < totalWeeks; i += SESSION_BATCH_WEEKS) {

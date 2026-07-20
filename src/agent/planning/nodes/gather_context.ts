@@ -65,16 +65,29 @@ function runDistanceMeters(distance: number | string | null): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+// Proven-capacity window: a comeback athlete's months-scale history, so a few
+// low weeks (vacation, illness) do not make the ramp treat them like a novice.
+export const PROVEN_CAPACITY_WINDOW_WEEKS = 26;
+// A trailing-4-week slice only counts as a proven block when most of it was
+// actually run — one big week inside three empty ones is a spike, not capacity.
+export const PROVEN_MIN_ACTIVE_WEEKS = 3;
+
 /**
  * Real baseline running volume — the anti-over-ramp anchor. `trailing4WeekAvg`
  * is the mean weekly running distance over the last 28 days; `longestRun` is
- * the single longest run in the last 30 days. Null means "no usable data at
- * all" — callers must treat it as "no baseline on record", never as zero. Any
- * real running produces a number, however small. Pure over the supplied rows so
- * it is unit-testable.
+ * the single longest run in the last 30 days. The proven fields look back
+ * `PROVEN_CAPACITY_WINDOW_WEEKS` (see `AthleteBaselineVolume`). Null means "no
+ * usable data at all" — callers must treat it as "no baseline on record",
+ * never as zero. Any real running produces a number, however small. Pure over
+ * the supplied rows so it is unit-testable.
  */
 export function computeBaselineVolume(runs: RunRow[], today: Date): AthleteBaselineVolume {
-  const absent = { trailing4WeekAvgWeeklyMeters: null, longestRunLast30dMeters: null };
+  const absent: AthleteBaselineVolume = {
+    trailing4WeekAvgWeeklyMeters: null,
+    longestRunLast30dMeters: null,
+    provenWeeklyMeters: null,
+    provenLongestRunMeters: null,
+  };
   if (runs.length === 0) return absent;
   const nowMs = today.getTime();
   const cutoff28 = nowMs - 28 * DAY_MS;
@@ -84,6 +97,8 @@ export function computeBaselineVolume(runs: RunRow[], today: Date): AthleteBasel
   let count28 = 0;
   let longest30 = 0;
   let any30 = false;
+  const weekTotals = new Array<number>(PROVEN_CAPACITY_WINDOW_WEEKS).fill(0);
+  let longestProven = 0;
   for (const r of runs) {
     const t = (
       typeof r.startDateLocal === "string" ? new Date(r.startDateLocal) : r.startDateLocal
@@ -99,6 +114,19 @@ export function computeBaselineVolume(runs: RunRow[], today: Date): AthleteBasel
       sum28 += dist;
       count28 += 1;
     }
+    const weekIdx = Math.floor((nowMs - t) / (7 * DAY_MS));
+    if (weekIdx >= 0 && weekIdx < PROVEN_CAPACITY_WINDOW_WEEKS) {
+      weekTotals[weekIdx] += dist;
+      if (dist > longestProven) longestProven = dist;
+    }
+  }
+
+  let proven: number | null = null;
+  for (let k = 0; k + 4 <= PROVEN_CAPACITY_WINDOW_WEEKS; k++) {
+    const slice = weekTotals.slice(k, k + 4);
+    if (slice.filter((m) => m > 0).length < PROVEN_MIN_ACTIVE_WEEKS) continue;
+    const avg = Math.round(slice.reduce((a, b) => a + b, 0) / 4);
+    proven = Math.max(proven ?? 0, avg);
   }
 
   // Thin data is still REAL data. Reporting a low-but-genuine average as null
@@ -112,6 +140,8 @@ export function computeBaselineVolume(runs: RunRow[], today: Date): AthleteBasel
     trailing4WeekAvgWeeklyMeters:
       count28 === 0 ? null : trusted ? avg : Math.min(avg, DEFAULT_BASELINE_WEEKLY_METERS),
     longestRunLast30dMeters: any30 && longest30 > 0 ? Math.round(longest30) : null,
+    provenWeeklyMeters: proven,
+    provenLongestRunMeters: longestProven > 0 ? Math.round(longestProven) : null,
   };
 }
 
@@ -282,8 +312,10 @@ export async function gatherContext(
 
   let baselineVolume: AthleteContext["baselineVolume"] = null;
   try {
+    // Wide enough for the proven-capacity window; the 28/30-day trailing
+    // fields filter inside computeBaselineVolume.
     const from = new Date(now);
-    from.setUTCDate(from.getUTCDate() - 30);
+    from.setUTCDate(from.getUTCDate() - PROVEN_CAPACITY_WINDOW_WEEKS * 7);
     const runs = (await dashboardRepo.runsBetween(
       db,
       state.userId,

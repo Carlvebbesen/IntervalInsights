@@ -25,7 +25,15 @@ function baselineBlock(ctx: AthleteContext): string {
     b.longestRunLast30dMeters != null
       ? `${(b.longestRunLast30dMeters / 1000).toFixed(1)} km`
       : "unknown";
-  return `  - Real baseline volume (ANCHOR week-1 to this, NOT the goal): trailing 4-week avg ${avg}; longest run last 30d ${longest}`;
+  const baseline = `  - Real baseline volume (ANCHOR week-1 to this, NOT the goal): trailing 4-week avg ${avg}; longest run last 30d ${longest}`;
+  const proven = b.provenWeeklyMeters;
+  if (proven == null || (b.trailing4WeekAvgWeeklyMeters ?? 0) >= proven) return baseline;
+  const provenLongest =
+    b.provenLongestRunMeters != null
+      ? `, longest run ${(b.provenLongestRunMeters / 1000).toFixed(1)} km`
+      : "";
+  return `${baseline}
+  - Proven capacity (last 6 months): ~${(proven / 1000).toFixed(1)} km/week${provenLongest} — the athlete can RETURN toward this substantially faster than a new runner could build; week 1 still anchors to the current baseline.`;
 }
 
 function raceAbilityBlock(ctx: AthleteContext): string {
@@ -158,6 +166,12 @@ ${feedbackBlock}
     of injury. If baseline is unknown, start conservatively.
   - Ramp volume gradually; avoid week-over-week jumps beyond ~20%, with periodic
     recovery-week drops.
+  - Hold weekly volume flat for 2–3 weeks, then take a visible step — do NOT
+    creep the volume a few percent every week. Deterministic shaping quantizes
+    weekly volumes onto a coarse step grid anyway.
+  - When the athlete has proven capacity (last 6 months) above their current
+    trailing volume, plan a RETURN toward it substantially faster than a new
+    runner could build — week 1 still anchors to the current baseline.
   - Use the athlete's current race-pace ability (VDOT / predicted times) to
     judge whether the stated goal is realistic and to shape phase emphasis. Do
     NOT invent paces — paces are computed later.

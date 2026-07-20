@@ -297,6 +297,8 @@ describe("repairMacro (orchestrated volume shaping)", () => {
   const params = (over: Partial<MacroShapingParams> = {}): MacroShapingParams => ({
     baselineWeeklyMeters: 30000,
     longestRunMeters: null,
+    provenWeeklyMeters: null,
+    provenLongestRunMeters: null,
     volumeAggressiveness: "steady",
     maxWeeklyVolumeMeters: null,
     raceDistanceMeters: null,
@@ -305,9 +307,11 @@ describe("repairMacro (orchestrated volume shaping)", () => {
 
   const timeframeInput: PlanBuilderInput = { startDate: "2026-01-05", endDate: "2026-01-25" };
 
-  it("anchors week 1 to the real baseline and steady-clamps the ramp", () => {
+  // Quantized shape: the smooth steady ramp (30 → 33 → 36.3) becomes a plateau
+  // and one visible 5 km step, taken once the underlying trajectory reaches it.
+  it("anchors week 1 to the real baseline and quantizes the steady ramp to plateau-then-step", () => {
     const macro = repairMacro(rawMacro([60000, 70000, 80000]), timeframeInput, params());
-    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([30000, 33000, 36300]);
+    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([30000, 30000, 35000]);
     expect(macro.weeks.map((w) => w.startDate)).toEqual([
       "2026-01-05",
       "2026-01-12",
@@ -319,9 +323,12 @@ describe("repairMacro (orchestrated volume shaping)", () => {
     const macro = repairMacro(
       rawMacro([60000, 70000, 80000]),
       timeframeInput,
-      params({ maxWeeklyVolumeMeters: 32000 }),
+      params({ baselineWeeklyMeters: 40000, maxWeeklyVolumeMeters: 43000 }),
     );
-    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([30000, 32000, 32000]);
+    // Without the 43 km ceiling the third week steps to 45 km; with it the step
+    // has no grid point under the cap, so the plan holds at 40 km.
+    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([40000, 40000, 40000]);
+    for (const w of macro.weeks) expect(w.targetDistanceMeters).toBeLessThanOrEqual(43000);
   });
 
   it("race-anchored: shapes a marathon taper onto the tail", () => {
@@ -667,6 +674,7 @@ describe("assembleWeekSessionsWithNotices (weighted volume fill + long-run share
     crossTrainingCount: 0,
     crossTrainingInjuryDriven: false,
     raceDistanceMeters: null,
+    provenWeeklyMeters: null,
   };
 
   it("clamps a lone long fill run to the share cap and reports it (the 71 km bug shape)", () => {
@@ -787,6 +795,7 @@ describe("assembleWeekSessionsWithNotices (RACE sessions pinned at race distance
     crossTrainingCount: 0,
     crossTrainingInjuryDriven: false,
     raceDistanceMeters: 42_195,
+    provenWeeklyMeters: null,
   };
 
   it("hints the race distance on the RACE session and fills only the remainder", () => {
@@ -842,13 +851,17 @@ describe("shapeMacro (deterministic recovery-week notes)", () => {
   const params: MacroShapingParams = {
     baselineWeeklyMeters: 30000,
     longestRunMeters: null,
+    provenWeeklyMeters: null,
+    provenLongestRunMeters: null,
     volumeAggressiveness: "steady",
     maxWeeklyVolumeMeters: null,
     raceDistanceMeters: null,
   };
 
   // The Kim shape: the guard-made down week carried no note while the RISING
-  // week after it carried the LLM's "Recovery week (~-20%)".
+  // week after it carried the LLM's "Recovery week (~-20%)". Volumes are the
+  // quantized (2 km grid) plateau-and-step shape; the down week dips off its
+  // quantized neighbour.
   it("labels the guard-made cutback week and scrubs the LLM's recovery note from a rising week", () => {
     const macro = repairMacro(
       macroOf([
@@ -863,9 +876,9 @@ describe("shapeMacro (deterministic recovery-week notes)", () => {
       params,
     );
     expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([
-      14600, 16000, 17600, 12672, 19360, 20300,
+      14000, 16000, 16000, 12000, 18000, 20000,
     ]);
-    expect(macro.weeks[3].notes).toBe("Recovery week (−28%).");
+    expect(macro.weeks[3].notes).toBe("Recovery week (−25%).");
     expect(macro.weeks[4].notes).toBeNull();
     expect(macro.weeks[2].notes).toBe("Focus on form");
     expect(macro.weeks[5].notes).toBe("Steady effort");
@@ -881,7 +894,7 @@ describe("shapeMacro (deterministic recovery-week notes)", () => {
       { startDate: "2026-01-05", endDate: "2026-01-25" },
       params,
     );
-    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([20000, 14000, 15400]);
+    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([20000, 14000, 16000]);
     expect(macro.weeks[1].notes).toBe("Recovery week (−30%).");
     expect(macro.weeks[2].notes).toBe("Rebuild");
   });
@@ -933,12 +946,16 @@ describe("shapeMacro (invalidated week notes)", () => {
       {
         baselineWeeklyMeters: 30000,
         longestRunMeters: null,
+        provenWeeklyMeters: null,
+        provenLongestRunMeters: null,
         volumeAggressiveness: "steady",
         maxWeeklyVolumeMeters: null,
         raceDistanceMeters: null,
       },
     );
-    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([30000, 31000, 34000]);
+    // Quantization plateaus all three weeks at 30 km: weeks 2–3 moved <15% so
+    // their notes survive; week 1 was halved from 60 km and loses its note.
+    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([30000, 30000, 30000]);
     expect(macro.weeks[0].notes).toBeNull();
     expect(macro.weeks[1].notes).toBe("note 2");
     expect(macro.weeks[2].notes).toBe("note 3");

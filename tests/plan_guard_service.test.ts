@@ -120,7 +120,9 @@ describe("evaluatePlanWeek — weekly_ramp_exceeded", () => {
     const ramp = warnings.find((w) => w.code === "weekly_ramp_exceeded");
     expect(ramp).toBeDefined();
     expect(ramp?.observed).toBe(60_000);
-    expect(ramp?.limit).toBe(44_000);
+    // The allowance mirrors the builder's quantized contract: one full 5 km
+    // grid step above the 40 km peak beats the +10% ceiling.
+    expect(ramp?.limit).toBe(45_000);
     expect(ramp?.weekIndex).toBe(2);
   });
 

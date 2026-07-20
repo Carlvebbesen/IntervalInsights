@@ -75,19 +75,48 @@ export function repairSessionDate(date: string, weekStart: string): string {
   return date;
 }
 
+// Comeback lane: an athlete with PROVEN capacity (a sustained block in the last
+// ~6 months) may return toward it far faster than a novice may build — the
+// tissue adaptation exists, it is regained, not created. While the running
+// reference (prior week / running peak) is below 85% of proven weekly volume,
+// the effective ramp ceiling is 30% regardless of the aggressiveness dial; the
+// fast lane ends AT that 85% threshold, above which normal ceilings apply.
+export const RETURN_RAMP_CEILING = 0.3;
+export const PROVEN_RETURN_THRESHOLD = 0.85;
+// A comeback long run is referenced against proven history, discounted 20% —
+// not pinned to a vacation-shrunken 30-day longest.
+export const PROVEN_LONGEST_RUN_FACTOR = 0.8;
+
+/** Max the return lane allows off `reference`; 0 when proven capacity does not apply. */
+function returnRampMax(reference: number, provenWeeklyMeters: number | null | undefined): number {
+  if (provenWeeklyMeters == null || !Number.isFinite(provenWeeklyMeters)) return 0;
+  const threshold = Math.floor(provenWeeklyMeters * PROVEN_RETURN_THRESHOLD);
+  if (reference >= threshold || reference <= 0) return 0;
+  return Math.min(Math.round(reference * (1 + RETURN_RAMP_CEILING)), threshold);
+}
+
 /**
  * Clamp each week-over-week increase to `ceiling`, tolerating a single one-off
  * jump up to `burst` when the previous week did not itself burst — so a
  * progressive plan can step up once without sustaining a spike. Recovery drops
  * (any week below the prior) always pass through. Ceilings/bursts are fractions
- * (0.10 = +10%).
+ * (0.10 = +10%). `provenWeeklyMeters` opens the comeback return lane (see
+ * `RETURN_RAMP_CEILING`).
  */
-export function clampWeeklyRamp(targets: number[], ceiling: number, burst: number): number[] {
+export function clampWeeklyRamp(
+  targets: number[],
+  ceiling: number,
+  burst: number,
+  provenWeeklyMeters: number | null = null,
+): number[] {
   const out = [...targets];
   let prevBurst = false;
   for (let i = 1; i < out.length; i++) {
     const allowed = prevBurst ? ceiling : burst;
-    const max = Math.round(out[i - 1] * (1 + allowed));
+    const max = Math.max(
+      Math.round(out[i - 1] * (1 + allowed)),
+      returnRampMax(out[i - 1], provenWeeklyMeters),
+    );
     if (out[i] > max) out[i] = max;
     prevBurst = out[i] > Math.round(out[i - 1] * (1 + ceiling));
   }
@@ -107,15 +136,47 @@ export function clampWeeklyRamp(targets: number[], ceiling: number, burst: numbe
  * physiologically correct) block-periodization shape; what must never happen is
  * exceeding the ceiling relative to the trajectory the athlete had already
  * reached. So: no week may exceed the highest week before it by more than
- * `ceiling` (one `burst` tolerated, as in `clampWeeklyRamp`).
+ * `ceiling` (one `burst` tolerated, as in `clampWeeklyRamp`), except for the
+ * two explicit allowances in `RampAllowanceOpts`.
  */
-export function clampRampAgainstPeak(targets: number[], ceiling: number, burst: number): number[] {
+export type RampAllowanceOpts = {
+  /** Opens the comeback return lane (see `RETURN_RAMP_CEILING`). */
+  provenWeeklyMeters?: number | null;
+  /**
+   * Permits one full quantization grid step above the running peak even where
+   * the percentage ceiling is tighter — without it, coarse-grid plans whose
+   * ceiling headroom is smaller than one grid step (e.g. steady at 30–50 km/wk)
+   * could never step at all. The plateau-then-step contract of
+   * `quantizeWeeklyTargets`; only meaningful on quantized arrays.
+   */
+  gridStep?: boolean;
+};
+
+/** The max a week may reach off the running `peak` under `allowed` plus the opt-in allowances. */
+export function peakRampAllowance(
+  peak: number,
+  allowed: number,
+  opts: RampAllowanceOpts = {},
+): number {
+  return Math.max(
+    Math.round(peak * (1 + allowed)),
+    returnRampMax(peak, opts.provenWeeklyMeters),
+    opts.gridStep ? peak + rampGridStepFor(peak) : 0,
+  );
+}
+
+export function clampRampAgainstPeak(
+  targets: number[],
+  ceiling: number,
+  burst: number,
+  opts: RampAllowanceOpts = {},
+): number[] {
   const out = [...targets];
   let peak = out[0] ?? 0;
   let prevBurst = false;
   for (let i = 1; i < out.length; i++) {
     const allowed = prevBurst ? ceiling : burst;
-    const max = Math.round(peak * (1 + allowed));
+    const max = peakRampAllowance(peak, allowed, opts);
     if (out[i] > max) out[i] = max;
     prevBurst = out[i] > Math.round(peak * (1 + ceiling));
     peak = Math.max(peak, out[i]);
@@ -159,6 +220,32 @@ export const VOLUME_RAMP: Record<VolumeAggressiveness, { ceiling: number; burst:
   steady: { ceiling: 0.1, burst: 0.1 },
   progressive: { ceiling: 0.15, burst: 0.25 },
 };
+
+// Weekly volumes are emitted on a coarse step grid — real plans hold plateaus
+// and take visible steps (50, 50, 60, 70 …), they do not creep 18.2 → 19.5 km.
+export const QUANT_GRID_THRESHOLD_METERS = 30_000;
+export const QUANT_GRID_BELOW_METERS = 2_000;
+export const QUANT_GRID_ABOVE_METERS = 5_000;
+// A step within this band of the previous build week is noise, not a step —
+// flattened to an exact plateau.
+export const PLATEAU_BAND = 0.08;
+
+/** The step grid a weekly volume quantizes to: 2 km below 30 km/wk, 5 km at/above. */
+export function quantGridFor(meters: number): number {
+  return meters < QUANT_GRID_THRESHOLD_METERS ? QUANT_GRID_BELOW_METERS : QUANT_GRID_ABOVE_METERS;
+}
+
+/**
+ * The grid step the ramp allowance grants above a running peak. Keyed off the
+ * peak (not the candidate value) so the allowance is well-defined before the
+ * step lands; the −2 km margin keeps a small-grid peak from granting a
+ * large-grid step across the 30 km boundary.
+ */
+export function rampGridStepFor(peakMeters: number): number {
+  return peakMeters < QUANT_GRID_THRESHOLD_METERS - QUANT_GRID_BELOW_METERS
+    ? QUANT_GRID_BELOW_METERS
+    : QUANT_GRID_ABOVE_METERS;
+}
 
 // Fraction of weekly running volume a single long run typically represents —
 // used to derive an "implied longest run" from a week's target.
@@ -225,16 +312,41 @@ export function floorWeeklyTargets(targets: number[]): number[] {
 }
 
 /**
- * Cap each week's IMPLIED longest run (a fixed fraction of weekly volume) at a
- * ceiling that grows off the athlete's real recent longest run; scale the week's
- * volume down proportionally when it would spike the long run too fast. No-op
- * without a known recent longest run.
+ * The long-run reference the spike cap grows off: the recent (30-day) longest,
+ * or 80% of the proven 6-month longest when that is larger — a comeback
+ * athlete's long runs are not pinned to a vacation-shrunken 30-day window.
+ * Null when neither exists.
  */
-export function capLongestRunSpike(targets: number[], longestRunMeters: number | null): number[] {
-  if (longestRunMeters == null || longestRunMeters <= 0) return targets;
+export function longRunSpikeReference(
+  longestRunMeters: number | null,
+  provenLongestRunMeters: number | null = null,
+): number | null {
+  const recent = longestRunMeters != null && longestRunMeters > 0 ? longestRunMeters : 0;
+  const proven =
+    provenLongestRunMeters != null && provenLongestRunMeters > 0
+      ? provenLongestRunMeters * PROVEN_LONGEST_RUN_FACTOR
+      : 0;
+  const ref = Math.max(recent, proven);
+  return ref > 0 ? ref : null;
+}
+
+/**
+ * Cap each week's IMPLIED longest run (a fixed fraction of weekly volume) at a
+ * ceiling that grows off the athlete's real recent longest run (or the proven
+ * 6-month reference, see `longRunSpikeReference`); scale the week's volume down
+ * proportionally when it would spike the long run too fast. No-op without a
+ * known reference.
+ */
+export function capLongestRunSpike(
+  targets: number[],
+  longestRunMeters: number | null,
+  provenLongestRunMeters: number | null = null,
+): number[] {
+  const ref = longRunSpikeReference(longestRunMeters, provenLongestRunMeters);
+  if (ref == null) return targets;
   const out = [...targets];
   for (let i = 0; i < out.length; i++) {
-    const ceiling = longestRunMeters * (1 + LONG_RUN_SPIKE_CAP) * (1 + LONG_RUN_WEEKLY_GROWTH) ** i;
+    const ceiling = ref * (1 + LONG_RUN_SPIKE_CAP) * (1 + LONG_RUN_WEEKLY_GROWTH) ** i;
     const impliedLong = out[i] * IMPLIED_LONG_RUN_FRACTION;
     if (impliedLong > ceiling) out[i] = Math.round(ceiling / IMPLIED_LONG_RUN_FRACTION);
   }
@@ -259,6 +371,105 @@ export function enforceDownWeeks(targets: number[], buildWeeks = targets.length)
 export function capMaxWeekly(targets: number[], maxWeeklyVolumeMeters: number | null): number[] {
   if (maxWeeklyVolumeMeters == null) return targets;
   return targets.map((t) => Math.min(t, maxWeeklyVolumeMeters));
+}
+
+export type QuantizeWeeklyOpts = {
+  ceiling: number;
+  burst: number;
+  provenWeeklyMeters?: number | null;
+  maxWeeklyVolumeMeters: number | null;
+  longestRunMeters: number | null;
+  provenLongestRunMeters?: number | null;
+  /** Deliberate recovery dips: re-quantized on the grid, never plateau-flattened or used as a plateau anchor. */
+  downWeekIndices: ReadonlySet<number>;
+  /** Weeks at/after this index (the taper/race tail) are left untouched. */
+  taperStartIndex: number;
+};
+
+/**
+ * Plateau-and-step quantization: every build-week target snaps to the step grid
+ * (`quantGridFor`), and a rounded step within `PLATEAU_BAND` of the previous
+ * build week flattens to an exact plateau — real plans hold volume flat and
+ * take visible steps, they never creep a few percent a week.
+ *
+ * Rounding may only step UP where the caps allow: the ramp/burst ceiling off
+ * the running emitted peak (plus the return lane and the one-grid-step
+ * allowance — see `peakRampAllowance`), the long-run spike ceiling, and the
+ * user's hard max. A step above the percentage ceiling additionally requires
+ * the incoming (pre-quantized) trajectory to have itself reached the grid
+ * point, which is what turns a clamped smooth ramp into plateau-then-step
+ * instead of a permanently flat line. When rounding up would breach a cap, the
+ * week rounds down instead. Mirrors `clampRampAgainstPeak`'s peak/burst
+ * tracking exactly so the final re-clamp is a no-op on the emitted array.
+ */
+export function quantizeWeeklyTargets(targets: number[], opts: QuantizeWeeklyOpts): number[] {
+  const out = [...targets];
+  const spikeRef = longRunSpikeReference(
+    opts.longestRunMeters,
+    opts.provenLongestRunMeters ?? null,
+  );
+  const staticCap = (i: number): number => {
+    let cap = Number.POSITIVE_INFINITY;
+    if (opts.maxWeeklyVolumeMeters != null) cap = Math.min(cap, opts.maxWeeklyVolumeMeters);
+    if (spikeRef != null) {
+      const ceiling = spikeRef * (1 + LONG_RUN_SPIKE_CAP) * (1 + LONG_RUN_WEEKLY_GROWTH) ** i;
+      cap = Math.min(cap, Math.round(ceiling / IMPLIED_LONG_RUN_FRACTION));
+    }
+    return cap;
+  };
+  let peak = 0;
+  let prevBurst = false;
+  let prevBuild: number | null = null;
+  const end = Math.min(out.length, Math.max(0, opts.taperStartIndex));
+  for (let i = 0; i < end; i++) {
+    const raw = out[i];
+    if (!Number.isFinite(raw) || raw <= 0) continue;
+    const isDown = opts.downWeekIndices.has(i);
+    // A down week dips off its QUANTIZED neighbour: the pre-quantization dip
+    // (0.72 × an unrounded week) can land above the rounded-down week before
+    // it, erasing the recovery shape.
+    const v =
+      isDown && i > 0 && Number.isFinite(out[i - 1]) && out[i - 1] > 0
+        ? out[i - 1] * DOWN_WEEK_FACTOR
+        : raw;
+    const grid = quantGridFor(v);
+    const allowed = prevBurst ? opts.ceiling : opts.burst;
+    // Week 1 anchors to the real baseline — quantizing must never raise it.
+    const rampMax =
+      i === 0
+        ? v
+        : Math.max(
+            peakRampAllowance(peak, allowed, { provenWeeklyMeters: opts.provenWeeklyMeters }),
+            // The grid-step allowance is only granted once the incoming
+            // (pre-quantized) trajectory has itself reached the grid point —
+            // this is what turns a clamped smooth ramp into plateau-then-step.
+            Math.min(peak + rampGridStepFor(peak), Math.floor(v / grid) * grid),
+          );
+    const cap = Math.min(staticCap(i), rampMax);
+    let q = Math.round(v / grid) * grid;
+    if (q > cap) q = Math.floor(v / grid) * grid;
+    if (q > cap) q = Math.floor(cap / quantGridFor(cap)) * quantGridFor(cap);
+    if (q <= 0) q = Math.min(v, cap);
+    if (
+      !isDown &&
+      prevBuild != null &&
+      prevBuild > 0 &&
+      Math.abs(q - prevBuild) < PLATEAU_BAND * prevBuild &&
+      // …unless the underlying trajectory has earned a full grid step past the
+      // plateau — without this escape a step blocked at a grid boundary (e.g.
+      // the next 5 km point sitting past the return-lane cap) flattens forever.
+      v - prevBuild < quantGridFor(prevBuild)
+    ) {
+      // Flattening to an earlier build value is always cap-safe: it is ≤ the
+      // running peak and satisfied every static cap at a smaller growth index.
+      q = prevBuild;
+    }
+    out[i] = q;
+    if (i > 0) prevBurst = q > Math.round(peak * (1 + opts.ceiling));
+    peak = Math.max(peak, q);
+    if (!isDown) prevBuild = q;
+  }
+  return out;
 }
 
 /** Race-distance → taper length. Marathon ~3 wk, half ~2 wk, 10k/shorter ~1 wk. */
@@ -389,6 +600,10 @@ function repairPhases(weeks: PlanMacroWeek[], raceAnchored: boolean): PlanMacroW
 export type MacroShapingParams = {
   baselineWeeklyMeters: number | null;
   longestRunMeters: number | null;
+  /** Max trailing-4-week average over the last ~6 months (see gather_context) — the comeback anchor. */
+  provenWeeklyMeters: number | null;
+  /** Longest single run in the same ~6-month window. */
+  provenLongestRunMeters: number | null;
   volumeAggressiveness: VolumeAggressiveness;
   maxWeeklyVolumeMeters: number | null;
   raceDistanceMeters: number | null;
@@ -472,8 +687,12 @@ export function shapeMacro(
   const requested = phased.map((w) => w.targetDistanceMeters);
   const anchored = anchorWeekOne(requested, params.baselineWeeklyMeters);
   const floored = floorWeeklyTargets(anchored);
-  const ramped = clampWeeklyRamp(floored, ramp.ceiling, ramp.burst);
-  const longCapped = capLongestRunSpike(ramped, params.longestRunMeters);
+  const ramped = clampWeeklyRamp(floored, ramp.ceiling, ramp.burst, params.provenWeeklyMeters);
+  const longCapped = capLongestRunSpike(
+    ramped,
+    params.longestRunMeters,
+    params.provenLongestRunMeters,
+  );
   // Hard-cap BEFORE the taper so the taper's staged fractions come off an
   // already-capped build week and stay strictly decreasing (capping afterwards
   // flattens the first taper weeks onto the same ceiling value).
@@ -484,19 +703,42 @@ export function shapeMacro(
   const longIdx = firstReduced(ramped, longCapped);
   const maxIdx = firstReduced(longCapped, maxCapped);
 
-  let shaped: PlanMacroWeek[] = phased.map((w, i) => ({ ...w, targetDistanceMeters: targets[i] }));
+  // Plateau-and-step quantization over the build region, BEFORE the taper so
+  // the taper's staged fractions come off the quantized (emitted) last build
+  // week and stay strictly below it — staging off pre-quantization values let
+  // a race week land above a rounded-down build region. Down-week indices
+  // mirror `enforceDownWeeks`.
+  const downWeekIndices = new Set<number>();
+  for (let i = 1; i < Math.min(buildWeeks, targets.length); i++) {
+    if ((i + 1) % DOWN_WEEK_CADENCE === 0) downWeekIndices.add(i);
+  }
+  const quantizedTargets = quantizeWeeklyTargets(targets, {
+    ceiling: ramp.ceiling,
+    burst: ramp.burst,
+    provenWeeklyMeters: params.provenWeeklyMeters,
+    maxWeeklyVolumeMeters: params.maxWeeklyVolumeMeters,
+    longestRunMeters: params.longestRunMeters,
+    provenLongestRunMeters: params.provenLongestRunMeters,
+    downWeekIndices,
+    taperStartIndex: buildWeeks,
+  });
+
+  let shaped: PlanMacroWeek[] = phased.map((w, i) => ({
+    ...w,
+    targetDistanceMeters: quantizedTargets[i],
+  }));
   if (taperCount > 0) shaped = applyTaper(shaped, taperCount, raceAnchored);
+  const quantized = shaped.map((w) => w.targetDistanceMeters);
 
   // Final passes: every stage above can lower a week, so the ramp invariant is
   // re-established on the finished array (see `clampRampAgainstPeak`), then the
   // user's hard ceiling is re-applied. Both only ever lower a week, so neither
   // can reopen the long-run spike cap.
   const capped = capMaxWeekly(
-    clampRampAgainstPeak(
-      shaped.map((w) => w.targetDistanceMeters),
-      ramp.ceiling,
-      ramp.burst,
-    ),
+    clampRampAgainstPeak(quantized, ramp.ceiling, ramp.burst, {
+      provenWeeklyMeters: params.provenWeeklyMeters,
+      gridStep: true,
+    }),
     params.maxWeeklyVolumeMeters,
   );
 
@@ -575,17 +817,16 @@ export function shapeMacro(
     return w;
   });
 
+  // Measured against the quantized array, not the pre-quantization one: a week
+  // the grid merely rounded down is coaching shape, not a refusal.
   if (rampIdx < 0) {
-    const peakIdx = firstReduced(
-      shaped.map((w) => w.targetDistanceMeters),
-      capped,
-    );
+    const peakIdx = firstReduced(quantized, capped);
     if (peakIdx >= 0) {
       notices.push({
         kind: "clamped",
         code: "weekly_ramp_exceeded",
         message: `Week ${peakIdx + 1} was held to ${fmtKm(capped[peakIdx])}: no week may climb more than about +${Math.round(ramp.ceiling * 100)}% above the highest week before it, even coming out of a recovery week.`,
-        observed: shaped[peakIdx].targetDistanceMeters,
+        observed: quantized[peakIdx],
         limit: capped[peakIdx],
         weekIndex: peakIdx + 1,
       });
@@ -966,6 +1207,8 @@ export type SessionGuardParams = {
   crossTrainingCount: number;
   crossTrainingInjuryDriven: boolean;
   raceDistanceMeters: number | null;
+  /** Proven 6-month capacity (see `AthleteBaselineVolume`) — gates the short-run consolidation. */
+  provenWeeklyMeters: number | null;
 };
 
 // A long run beyond ~40% of the week's volume is an outsized injury risk —
@@ -983,6 +1226,13 @@ export const LONG_RUN_FILL_WEIGHT = 2.5;
 // A recovery jog is deliberately the week's shortest run — at weight 1 the fill
 // handed one ~11.6 km while its own text said "30–40 min".
 export const RECOVERY_FILL_WEIGHT = 0.6;
+
+// For an experienced, uninjured athlete a run under 5 km is pointless filler:
+// the week plans FEWER sessions instead (rest day), and the count builds back
+// as volume grows. Beginners (no proven history) and injured athletes are
+// exempt — run-walks and short cross-training-adjacent easies stay legal.
+export const MIN_FILL_RUN_METERS = 5_000;
+export const EXPERIENCED_PROVEN_WEEKLY_METERS = 15_000;
 
 function appendDistanceHint(description: string | null | undefined, meters: number): string {
   const hint = `~${(meters / 1000).toFixed(1)} km`;
@@ -1099,44 +1349,99 @@ export function assembleWeekSessionsWithNotices(
   const fill = unstructured.filter((s) => s.sessionType !== "RACE");
   if (fill.length > 0) {
     const budget = Math.max(0, week.targetDistanceMeters - structuredMeters - raceMeters);
-    const longFill = sessions.length >= 2 ? fill.find(isLongBucket) : undefined;
     const longMax = Math.round(week.targetDistanceMeters * LONG_RUN_MAX_FILL_SHARE);
-    const others = fill.filter((s) => s !== longFill);
     const fillWeight = (s: GeneratedSession) =>
       s.sessionType === "RECOVERY" ? RECOVERY_FILL_WEIGHT : 1;
-    const othersWeight = others.reduce((n, s) => n + fillWeight(s), 0);
-    const totalWeight = othersWeight + (longFill ? LONG_RUN_FILL_WEIGHT : 0);
-    const longShare = longFill ? Math.round((budget * LONG_RUN_FILL_WEIGHT) / totalWeight) : 0;
-    const longMeters = Math.min(longShare, longMax);
-    if (longFill) {
-      longFill.description = appendDistanceHint(longFill.description, longMeters);
-      if (longShare > longMax) {
+
+    type FillSplit = {
+      longFill: GeneratedSession | undefined;
+      longShare: number;
+      longMeters: number;
+      others: { s: GeneratedSession; share: number; meters: number }[];
+    };
+    const computeSplit = (fillRuns: GeneratedSession[], sessionCount: number): FillSplit => {
+      const longFill = sessionCount >= 2 ? fillRuns.find(isLongBucket) : undefined;
+      const others = fillRuns.filter((s) => s !== longFill);
+      const othersWeight = others.reduce((n, s) => n + fillWeight(s), 0);
+      const totalWeight = othersWeight + (longFill ? LONG_RUN_FILL_WEIGHT : 0);
+      const longShare = longFill ? Math.round((budget * LONG_RUN_FILL_WEIGHT) / totalWeight) : 0;
+      const longMeters = Math.min(longShare, longMax);
+      const perWeightUnit = othersWeight > 0 ? (budget - longMeters) / othersWeight : 0;
+      return {
+        longFill,
+        longShare,
+        longMeters,
+        // No easy fill run may out-distance the week's (possibly capped) long
+        // run — an "easy shakeout" absorbing 60% of the week dodged the
+        // long-run cap by not being typed LONG. Capped excess is dropped, not
+        // reassigned.
+        others: others.map((s) => {
+          const share = Math.round(perWeightUnit * fillWeight(s));
+          return { s, share, meters: longFill ? Math.min(share, longMeters) : share };
+        }),
+      };
+    };
+
+    let remaining = fill;
+    let split = computeSplit(remaining, sessions.length);
+
+    // Short-run consolidation: an experienced, uninjured athlete never gets
+    // sub-5 km filler — the shortest non-long fill run becomes a rest day and
+    // the week re-splits, until every run is meaningful or only the long run
+    // remains (see MIN_FILL_RUN_METERS).
+    const experienced =
+      params.provenWeeklyMeters != null &&
+      params.provenWeeklyMeters >= EXPERIENCED_PROVEN_WEEKLY_METERS &&
+      !params.crossTrainingInjuryDriven &&
+      params.crossTrainingCount === 0;
+    if (experienced) {
+      const tooShort = (s: FillSplit) =>
+        s.others.some((o) => o.meters < MIN_FILL_RUN_METERS) ||
+        (s.longFill != null && s.others.length > 0 && s.longMeters < MIN_FILL_RUN_METERS);
+      while (split.others.length > (split.longFill ? 0 : 1) && tooShort(split)) {
+        const victim = split.others.reduce((min, o) =>
+          o.meters < min.meters || (o.meters === min.meters && o.s.date > min.s.date) ? o : min,
+        );
+        remaining = remaining.filter((s) => s !== victim.s);
+        sessions = sessions.filter((s) => s !== victim.s);
+        split = computeSplit(remaining, sessions.length);
+      }
+      const droppedCount = fill.length - remaining.length;
+      if (droppedCount > 0) {
+        notices.push({
+          kind: "clamped",
+          code: "short_runs_consolidated",
+          message: `Week ${week.weekIndex} plans ${sessions.length} run${sessions.length === 1 ? "" : "s"} instead of ${sessions.length + droppedCount} so every run is a meaningful distance — short filler runs help nobody; the count builds back up as volume grows.`,
+          observed: sessions.length + droppedCount,
+          limit: sessions.length,
+          weekIndex: week.weekIndex,
+        });
+      }
+    }
+
+    if (split.longFill) {
+      split.longFill.description = appendDistanceHint(split.longFill.description, split.longMeters);
+      if (split.longShare > longMax) {
         // Excess with no other fill run to absorb it is simply not planned;
         // planned < target is the honest outcome, a 71 km long run is not.
         notices.push({
           kind: "clamped",
           code: "long_run_share_capped",
-          message: `Week ${week.weekIndex}'s long run was held to ${fmtKm(longMax)} instead of ${fmtKm(longShare)}: a single long run beyond ${Math.round(LONG_RUN_MAX_FILL_SHARE * 100)}% of the week's volume is an outsized injury risk. The remaining distance ${others.length > 0 ? "moves to the week's other runs" : "is left unplanned"}.`,
-          observed: longShare,
+          message: `Week ${week.weekIndex}'s long run was held to ${fmtKm(longMax)} instead of ${fmtKm(split.longShare)}: a single long run beyond ${Math.round(LONG_RUN_MAX_FILL_SHARE * 100)}% of the week's volume is an outsized injury risk. The remaining distance ${split.others.length > 0 ? "moves to the week's other runs" : "is left unplanned"}.`,
+          observed: split.longShare,
           limit: longMax,
           weekIndex: week.weekIndex,
         });
       }
     }
-    const perWeightUnit = othersWeight > 0 ? (budget - longMeters) / othersWeight : 0;
-    // No easy fill run may out-distance the week's (possibly capped) long run —
-    // an "easy shakeout" absorbing 60% of the week dodged the long-run cap by
-    // not being typed LONG. Capped excess is dropped, not reassigned.
     let cappedFrom = 0;
     let cappedTo = 0;
-    for (const s of others) {
-      const share = Math.round(perWeightUnit * fillWeight(s));
-      const meters = longFill ? Math.min(share, longMeters) : share;
-      if (longFill && share > longMeters && share > cappedFrom) {
-        cappedFrom = share;
-        cappedTo = meters;
+    for (const o of split.others) {
+      if (split.longFill && o.share > split.longMeters && o.share > cappedFrom) {
+        cappedFrom = o.share;
+        cappedTo = o.meters;
       }
-      s.description = appendDistanceHint(s.description, meters);
+      o.s.description = appendDistanceHint(o.s.description, o.meters);
     }
     if (cappedFrom > 0) {
       notices.push({

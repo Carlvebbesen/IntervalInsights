@@ -70,6 +70,14 @@ export type AthleteRaceAbility = {
 export type AthleteBaselineVolume = {
   trailing4WeekAvgWeeklyMeters: number | null;
   longestRunLast30dMeters: number | null;
+  /**
+   * Proven capacity over the last ~26 weeks: the best trailing-4-consecutive-week
+   * average (needing ≥3 active weeks in the slice) — a comeback athlete's real
+   * ceiling, not their vacation-shrunken trailing month. Null without such a block.
+   */
+  provenWeeklyMeters: number | null;
+  /** Longest single run in the same ~26-week window. */
+  provenLongestRunMeters: number | null;
 };
 
 export type ActiveHealthEvent = {

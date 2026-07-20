@@ -38,7 +38,12 @@ const ctx: AthleteContext = {
   recentWeeks: [],
   fitness: null,
   raceAbility: null,
-  baselineVolume: { trailing4WeekAvgWeeklyMeters: 40_000, longestRunLast30dMeters: 15_000 },
+  baselineVolume: {
+    trailing4WeekAvgWeeklyMeters: 40_000,
+    longestRunLast30dMeters: 15_000,
+    provenWeeklyMeters: null,
+    provenLongestRunMeters: null,
+  },
   activeHealthEvents: [],
   workoutVocabulary: { types: [], hasStructuredIntervalHistory: false, structures: [] },
 };
@@ -181,6 +186,8 @@ describe("safety clamps refuse out loud", () => {
     const { macro, notices } = shapeMacro(raw, baseInput, {
       baselineWeeklyMeters: 40_000,
       longestRunMeters: null,
+      provenWeeklyMeters: null,
+      provenLongestRunMeters: null,
       volumeAggressiveness: "steady",
       maxWeeklyVolumeMeters: null,
       raceDistanceMeters: null,
@@ -216,6 +223,7 @@ describe("safety clamps refuse out loud", () => {
       crossTrainingCount: 0,
       crossTrainingInjuryDriven: false,
       raceDistanceMeters: null,
+      provenWeeklyMeters: null,
     });
 
     const cap = notices.find((n) => n.code === "quality_sessions_exceeded");
@@ -247,19 +255,22 @@ describe("safety clamps refuse out loud", () => {
       {
         baselineWeeklyMeters: 30_000,
         longestRunMeters: null,
+        provenWeeklyMeters: null,
+        provenLongestRunMeters: null,
         volumeAggressiveness: "steady",
         maxWeeklyVolumeMeters: null,
         raceDistanceMeters: null,
       },
     );
 
-    // Ramp clamp bit week 4 (60 km), then enforceDownWeeks lowered it further.
-    expect(macro.weeks[3].targetDistanceMeters).toBe(26_136);
+    // Ramp clamp bit week 4 (60 km), then enforceDownWeeks lowered it further
+    // and quantization put the dip on the 2 km grid off its quantized neighbour.
+    expect(macro.weeks[3].targetDistanceMeters).toBe(26_000);
     const ramp = notices.find((n) => n.code === "weekly_ramp_exceeded");
     expect(ramp?.weekIndex).toBe(4);
     expect(ramp?.observed).toBe(60_000);
-    expect(ramp?.limit).toBe(26_136);
-    expect(ramp?.message).toContain("26.1 km");
+    expect(ramp?.limit).toBe(26_000);
+    expect(ramp?.message).toContain("26.0 km");
   });
 
   it("stays silent when nothing was refused", () => {
@@ -279,6 +290,8 @@ describe("safety clamps refuse out loud", () => {
       {
         baselineWeeklyMeters: 40_000,
         longestRunMeters: null,
+        provenWeeklyMeters: null,
+        provenLongestRunMeters: null,
         volumeAggressiveness: "steady",
         maxWeeklyVolumeMeters: null,
         raceDistanceMeters: null,
