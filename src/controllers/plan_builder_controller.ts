@@ -41,7 +41,19 @@ async function emitTerminalEvent(
     await safeWrite("interrupt", JSON.stringify({ ...(interrupt.value as object), threadId }));
     return;
   }
-  await safeWrite("done", JSON.stringify({ planId: state.values.persistedPlanId, threadId }));
+  // The terminal event must carry the notices too. The sessions gate converts a
+  // 4th `adjust` into `accept` plus a `review_rounds_exhausted` notice and then
+  // runs straight to persistPlan → END, so `done` is the only frame left to
+  // deliver it on — without this, REST callers get a success for feedback that
+  // was silently discarded.
+  await safeWrite(
+    "done",
+    JSON.stringify({
+      planId: state.values.persistedPlanId,
+      threadId,
+      notices: [...(state.values.feedbackNotices ?? []), ...(state.values.guardNotices ?? [])],
+    }),
+  );
 }
 
 function buildSafeWrite(stream: SSEStreamingApi, abort: AbortController) {
