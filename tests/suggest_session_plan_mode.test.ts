@@ -1,10 +1,18 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { eq } from "drizzle-orm";
+import { activities, intervalStructures } from "../src/schema";
 import { anchorSecPerKmForStep, fillPacesFromAnchor } from "../src/services/pace_anchor_service";
 import type { ExpandedIntervalSet } from "../src/types/ExpandedIntervalSet";
 import type { WorkoutStructureSet } from "../src/schemas/agent_schemas";
 import { toISODate } from "../src/services/utils";
-import { closePool, createTestUser, deleteTestUser, getPool } from "./helpers/db";
-import { insertPlannedSession, insertTrainingPlan, insertTrainingPlanWeek } from "./helpers/fixtures";
+import { closePool, createTestUser, deleteTestUser, getDb, getPool } from "./helpers/db";
+import {
+  insertActivity,
+  insertIntervalStructure,
+  insertPlannedSession,
+  insertTrainingPlan,
+  insertTrainingPlanWeek,
+} from "./helpers/fixtures";
 import { buildTestApp, withIdentity } from "./helpers/test_app";
 import { suggestSessionAgentMock } from "./setup";
 
@@ -197,5 +205,72 @@ describe("POST /api/v1/agents/suggest-session — plan mode (D8)", () => {
     const aiBody = await aiRes.json();
     expect(aiBody.mode).toBe("ai");
     expect(aiBody.plannedSessionId ?? null).toBe(null);
+  });
+});
+
+// The due planned session here is an UNSTRUCTURED easy run — the case that used
+// to hijack an explicit structureId request into the plan path and 422.
+describe("POST /api/v1/agents/suggest-session — unstructured due session routing", () => {
+  let owner: { id: string; clerkId: string };
+  let structureId: number;
+
+  const ownerIdentity = () => ({
+    userId: owner.id,
+    clerkUserId: owner.clerkId,
+    role: "premium" as const,
+  });
+
+  beforeAll(async () => {
+    owner = await createTestUser({ role: "premium", intervals: false });
+
+    const plan = await insertTrainingPlan(owner.id, { status: "active" });
+    const week = await insertTrainingPlanWeek(plan.id, { weekIndex: 0 });
+    await insertPlannedSession(plan.id, week.id, {
+      date: today,
+      sessionType: "EASY",
+      title: "Easy run",
+      structure: null,
+      sortOrder: 0,
+    });
+
+    const stored = await insertIntervalStructure({ name: "5x1000m" });
+    structureId = stored.id;
+    const activity = await insertActivity(owner.id, {
+      trainingType: "LONG_INTERVALS",
+      intervalStructureId: structureId,
+    });
+    await getDb()
+      .update(activities)
+      .set({ draftAnalysisResult: { structure } })
+      .where(eq(activities.id, activity.id));
+  });
+
+  afterAll(async () => {
+    await deleteTestUser(owner.id);
+    await getDb().delete(intervalStructures).where(eq(intervalStructures.id, structureId));
+  });
+
+  it("an explicit structureId wins over the due plan session under auto", async () => {
+    const res = await withIdentity(ownerIdentity(), () => post({ structureId }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.mode).toBe("signature");
+    expect(body.plannedSessionId ?? null).toBe(null);
+    expect(body.planId ?? null).toBe(null);
+    expect(suggestSessionAgentMock.calls).toBeGreaterThan(0);
+  });
+
+  it("auto with no structureId falls back to signature when the due session has no structure", async () => {
+    const res = await withIdentity(ownerIdentity(), () => post({ structure }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.mode).toBe("signature");
+    expect(body.plannedSessionId ?? null).toBe(null);
+  });
+
+  it("explicit plan mode on an unstructured due session still 422s", async () => {
+    const res = await withIdentity(ownerIdentity(), () => post({ mode: "plan" }));
+    expect(res.status).toBe(422);
+    expect(suggestSessionAgentMock.calls).toBe(0);
   });
 });

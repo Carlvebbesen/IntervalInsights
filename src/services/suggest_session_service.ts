@@ -295,8 +295,14 @@ async function resolveRequestMode(
   requested: RequestMode | undefined,
   date: string,
   role: SuggestSessionRole,
+  hasExplicitStructureId: boolean,
 ): Promise<ResolvedRequestMode> {
   if (requested === "signature" || requested === "ai") return { mode: requested, due: null };
+
+  // An explicit structureId is a signature-shaped request: only an explicit
+  // mode "plan" may override it. Auto used to hijack it onto a due planned
+  // session — and 422 when that session happened to be an unstructured easy run.
+  if (requested == null && hasExplicitStructureId) return { mode: "signature", due: null };
 
   // This endpoint is deliberately free for all users, but training plans are a
   // premium feature in whole — so the plan-reading branch (which returns planId,
@@ -314,8 +320,11 @@ async function resolveRequestMode(
     }
     return { mode: "plan", due };
   }
-  // auto: plan when a session is due, otherwise the legacy signature path.
-  return { mode: due ? "plan" : "signature", due };
+  // auto: plan when a due session can actually seed a suggestion; an
+  // unstructured due session (e.g. a plain easy run) falls back to the
+  // signature path instead of 422-ing (the 422 stays for explicit mode "plan").
+  if (due && (due.session.structure ?? []).length > 0) return { mode: "plan", due };
+  return { mode: "signature", due: null };
 }
 
 async function buildPlanSuggestion(
@@ -392,7 +401,14 @@ export async function suggestSession(
   const date = input.date ?? toISODate(now);
   const recentlySuggested = input.recentlySuggested ?? [];
 
-  const resolved = await resolveRequestMode(db, userId, input.mode, date, role);
+  const resolved = await resolveRequestMode(
+    db,
+    userId,
+    input.mode,
+    date,
+    role,
+    input.structureId != null,
+  );
   const log = logger.child({
     route: "suggest-session",
     date,
