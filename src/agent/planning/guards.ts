@@ -174,19 +174,28 @@ export const DOWN_WEEK_CADENCE = 4;
 export const DOWN_WEEK_FACTOR = 0.72;
 
 /**
- * Force week 1 to the athlete's REAL trailing baseline (or a conservative floor
- * when there is no history) — never the race goal. Starting above what they are
- * actually running is the top cause of over-ramp injury. A baseline that is
- * non-finite or below `MIN_BASELINE_WEEKLY_METERS` is treated as ABSENT:
- * anchoring week 1 to 0 (or to 1 metre) propagates through the whole ramp and
- * yields a plan of zero-kilometre weeks.
+ * Force week 1 to the athlete's REAL trailing baseline — never the race goal.
+ * Starting above what they are actually running is the top cause of over-ramp
+ * injury.
+ *
+ * The `DEFAULT_BASELINE_WEEKLY_METERS` floor applies ONLY when there is no
+ * usable data at all. It used to also apply below `MIN_BASELINE_WEEKLY_METERS`
+ * (5 km/wk), which meant a genuinely low-volume athlete — 2 × 5 km a month, a
+ * real and common starting point — was anchored at 20 km, roughly 4× their
+ * actual volume: precisely the over-anchoring this guard exists to prevent,
+ * inflicted by the guard itself. When some real running exists, week 1 never
+ * exceeds it, however small; the ramp ceilings grow the plan from there.
+ *
+ * The remaining floor is `MIN_PLAUSIBLE_WEEKLY_METERS` — below ~1 km/week the
+ * number is noise rather than a small training week, and anchoring week 1 to 0
+ * (or to 1 metre) propagates through the whole ramp into a plan of empty weeks.
  */
 export function anchorWeekOne(targets: number[], baselineWeeklyMeters: number | null): number[] {
   if (targets.length === 0) return targets;
   const usable =
     baselineWeeklyMeters != null &&
     Number.isFinite(baselineWeeklyMeters) &&
-    baselineWeeklyMeters >= MIN_BASELINE_WEEKLY_METERS
+    baselineWeeklyMeters >= MIN_PLAUSIBLE_WEEKLY_METERS
       ? baselineWeeklyMeters
       : DEFAULT_BASELINE_WEEKLY_METERS;
   const out = [...targets];

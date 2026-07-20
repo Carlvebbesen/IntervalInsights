@@ -294,11 +294,19 @@ async function resolveRequestMode(
   userId: string,
   requested: RequestMode | undefined,
   date: string,
+  role: SuggestSessionRole,
 ): Promise<ResolvedRequestMode> {
   if (requested === "signature" || requested === "ai") return { mode: requested, due: null };
 
+  // This endpoint is deliberately free for all users, but training plans are a
+  // premium feature in whole — so the plan-reading branch (which returns planId,
+  // plannedSessionId, title, description and the full structure) must carry the
+  // same gate the /training-plans routers do. A downgraded user simply has no
+  // session due: explicit mode "plan" 404s exactly as it would with no plan, and
+  // auto falls through to the free signature path.
+  const canReadPlan = role === "premium" || role === "admin";
   const tomorrow = shiftDateISO(date, 1);
-  const due = await planRepo.findDuePlannedSession(db, userId, date, tomorrow);
+  const due = canReadPlan ? await planRepo.findDuePlannedSession(db, userId, date, tomorrow) : null;
 
   if (requested === "plan") {
     if (!due) {
@@ -364,9 +372,12 @@ async function buildPlanSuggestion(
   };
 }
 
+export type SuggestSessionRole = "guest" | "premium" | "admin";
+
 export async function suggestSession(
   db: Db,
   userId: string,
+  role: SuggestSessionRole,
   input: {
     structureId?: number;
     structure?: WorkoutSet[];
@@ -381,7 +392,7 @@ export async function suggestSession(
   const date = input.date ?? toISODate(now);
   const recentlySuggested = input.recentlySuggested ?? [];
 
-  const resolved = await resolveRequestMode(db, userId, input.mode, date);
+  const resolved = await resolveRequestMode(db, userId, input.mode, date, role);
   const log = logger.child({
     route: "suggest-session",
     date,

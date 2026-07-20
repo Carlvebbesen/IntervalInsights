@@ -12,6 +12,8 @@ const app = buildTestApp(getPool());
 
 let planUser: { id: string; clerkId: string };
 let plainUser: { id: string; clerkId: string };
+// Same active plan as planUser, but the role was downgraded (lapsed subscription).
+let downgradedUser: { id: string; clerkId: string };
 
 const structure: WorkoutStructureSet[] = [
   {
@@ -35,22 +37,26 @@ const today = toISODate(new Date());
 beforeAll(async () => {
   planUser = await createTestUser({ role: "premium", intervals: false });
   plainUser = await createTestUser({ role: "premium", intervals: false });
+  downgradedUser = await createTestUser({ role: "guest", intervals: false });
 
-  const plan = await insertTrainingPlan(planUser.id, { status: "active" });
-  const week = await insertTrainingPlanWeek(plan.id, { weekIndex: 0 });
-  await insertPlannedSession(plan.id, week.id, {
-    date: today,
-    sessionType: "LONG_INTERVALS",
-    title: "5x1000m threshold",
-    description: "Key session for the week",
-    structure,
-    sortOrder: 0,
-  });
+  for (const owner of [planUser, downgradedUser]) {
+    const plan = await insertTrainingPlan(owner.id, { status: "active" });
+    const week = await insertTrainingPlanWeek(plan.id, { weekIndex: 0 });
+    await insertPlannedSession(plan.id, week.id, {
+      date: today,
+      sessionType: "LONG_INTERVALS",
+      title: "5x1000m threshold",
+      description: "Key session for the week",
+      structure,
+      sortOrder: 0,
+    });
+  }
 });
 
 afterAll(async () => {
   await deleteTestUser(planUser.id);
   await deleteTestUser(plainUser.id);
+  await deleteTestUser(downgradedUser.id);
   await closePool();
 });
 
@@ -65,6 +71,12 @@ const plainIdentity = () => ({
   userId: plainUser.id,
   clerkUserId: plainUser.clerkId,
   role: "premium" as const,
+});
+
+const downgradedIdentity = () => ({
+  userId: downgradedUser.id,
+  clerkUserId: downgradedUser.clerkId,
+  role: "guest" as const,
 });
 
 function post(body: unknown) {
@@ -143,6 +155,38 @@ describe("POST /api/v1/agents/suggest-session — plan mode (D8)", () => {
     const res = await withIdentity(plainIdentity(), () => post({ mode: "plan" }));
     expect(res.status).toBe(404);
     expect(suggestSessionAgentMock.calls).toBe(0);
+  });
+
+  // Training plans are premium in whole, so this deliberately-free endpoint must
+  // not stay a working plan-read path for a downgraded user.
+  it("does not serve a due plan session to a non-premium user under auto", async () => {
+    const res = await withIdentity(downgradedIdentity(), () => post({ structure }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Falls through to the free signature path rather than erroring.
+    expect(body.mode).toBe("signature");
+    expect(body.plannedSessionId ?? null).toBe(null);
+    expect(body.planId ?? null).toBe(null);
+  });
+
+  it("404s a non-premium user's explicit plan mode as if nothing were due", async () => {
+    const res = await withIdentity(downgradedIdentity(), () => post({ mode: "plan" }));
+    expect(res.status).toBe(404);
+    expect(suggestSessionAgentMock.calls).toBe(0);
+  });
+
+  it("still serves the same due session to a premium user (the gate is role, not data)", async () => {
+    const res = await withIdentity(planIdentity(), () => post({}));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.mode).toBe("plan");
+    expect(body.planId).toBeGreaterThan(0);
+  });
+
+  it("leaves the free signature/ai modes untouched for a non-premium user", async () => {
+    const res = await withIdentity(downgradedIdentity(), () => post({ mode: "ai", structure }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).mode).toBe("ai");
   });
 
   it("keys the cache by resolved mode so 'suggest another' (ai) doesn't collide with a plan suggestion", async () => {

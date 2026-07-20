@@ -11,7 +11,7 @@ import { findOrCreateUserSettings } from "../../../repositories/user_settings_re
 import { RUNNING_SPORT_TYPES, type TrainingType, trainingTypeEnum } from "../../../schema/enums";
 import { computeFitnessDay } from "../../../services/fitness_metrics_service";
 import { fetchPaceAnchor, predictRaceTimeSecFromVdot } from "../../../services/pace_anchor_service";
-import { MIN_BASELINE_WEEKLY_METERS } from "../guards";
+import { DEFAULT_BASELINE_WEEKLY_METERS, MIN_BASELINE_WEEKLY_METERS } from "../guards";
 import type {
   ActiveHealthEvent,
   AthleteBaselineVolume,
@@ -49,13 +49,12 @@ function toISODate(d: Date | string): string {
   return (typeof d === "string" ? new Date(d) : d).toISOString().slice(0, 10);
 }
 
-// Minimum evidence before a computed trailing average is trusted as a real
-// training baseline. Below either threshold the 28-day window is too thin for
-// the divide-by-4 to mean anything (one 5 km run would imply a 1.25 km week),
-// so we report ABSENT and let the documented DEFAULT_BASELINE_WEEKLY_METERS
-// re-entry floor take over rather than anchoring a plan to a phantom number.
-// The volume floor is shared with `anchorWeekOne`, which applies the same rule
-// defensively to whatever baseline it is handed.
+// Minimum evidence before a computed trailing average is trusted as a full
+// training baseline. Below either threshold the 28-day window is thin enough
+// that the divide-by-4 may understate the athlete — but understating is the
+// safe direction, so we report the observed average anyway, capped at the
+// re-entry floor. Only an empty window reports ABSENT and hands over to
+// DEFAULT_BASELINE_WEEKLY_METERS.
 export const MIN_BASELINE_RUNS = 3;
 
 /** A row's distance in meters, or null when absent/unparsable (never a silent 0). */
@@ -68,9 +67,10 @@ function runDistanceMeters(distance: number | string | null): number | null {
 /**
  * Real baseline running volume — the anti-over-ramp anchor. `trailing4WeekAvg`
  * is the mean weekly running distance over the last 28 days; `longestRun` is
- * the single longest run in the last 30 days. Either is null when the evidence
- * is too thin to trust — callers must treat null as "no baseline on record",
- * never as zero. Pure over the supplied rows so it is unit-testable.
+ * the single longest run in the last 30 days. Null means "no usable data at
+ * all" — callers must treat it as "no baseline on record", never as zero. Any
+ * real running produces a number, however small. Pure over the supplied rows so
+ * it is unit-testable.
  */
 export function computeBaselineVolume(runs: RunRow[], today: Date): AthleteBaselineVolume {
   const absent = { trailing4WeekAvgWeeklyMeters: null, longestRunLast30dMeters: null };
@@ -100,10 +100,16 @@ export function computeBaselineVolume(runs: RunRow[], today: Date): AthleteBasel
     }
   }
 
+  // Thin data is still REAL data. Reporting a low-but-genuine average as null
+  // hands the plan to the 20 km default, which for a 2 × 5 km/month athlete
+  // anchors week 1 at ~2× what they actually run — the exact over-anchoring the
+  // baseline exists to prevent. Only a completely empty window is "no baseline";
+  // below the trust thresholds we still never report ABOVE what was observed.
   const avg = Math.round(sum28 / 4);
   const trusted = count28 >= MIN_BASELINE_RUNS && avg >= MIN_BASELINE_WEEKLY_METERS;
   return {
-    trailing4WeekAvgWeeklyMeters: trusted ? avg : null,
+    trailing4WeekAvgWeeklyMeters:
+      count28 === 0 ? null : trusted ? avg : Math.min(avg, DEFAULT_BASELINE_WEEKLY_METERS),
     longestRunLast30dMeters: any30 && longest30 > 0 ? Math.round(longest30) : null,
   };
 }

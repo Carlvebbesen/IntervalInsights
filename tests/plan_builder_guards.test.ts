@@ -140,6 +140,18 @@ describe("anchorWeekOne", () => {
     expect(anchorWeekOne([30000], null)).toEqual([DEFAULT_BASELINE_WEEKLY_METERS]);
   });
 
+  // The 20 km floor is for NO data, not for little data — applying it to a real
+  // low-volume athlete anchors them above what they actually run.
+  it("keeps a small real baseline instead of inflating it to the floor", () => {
+    expect(anchorWeekOne([30000], 2500)).toEqual([2500]);
+    expect(anchorWeekOne([30000], 4000)).toEqual([4000]);
+  });
+
+  it("still uses the floor for a zero or non-finite baseline", () => {
+    expect(anchorWeekOne([30000], 0)).toEqual([DEFAULT_BASELINE_WEEKLY_METERS]);
+    expect(anchorWeekOne([30000], Number.NaN)).toEqual([DEFAULT_BASELINE_WEEKLY_METERS]);
+  });
+
   it("no-ops on an empty plan", () => {
     expect(anchorWeekOne([], 40000)).toEqual([]);
   });

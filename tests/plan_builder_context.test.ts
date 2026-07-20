@@ -4,6 +4,7 @@ import {
   extractWorkoutVocabulary,
   mapActiveHealthEvents,
 } from "../src/agent/planning/nodes/gather_context";
+import { DEFAULT_BASELINE_WEEKLY_METERS } from "../src/agent/planning/guards";
 import type { EventDao } from "../src/repositories/event_repository";
 
 const today = new Date("2026-02-01T00:00:00Z");
@@ -44,19 +45,35 @@ describe("computeBaselineVolume", () => {
     });
   });
 
-  it("reports no baseline when the 28-day window holds too few runs", () => {
+  // Thin evidence used to report ABSENT, which handed the plan to the 20 km
+  // default and anchored a genuinely low-volume athlete ABOVE what they run.
+  // The rule is now: the default applies only with no usable data at all, and
+  // real data never yields a baseline above the observed volume.
+  it("reports the observed average when the window holds few runs", () => {
     const runs = [
       { startDateLocal: daysAgo(2), distance: 12000 },
       { startDateLocal: daysAgo(9), distance: 14000 },
     ];
-    // 2 runs → below MIN_BASELINE_RUNS: a 6.5 km/wk average off 2 runs is an
-    // artefact of dividing by 4, not a training baseline.
-    expect(computeBaselineVolume(runs, today).trailing4WeekAvgWeeklyMeters).toBeNull();
+    // 2 runs → below MIN_BASELINE_RUNS, but 6.5 km/wk is what they actually ran.
+    expect(computeBaselineVolume(runs, today).trailing4WeekAvgWeeklyMeters).toBe(6500);
   });
 
-  it("reports no baseline when the computed average is implausibly low", () => {
-    const runs = [1, 5, 9, 13].map((n) => ({ startDateLocal: daysAgo(n), distance: 1000 }));
-    // 4 runs but only 1 km/wk — treat as absent so the 20 km default anchors.
+  it("never anchors a genuinely low-volume athlete above their real volume", () => {
+    // The motivating case: 2 x 5 km a month. The old rule called this ABSENT and
+    // anchored week 1 at 20 km — about 4x their actual volume.
+    const runs = [
+      { startDateLocal: daysAgo(4), distance: 5000 },
+      { startDateLocal: daysAgo(18), distance: 5000 },
+    ];
+    const observedWeekly = 10000 / 4;
+    const baseline = computeBaselineVolume(runs, today).trailing4WeekAvgWeeklyMeters;
+    expect(baseline).toBe(observedWeekly);
+    expect(baseline).toBeLessThan(DEFAULT_BASELINE_WEEKLY_METERS);
+  });
+
+  it("still reports no baseline when the 28-day window is genuinely empty", () => {
+    // Runs on record, but all older than the window: no usable data → default.
+    const runs = [{ startDateLocal: daysAgo(45), distance: 12000 }];
     expect(computeBaselineVolume(runs, today).trailing4WeekAvgWeeklyMeters).toBeNull();
   });
 
@@ -74,10 +91,13 @@ describe("computeBaselineVolume", () => {
     });
   });
 
-  it("a single short run yields no baseline rather than a 1.25 km week", () => {
+  // A single 5 km run in 28 days anchors week 1 at 1.25 km rather than at the
+  // 20 km default. Under-anchoring is safe — the ramp grows the plan from there
+  // — whereas anchoring 16x above what they ran is the injury case.
+  it("anchors a single short run to its own weekly average, not the 20 km default", () => {
     const runs = [{ startDateLocal: daysAgo(3), distance: 5000 }];
     expect(computeBaselineVolume(runs, today)).toEqual({
-      trailing4WeekAvgWeeklyMeters: null,
+      trailing4WeekAvgWeeklyMeters: 1250,
       longestRunLast30dMeters: 5000,
     });
   });
