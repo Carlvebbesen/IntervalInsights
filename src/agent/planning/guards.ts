@@ -980,6 +980,10 @@ export const LONG_RUN_MAX_FILL_SHARE = 0.4;
 // "32–34 km long run" hinted ~19 km, same as every easy day).
 export const LONG_RUN_FILL_WEIGHT = 2.5;
 
+// A recovery jog is deliberately the week's shortest run — at weight 1 the fill
+// handed one ~11.6 km while its own text said "30–40 min".
+export const RECOVERY_FILL_WEIGHT = 0.6;
+
 function appendDistanceHint(description: string | null | undefined, meters: number): string {
   const hint = `~${(meters / 1000).toFixed(1)} km`;
   return description ? `${description} — ${hint}` : hint;
@@ -1098,7 +1102,10 @@ export function assembleWeekSessionsWithNotices(
     const longFill = sessions.length >= 2 ? fill.find(isLongBucket) : undefined;
     const longMax = Math.round(week.targetDistanceMeters * LONG_RUN_MAX_FILL_SHARE);
     const others = fill.filter((s) => s !== longFill);
-    const totalWeight = others.length + (longFill ? LONG_RUN_FILL_WEIGHT : 0);
+    const fillWeight = (s: GeneratedSession) =>
+      s.sessionType === "RECOVERY" ? RECOVERY_FILL_WEIGHT : 1;
+    const othersWeight = others.reduce((n, s) => n + fillWeight(s), 0);
+    const totalWeight = othersWeight + (longFill ? LONG_RUN_FILL_WEIGHT : 0);
     const longShare = longFill ? Math.round((budget * LONG_RUN_FILL_WEIGHT) / totalWeight) : 0;
     const longMeters = Math.min(longShare, longMax);
     if (longFill) {
@@ -1116,19 +1123,28 @@ export function assembleWeekSessionsWithNotices(
         });
       }
     }
-    const perOther = others.length > 0 ? Math.round((budget - longMeters) / others.length) : 0;
+    const perWeightUnit = othersWeight > 0 ? (budget - longMeters) / othersWeight : 0;
     // No easy fill run may out-distance the week's (possibly capped) long run —
     // an "easy shakeout" absorbing 60% of the week dodged the long-run cap by
     // not being typed LONG. Capped excess is dropped, not reassigned.
-    const otherMeters = longFill ? Math.min(perOther, longMeters) : perOther;
-    for (const s of others) s.description = appendDistanceHint(s.description, otherMeters);
-    if (longFill && perOther > longMeters) {
+    let cappedFrom = 0;
+    let cappedTo = 0;
+    for (const s of others) {
+      const share = Math.round(perWeightUnit * fillWeight(s));
+      const meters = longFill ? Math.min(share, longMeters) : share;
+      if (longFill && share > longMeters && share > cappedFrom) {
+        cappedFrom = share;
+        cappedTo = meters;
+      }
+      s.description = appendDistanceHint(s.description, meters);
+    }
+    if (cappedFrom > 0) {
       notices.push({
         kind: "clamped",
         code: "fill_run_capped",
-        message: `Week ${week.weekIndex}'s easy runs were held to ${fmtKm(otherMeters)} so no easy run exceeds the long run; the remaining distance is left unplanned rather than overloading a single easy day.`,
-        observed: perOther,
-        limit: otherMeters,
+        message: `Week ${week.weekIndex}'s easy runs were held to ${fmtKm(cappedTo)} so no easy run exceeds the long run; the remaining distance is left unplanned rather than overloading a single easy day.`,
+        observed: cappedFrom,
+        limit: cappedTo,
         weekIndex: week.weekIndex,
       });
     }

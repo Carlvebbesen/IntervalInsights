@@ -707,6 +707,20 @@ describe("assembleWeekSessionsWithNotices (weighted volume fill + long-run share
     expect(notices).toHaveLength(0);
   });
 
+  // A recovery jog must be the week's shortest run — at weight 1 the fill
+  // handed one ~11.6 km while its own description said "30–40 min".
+  it("weights RECOVERY fill runs below easies (long > easy > recovery)", () => {
+    const raw = [
+      sess("2026-01-06", "EASY"),
+      sess("2026-01-08", "RECOVERY"),
+      sess("2026-01-11", "LONG"),
+    ];
+    const { sessions } = assembleWeekSessionsWithNotices(week(30_000), raw, params);
+    expect(sessions.find((s) => s.sessionType === "LONG")?.description).toBe("~12.0 km");
+    expect(sessions.find((s) => s.sessionType === "EASY")?.description).toBe("~11.3 km");
+    expect(sessions.find((s) => s.sessionType === "RECOVERY")?.description).toBe("~6.8 km");
+  });
+
   // The 19.9 km "shakeout" bug shape: an EASY fill run must never out-distance
   // the (capped) long run; the excess is dropped, not reassigned.
   it("caps every non-long fill run at the long run's distance (2-fill 33.4 km week)", () => {
