@@ -78,9 +78,16 @@ export type ActiveHealthEvent = {
   since: string;
 };
 
+export type WorkoutVocabularyStructure = {
+  name: string;
+  activityCount: number;
+  lastDoneAt: string | null;
+};
+
 export type WorkoutVocabulary = {
   types: TrainingType[];
   hasStructuredIntervalHistory: boolean;
+  structures: WorkoutVocabularyStructure[];
 };
 
 export type AthleteContext = {

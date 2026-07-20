@@ -126,13 +126,19 @@ export function mapActiveHealthEvents(rows: EventDao[]): ActiveHealthEvent[] {
     }));
 }
 
+export const MAX_VOCABULARY_STRUCTURES = 8;
+
+type StructureRow = { name: string; activityCount: number; lastDoneAt: Date | string | null };
+
 /**
  * Session types the athlete has actually run (from their recent classified
- * activities) plus whether they have any genuine structured-interval history.
+ * activities), whether they have any genuine structured-interval history, and
+ * their proven interval repertoire — the top structures by how often they were
+ * done, then by recency — for the sessions agent to prefer over invented shapes.
  */
 export function extractWorkoutVocabulary(
   rows: { trainingType: string | null }[],
-  hasStructures: boolean,
+  structureRows: StructureRow[],
 ): WorkoutVocabulary {
   const types = new Set<TrainingType>();
   for (const r of rows) {
@@ -140,10 +146,23 @@ export function extractWorkoutVocabulary(
     if (t && VALID_TRAINING_TYPES.has(t)) types.add(t as TrainingType);
   }
   const typeList = [...types];
+  const recency = (s: StructureRow) =>
+    s.lastDoneAt == null
+      ? 0
+      : (typeof s.lastDoneAt === "string" ? new Date(s.lastDoneAt) : s.lastDoneAt).getTime();
+  const structures = [...structureRows]
+    .sort((a, b) => b.activityCount - a.activityCount || recency(b) - recency(a))
+    .slice(0, MAX_VOCABULARY_STRUCTURES)
+    .map((s) => ({
+      name: s.name,
+      activityCount: s.activityCount,
+      lastDoneAt: s.lastDoneAt == null ? null : toISODate(s.lastDoneAt),
+    }));
   return {
     types: typeList,
     hasStructuredIntervalHistory:
-      hasStructures || typeList.some((t) => STRUCTURED_INTERVAL_TYPES.includes(t)),
+      structureRows.length > 0 || typeList.some((t) => STRUCTURED_INTERVAL_TYPES.includes(t)),
+    structures,
   };
 }
 
@@ -270,13 +289,17 @@ export async function gatherContext(
     activeHealthEvents = [];
   }
 
-  let workoutVocabulary: WorkoutVocabulary = { types: [], hasStructuredIntervalHistory: false };
+  let workoutVocabulary: WorkoutVocabulary = {
+    types: [],
+    hasStructuredIntervalHistory: false,
+    structures: [],
+  };
   try {
     const structures = await intervalStructureRepo.listDistinctForUser(db, state.userId);
-    workoutVocabulary = extractWorkoutVocabulary(rows, structures.length > 0);
+    workoutVocabulary = extractWorkoutVocabulary(rows, structures);
   } catch (err) {
     log.warn({ err }, "workout vocabulary failed — degrading to empty");
-    workoutVocabulary = { types: [], hasStructuredIntervalHistory: false };
+    workoutVocabulary = { types: [], hasStructuredIntervalHistory: false, structures: [] };
   }
 
   return {

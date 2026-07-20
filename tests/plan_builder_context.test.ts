@@ -135,6 +135,12 @@ describe("mapActiveHealthEvents", () => {
 });
 
 describe("extractWorkoutVocabulary", () => {
+  const structureRow = (name: string, activityCount: number, lastDoneAt: Date | string | null) => ({
+    name,
+    activityCount,
+    lastDoneAt,
+  });
+
   it("collects distinct valid types and flags structured-interval history", () => {
     const out = extractWorkoutVocabulary(
       [
@@ -145,19 +151,57 @@ describe("extractWorkoutVocabulary", () => {
         { trainingType: null },
         { trainingType: "UNCLASSIFIED" },
       ],
-      false,
+      [],
     );
     expect(new Set(out.types)).toEqual(new Set(["EASY", "LONG", "LONG_INTERVALS"]));
     expect(out.hasStructuredIntervalHistory).toBe(true);
+    expect(out.structures).toEqual([]);
   });
 
   it("does not treat continuous TEMPO as structured-interval history", () => {
-    const out = extractWorkoutVocabulary([{ trainingType: "EASY" }, { trainingType: "TEMPO" }], false);
+    const out = extractWorkoutVocabulary([{ trainingType: "EASY" }, { trainingType: "TEMPO" }], []);
     expect(out.hasStructuredIntervalHistory).toBe(false);
   });
 
-  it("honours the structures flag even without interval training types", () => {
-    const out = extractWorkoutVocabulary([{ trainingType: "EASY" }], true);
+  it("honours structure rows even without interval training types", () => {
+    const out = extractWorkoutVocabulary(
+      [{ trainingType: "EASY" }],
+      [structureRow("5x1000m", 3, daysAgo(10))],
+    );
     expect(out.hasStructuredIntervalHistory).toBe(true);
+  });
+
+  it("keeps the top 8 structures by activity count, then recency, dates as ISO strings", () => {
+    const rows = [
+      structureRow("least-done", 1, daysAgo(1)),
+      ...Array.from({ length: 8 }, (_, i) =>
+        structureRow(`shape-${i}`, 10 - i, daysAgo(30 + i)),
+      ),
+      structureRow("tie-older", 10, daysAgo(20)),
+    ];
+    const out = extractWorkoutVocabulary([], rows);
+    expect(out.structures).toHaveLength(8);
+    // Ties on activityCount break by recency: tie-older (10x, 20d ago) beats shape-0 (10x, 30d ago).
+    expect(out.structures[0]).toEqual({
+      name: "tie-older",
+      activityCount: 10,
+      lastDoneAt: "2026-01-12",
+    });
+    expect(out.structures[1].name).toBe("shape-0");
+    expect(out.structures.map((s) => s.name)).not.toContain("least-done");
+    expect(out.structures[2]).toEqual({
+      name: "shape-1",
+      activityCount: 9,
+      lastDoneAt: "2026-01-01",
+    });
+  });
+
+  it("accepts string dates and null lastDoneAt", () => {
+    const out = extractWorkoutVocabulary(
+      [],
+      [structureRow("a", 2, daysAgo(5).toISOString()), structureRow("b", 2, null)],
+    );
+    expect(out.structures[0].name).toBe("a");
+    expect(out.structures[1]).toEqual({ name: "b", activityCount: 2, lastDoneAt: null });
   });
 });

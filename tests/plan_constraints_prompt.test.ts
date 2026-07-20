@@ -15,7 +15,7 @@ const ctx: AthleteContext = {
   raceAbility: null,
   baselineVolume: null,
   activeHealthEvents: [],
-  workoutVocabulary: { types: [], hasStructuredIntervalHistory: false },
+  workoutVocabulary: { types: [], hasStructuredIntervalHistory: false, structures: [] },
 };
 
 const macroWeek: PlanMacroWeek = {

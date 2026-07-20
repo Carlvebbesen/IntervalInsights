@@ -565,7 +565,7 @@ describe("observedRunDaysPerWeek", () => {
     raceAbility: null,
     baselineVolume: null,
     activeHealthEvents: [],
-    workoutVocabulary: { types: [], hasStructuredIntervalHistory: false },
+    workoutVocabulary: { types: [], hasStructuredIntervalHistory: false, structures: [] },
   });
 
   it("averages only weeks with at least one run (vacation zeros are gaps, not routine)", () => {

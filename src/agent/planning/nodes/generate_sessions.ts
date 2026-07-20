@@ -68,8 +68,23 @@ export async function generateSessions(
 
   for (let i = 0; i < totalWeeks; i += SESSION_BATCH_WEEKS) {
     const batch = macro.weeks.slice(i, i + SESSION_BATCH_WEEKS);
+    // Batches are independent LLM calls; without this the model invents a fresh
+    // interval shape every batch instead of progressing one small rotation.
+    const priorQualitySessions = sessionsByWeek
+      .map((w) => ({
+        weekIndex: w.weekIndex,
+        titles: w.sessions.filter((s) => s.structure && s.structure.length > 0).map((s) => s.title),
+      }))
+      .filter((w) => w.titles.length > 0)
+      .map((w) => `Week ${w.weekIndex}: ${w.titles.join("; ")}`);
     const raw = await invokeWithRateLimitRetry(() =>
-      invokeGenerateSessionsAgent(ctx, batch, state.sessionsFeedback, state.input.constraintsText),
+      invokeGenerateSessionsAgent(
+        ctx,
+        batch,
+        state.sessionsFeedback,
+        state.input.constraintsText,
+        priorQualitySessions,
+      ),
     );
     for (const week of batch) {
       const llmWeek = raw?.weeks.find((w) => w.weekIndex === week.weekIndex);

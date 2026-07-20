@@ -40,7 +40,7 @@ const ctx: AthleteContext = {
   raceAbility: null,
   baselineVolume: { trailing4WeekAvgWeeklyMeters: 40_000, longestRunLast30dMeters: 15_000 },
   activeHealthEvents: [],
-  workoutVocabulary: { types: [], hasStructuredIntervalHistory: false },
+  workoutVocabulary: { types: [], hasStructuredIntervalHistory: false, structures: [] },
 };
 
 const baseInput: PlanBuilderInput = {
