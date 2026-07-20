@@ -106,6 +106,17 @@ describe("sessions prompt content", () => {
     expect(prompts[0]).toContain("NEVER as a standalone SPRINTS");
     expect(prompts[0]).toContain("finish with 6 x 100 m relaxed strides");
   });
+
+  it("carries the threshold-dosing rules", async () => {
+    const prompts = capturePrompt();
+    await invokeGenerateSessionsAgent(ctx(), [week(1, "2026-01-05")], []);
+    expect(prompts[0]).toContain("THRESHOLD DOSING");
+    expect(prompts[0]).toContain("~15–20\n    minutes of work at threshold");
+    expect(prompts[0]).toContain("past 30 minutes");
+    expect(prompts[0]).toContain("45 s on / 15 s off");
+    expect(prompts[0]).toContain("(n) x 400 m with 15–25 reps");
+    expect(prompts[0]).toContain("Progress the dose (reps/duration)");
+  });
 });
 
 describe("generateSessions passes prior batches' quality sessions to later batches", () => {

@@ -5,7 +5,7 @@ tags: [run, vo2max, z5, advanced, high-volume, marathon, half-marathon]
 status: active
 level: advanced
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-07-20
 sources: ["[[src-trening-notes]]"]
 related: ["[[pace-terminology]]"]
 ---
@@ -36,6 +36,15 @@ notes: short on/off keeps oxygen uptake high across many reps
 ## Execution notes
 
 - Build the rep count over a training cycle; 45 reps is a very large dose.
+
+## Threshold variant (house usage)
+
+Run at controlled **threshold** intensity (2–3 mmol/L, ~1-hour-race effort — see
+`[[lactate-threshold]]`) instead of VO₂max effort, 20–30 reps. This is the
+house-method version: a high-density threshold session in the Norwegian/pyramidal
+family, and the shape most often planned in practice (e.g. "20 × 45/15"). Dose by
+experience: ~15–20 min total work for newer athletes, 30+ min once established —
+progress the rep count before the pace.
 
 ## See also
 

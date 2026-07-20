@@ -92,6 +92,14 @@ ${feedbackBlock}
     (e.g. 4x1000m → 5x1000m → 6x1000m) instead of inventing a new shape each
     week. Prefer shapes from the athlete's proven interval repertoire above, and
     continue the progression of any SESSIONS ALREADY PLANNED in earlier weeks.
+  - THRESHOLD DOSING — quality sessions are threshold-first (controlled,
+    ~1-hour-race effort, never all-out). Dose the TOTAL work per session by
+    experience: an athlete with little or no structured history gets ~15–20
+    minutes of work at threshold; an established athlete goes past 30 minutes
+    (toward 35–40 as the plan progresses). Progress the dose (reps/duration)
+    before ever hinting at pace. Canonical threshold shapes: 45 s on / 15 s off
+    x 20–30 reps; (n) x 1000 m; (n) x 400 m with 15–25 reps; longer reps
+    (2–3 km) for advanced athletes.
   - In build or peak weeks, when the week has at least 5 run days, a second
     rep-interval session is allowed within the week's key sessions.
   - Strides belong as a short finisher mentioned in an easy run's description
