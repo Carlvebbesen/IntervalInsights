@@ -82,6 +82,35 @@ export function clampWeeklyRamp(targets: number[], ceiling: number, burst: numbe
   return out;
 }
 
+/**
+ * The ramp invariant enforced on the FINAL shaped output, measured against the
+ * running PEAK of the preceding weeks rather than the immediately prior week.
+ *
+ * Why peak-relative: later shaping stages (`enforceDownWeeks`, `capLongestRunSpike`,
+ * `capMaxWeekly`) lower individual weeks, which re-opens headroom a purely
+ * prev-relative clamp already spent — a 72% down week made the next week a +39%
+ * jump. Re-clamping against the prior week instead would flatten the plan into
+ * the down week and destroy the recovery-then-rebuild shape. Stepping back up to
+ * the pre-down-week peak after a recovery week is the intended (and
+ * physiologically correct) block-periodization shape; what must never happen is
+ * exceeding the ceiling relative to the trajectory the athlete had already
+ * reached. So: no week may exceed the highest week before it by more than
+ * `ceiling` (one `burst` tolerated, as in `clampWeeklyRamp`).
+ */
+export function clampRampAgainstPeak(targets: number[], ceiling: number, burst: number): number[] {
+  const out = [...targets];
+  let peak = out[0] ?? 0;
+  let prevBurst = false;
+  for (let i = 1; i < out.length; i++) {
+    const allowed = prevBurst ? ceiling : burst;
+    const max = Math.round(peak * (1 + allowed));
+    if (out[i] > max) out[i] = max;
+    prevBurst = out[i] > Math.round(peak * (1 + ceiling));
+    peak = Math.max(peak, out[i]);
+  }
+  return out;
+}
+
 /** Back-compat: the legacy flat +20% week-over-week clamp (no burst). */
 export function clampVolumeRamp(targets: number[]): number[] {
   const ceiling = MAX_WEEKLY_RAMP - 1;
@@ -130,6 +159,19 @@ export function anchorWeekOne(targets: number[], baselineWeeklyMeters: number | 
   if (targets.length === 0) return targets;
   const out = [...targets];
   out[0] = Math.round(baselineWeeklyMeters ?? DEFAULT_BASELINE_WEEKLY_METERS);
+  return out;
+}
+
+/**
+ * A non-positive weekly target is missing LLM data, not a prescribed rest week —
+ * carry the previous week forward rather than leaving a 0 km hole. Flat, so it
+ * invents no ramp; the deliberate drops (down weeks, taper) are applied later.
+ */
+export function floorWeeklyTargets(targets: number[]): number[] {
+  const out = [...targets];
+  for (let i = 1; i < out.length; i++) {
+    if (!(out[i] > 0)) out[i] = out[i - 1];
+  }
   return out;
 }
 
@@ -307,9 +349,11 @@ export type MacroShapingParams = {
  * Rebuild the macro's weeks against the authoritative Monday-aligned week grid:
  * week count/index/startDate come from the input range (never trusted from the
  * LLM); phases are constrained to the taper/race-near-the-end rule. Weekly
- * volumes are then shaped, in order: anchor week 1 to the real baseline → clamp
- * the week-over-week ramp to the aggressiveness ceiling → cap implied long-run
- * spikes → insert recovery weeks → taper the tail → hard-cap to the user's max.
+ * volumes are then shaped, in order: anchor week 1 to the real baseline → carry
+ * missing targets forward → clamp the week-over-week ramp to the aggressiveness
+ * ceiling → cap implied long-run spikes → hard-cap to the user's max → insert
+ * recovery weeks → taper the tail → re-clamp the ramp against the running peak →
+ * hard-cap again. The guarantees are asserted on the FINAL array, not per stage.
  */
 export function repairMacro(
   raw: PlanMacro,
@@ -339,15 +383,28 @@ export function repairMacro(
 
   let targets = phased.map((w) => w.targetDistanceMeters);
   targets = anchorWeekOne(targets, params.baselineWeeklyMeters);
+  targets = floorWeeklyTargets(targets);
   targets = clampWeeklyRamp(targets, ramp.ceiling, ramp.burst);
   targets = capLongestRunSpike(targets, params.longestRunMeters);
+  // Hard-cap BEFORE the taper so the taper's staged fractions come off an
+  // already-capped build week and stay strictly decreasing (capping afterwards
+  // flattens the first taper weeks onto the same ceiling value).
+  targets = capMaxWeekly(targets, params.maxWeeklyVolumeMeters);
   targets = enforceDownWeeks(targets, buildWeeks);
 
   let shaped: PlanMacroWeek[] = phased.map((w, i) => ({ ...w, targetDistanceMeters: targets[i] }));
   if (taperCount > 0) shaped = applyTaper(shaped, taperCount, raceAnchored);
 
+  // Final passes: every stage above can lower a week, so the ramp invariant is
+  // re-established on the finished array (see `clampRampAgainstPeak`), then the
+  // user's hard ceiling is re-applied. Both only ever lower a week, so neither
+  // can reopen the long-run spike cap.
   const capped = capMaxWeekly(
-    shaped.map((w) => w.targetDistanceMeters),
+    clampRampAgainstPeak(
+      shaped.map((w) => w.targetDistanceMeters),
+      ramp.ceiling,
+      ramp.burst,
+    ),
     params.maxWeeklyVolumeMeters,
   );
   const final = shaped.map((w, i) => ({ ...w, targetDistanceMeters: capped[i] }));
@@ -456,6 +513,24 @@ export function spaceHardSessions(sessions: GeneratedSession[]): GeneratedSessio
     }
   }
   return s;
+}
+
+/**
+ * Guarantee the "never two hard days back-to-back" rule that `spaceHardSessions`
+ * can only best-effort: when the week has no swappable easy day (e.g. 3 quality
+ * sessions on a 3-run-day week), re-dating cannot separate them, so the later
+ * hard session is downgraded to easy instead — same choice `enforceQualityCount`
+ * makes for excess quality. Run last, after all date shuffling.
+ */
+export function downgradeAdjacentHardSessions(sessions: GeneratedSession[]): GeneratedSession[] {
+  const s = [...sessions].sort((a, b) => a.date.localeCompare(b.date));
+  let lastHard: string | null = null;
+  return s.map((x) => {
+    if (!isHardSession(x.sessionType, x.structure)) return x;
+    if (lastHard != null && daysBetween(lastHard, x.date) <= 1) return downgradeToEasy(x);
+    lastHard = x.date;
+    return x;
+  });
 }
 
 // Number of run days per week when the athlete gives no explicit preference.
@@ -590,7 +665,7 @@ function appendDistanceHint(description: string | null | undefined, meters: numb
  * week + null every pace → cap at 7/week → enforce the polarization quality cap
  * (downgrade excess hard runs) → cap to the athlete's run-day count → pin the
  * long run to the preferred day → space hard sessions off consecutive days →
- * substitute easy runs with cross-training around an active injury → distribute
+ * downgrade any hard session spacing could not separate → substitute easy runs with cross-training around an active injury → distribute
  * the remaining volume budget across the structureless fill runs (cross-training
  * sessions have null structure, so pace-nulling and this fill both apply to them
  * unchanged). All shaping steps are pure; the node passes settings in `params`.
@@ -616,6 +691,7 @@ export function assembleWeekSessions(
   sessions = enforceDaysPerWeek(sessions, params.daysPerWeek);
   sessions = placeLongRun(sessions, week.startDate, params.preferredLongRunDay);
   sessions = spaceHardSessions(sessions);
+  sessions = downgradeAdjacentHardSessions(sessions);
   sessions = substituteCrossTraining(sessions, params.crossTrainingCount);
   sessions.sort((a, b) => a.date.localeCompare(b.date));
 
