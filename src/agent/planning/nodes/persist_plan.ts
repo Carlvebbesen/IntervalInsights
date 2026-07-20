@@ -61,6 +61,7 @@ export async function persistPlan(
         maxWeeklyVolumeMeters: state.input.maxWeeklyVolumeMeters ?? null,
         daysPerWeek: state.input.daysPerWeek ?? null,
         preferredLongRunDay: state.input.preferredLongRunDay ?? null,
+        crossTrainingPerWeek: state.input.crossTrainingPerWeek ?? null,
       },
       rationale: macro.rationale,
       feedbackRounds: {

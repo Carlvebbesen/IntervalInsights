@@ -3,7 +3,11 @@ import { Command } from "@langchain/langgraph";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import * as model from "../src/agent/model";
 import { extractPlanInputPatch } from "../src/agent/planning/feedback_intent";
-import { assembleWeekSessionsWithNotices, shapeMacro } from "../src/agent/planning/guards";
+import {
+  assembleWeekSessionsWithNotices,
+  CROSS_TRAINING_TITLE,
+  shapeMacro,
+} from "../src/agent/planning/guards";
 import {
   buildPlanBuilderGraph,
   resetPlanBuilderThread,
@@ -85,6 +89,20 @@ describe("extractPlanInputPatch", () => {
     );
 
     expect(patch).toEqual({ daysPerWeek: 6, preferredLongRunDay: 5 });
+    spy.mockRestore();
+  });
+
+  it("maps a cross-training request onto the patch at the sessions gate", async () => {
+    const spy = spyOn(model, "invokeStructured").mockResolvedValue({
+      daysPerWeek: null,
+      preferredLongRunDay: null,
+      intensityAggressiveness: null,
+      crossTrainingPerWeek: 1,
+    });
+
+    const patch = await extractPlanInputPatch("I need some elliptical work", baseInput, "sessions");
+
+    expect(patch).toEqual({ crossTrainingPerWeek: 1 });
     spy.mockRestore();
   });
 
@@ -308,6 +326,42 @@ describe("feedback changes the guarded output (real graph)", () => {
     const applied = (payload.notices as PlanNotice[]).find((n) => n.kind === "applied");
     expect(applied?.code).toBe("daysPerWeek");
     expect(applied?.message).toContain("6");
+  });
+
+  it("'I need some elliptical work' adds a cross-training session to the output", async () => {
+    const graph = await buildPlanBuilderGraph();
+    const thread = newThread();
+    await resetPlanBuilderThread(thread);
+
+    nextIntent = {};
+    await graph.invoke({ userId, input: baseInput }, config(thread));
+    await graph.invoke(new Command({ resume: { action: "accept" } }), config(thread));
+
+    const before = await graph.getState(config(thread));
+    const titlesBefore = (
+      before.values.sessionsByWeek as { sessions: { title: string }[] }[]
+    )[0].sessions.map((s) => s.title);
+    expect(titlesBefore).not.toContain(CROSS_TRAINING_TITLE);
+
+    nextIntent = {
+      daysPerWeek: null,
+      preferredLongRunDay: null,
+      intensityAggressiveness: null,
+      crossTrainingPerWeek: 1,
+    };
+    await graph.invoke(
+      new Command({ resume: { action: "adjust", feedback: "I need some elliptical work" } }),
+      config(thread),
+    );
+
+    const state = await graph.getState(config(thread));
+    expect((state.values.input as PlanBuilderInput).crossTrainingPerWeek).toBe(1);
+    const week1 = (state.values.sessionsByWeek as { sessions: { title: string }[] }[])[0];
+    expect(week1.sessions.filter((s) => s.title === CROSS_TRAINING_TITLE)).toHaveLength(1);
+
+    const payload = await payloadOf(graph, thread);
+    const applied = (payload.notices as PlanNotice[]).find((n) => n.kind === "applied");
+    expect(applied?.code).toBe("crossTrainingPerWeek");
   });
 
   it("surfaces guard notices and a per-week summary in the review payloads", async () => {

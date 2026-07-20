@@ -31,6 +31,7 @@ export type PlanBuilderInput = {
   maxWeeklyVolumeMeters?: number | null;
   daysPerWeek?: number | null;
   preferredLongRunDay?: number | null;
+  crossTrainingPerWeek?: number | null;
 };
 
 export type AthleteRaceContext = {

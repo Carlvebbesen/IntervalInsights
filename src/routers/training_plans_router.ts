@@ -168,6 +168,7 @@ const generatePlanSchema = z
     maxWeeklyVolumeMeters: z.number().int().positive().optional(),
     daysPerWeek: z.number().int().min(3).max(7).optional(),
     preferredLongRunDay: z.number().int().min(0).max(6).optional(),
+    crossTrainingPerWeek: z.number().int().min(0).max(2).optional(),
   })
   .refine((data) => data.endDate >= data.startDate, {
     message: "endDate must be on or after startDate",

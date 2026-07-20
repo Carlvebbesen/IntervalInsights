@@ -47,6 +47,15 @@ const IntentFieldSchemas = {
     .max(400_000)
     .nullable()
     .describe("Weekly distance ceiling in METERS if the athlete named one, else null"),
+  crossTrainingPerWeek: z
+    .number()
+    .int()
+    .min(0)
+    .max(2)
+    .nullable()
+    .describe(
+      "Cross-training (elliptical/spinning) sessions per week the athlete asked for, else null",
+    ),
 };
 
 const MacroIntentSchema = z.object(IntentFieldSchemas);
@@ -54,6 +63,7 @@ const SessionIntentSchema = z.object({
   daysPerWeek: IntentFieldSchemas.daysPerWeek,
   preferredLongRunDay: IntentFieldSchemas.preferredLongRunDay,
   intensityAggressiveness: IntentFieldSchemas.intensityAggressiveness,
+  crossTrainingPerWeek: IntentFieldSchemas.crossTrainingPerWeek,
 });
 
 export type PlanInputPatch = Partial<
@@ -64,6 +74,7 @@ export type PlanInputPatch = Partial<
     | "volumeAggressiveness"
     | "intensityAggressiveness"
     | "maxWeeklyVolumeMeters"
+    | "crossTrainingPerWeek"
   >
 >;
 
@@ -85,6 +96,7 @@ function currentValues(input: PlanBuilderInput): Record<string, string> {
       input.maxWeeklyVolumeMeters != null
         ? `${(input.maxWeeklyVolumeMeters / 1000).toFixed(1)} km`
         : "none set",
+    crossTrainingPerWeek: String(input.crossTrainingPerWeek ?? "0 (default)"),
   };
 }
 
@@ -96,10 +108,12 @@ function buildPrompt(feedback: string, input: PlanBuilderInput, stage: PlanRevie
   - Long-run day: ${cur.preferredLongRunDay}
   - Volume build-up: ${cur.volumeAggressiveness}
   - Intensity: ${cur.intensityAggressiveness}
-  - Weekly distance ceiling: ${cur.maxWeeklyVolumeMeters}`
+  - Weekly distance ceiling: ${cur.maxWeeklyVolumeMeters}
+  - Cross-training sessions per week: ${cur.crossTrainingPerWeek}`
       : `  - Run days per week: ${cur.daysPerWeek}
   - Long-run day: ${cur.preferredLongRunDay}
-  - Intensity: ${cur.intensityAggressiveness}`;
+  - Intensity: ${cur.intensityAggressiveness}
+  - Cross-training sessions per week: ${cur.crossTrainingPerWeek}`;
 
   return `
   You are parsing one piece of free-text feedback an athlete gave on a draft
@@ -125,6 +139,8 @@ ${settings}
     "progressive"; "ease into it" → "gradual".
   - "Add a quality session / more speed work" → intensityAggressiveness
     "challenging"; "less hard running" → "comfortable".
+  - "I need some elliptical work" / "add a spinning day" → crossTrainingPerWeek 1.
+    "More cross training" when already at 1 → 2.
   - Do NOT restate a setting that already matches the current value.
   - Never infer a number the athlete did not state.`;
 }
@@ -187,6 +203,7 @@ const FIELD_LABELS: Record<keyof PlanInputPatch, string> = {
   volumeAggressiveness: "Volume build-up",
   intensityAggressiveness: "Intensity",
   maxWeeklyVolumeMeters: "Weekly distance ceiling",
+  crossTrainingPerWeek: "Cross-training sessions per week",
 };
 
 /** One "I applied this" notice per patched field, for the next review gate. */

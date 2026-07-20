@@ -31,7 +31,10 @@ import {
   taperWeekCount,
   VOLUME_RAMP,
 } from "../src/agent/planning/guards";
-import { observedRunDaysPerWeek } from "../src/agent/planning/nodes/generate_sessions";
+import {
+  observedRunDaysPerWeek,
+  resolveCrossTrainingCount,
+} from "../src/agent/planning/nodes/generate_sessions";
 import type { GeneratedSession, PlanMacro, PlanMacroWeek } from "../src/agent/planning/plan_builder_schemas";
 import type { AthleteContext, PlanBuilderInput } from "../src/agent/planning/plan_builder_state";
 import type { WorkoutStructureSet } from "../src/schemas/agent_schemas";
@@ -572,6 +575,24 @@ describe("observedRunDaysPerWeek", () => {
   it("returns null when no week has a run, or with no history at all", () => {
     expect(observedRunDaysPerWeek(ctx([0, 0, 0]))).toBeNull();
     expect(observedRunDaysPerWeek(ctx([]))).toBeNull();
+  });
+});
+
+describe("resolveCrossTrainingCount", () => {
+  it("honours an athlete request with no injury", () => {
+    expect(resolveCrossTrainingCount(0, 1)).toBe(1);
+    expect(resolveCrossTrainingCount(0, 2)).toBe(2);
+  });
+
+  it("takes the max of the injury-derived count and the request", () => {
+    expect(resolveCrossTrainingCount(2, 1)).toBe(2);
+    expect(resolveCrossTrainingCount(1, 2)).toBe(2);
+  });
+
+  it("stays capped at MAX_CROSS_TRAINING_PER_WEEK and zero without either signal", () => {
+    expect(resolveCrossTrainingCount(3, 5)).toBe(2);
+    expect(resolveCrossTrainingCount(0, null)).toBe(0);
+    expect(resolveCrossTrainingCount(0, undefined)).toBe(0);
   });
 });
 

@@ -16,6 +16,19 @@ import {
 import { invokeGenerateSessionsAgent, SESSION_BATCH_WEEKS } from "../plan_sessions_agent";
 
 /**
+ * Cross-training sessions/week: the larger of the injury-derived count and what
+ * the athlete explicitly asked for (wizard input or review feedback), capped at
+ * MAX_CROSS_TRAINING_PER_WEEK.
+ */
+export function resolveCrossTrainingCount(
+  activeEventCount: number,
+  requested: number | null | undefined,
+): number {
+  const injuryDerived = Math.min(MAX_CROSS_TRAINING_PER_WEEK, Math.max(0, activeEventCount));
+  return Math.min(MAX_CROSS_TRAINING_PER_WEEK, Math.max(injuryDerived, requested ?? 0));
+}
+
+/**
  * Observed average run days/week from the athlete's recent weeks (null when no
  * week has a run). Zero-run weeks (vacation, injury) are gaps, not routine —
  * averaging them in resolved a 5-day runner with two weeks off to ~3 days.
@@ -47,10 +60,10 @@ export async function generateSessions(
       state.input.intensityAggressiveness ?? DEFAULT_INTENSITY_AGGRESSIVENESS,
     daysPerWeek: resolveDaysPerWeek(state.input.daysPerWeek, observedRunDaysPerWeek(ctx)),
     preferredLongRunDay: state.input.preferredLongRunDay ?? null,
-    crossTrainingCount:
-      ctx.activeHealthEvents.length === 0
-        ? 0
-        : Math.min(MAX_CROSS_TRAINING_PER_WEEK, ctx.activeHealthEvents.length),
+    crossTrainingCount: resolveCrossTrainingCount(
+      ctx.activeHealthEvents.length,
+      state.input.crossTrainingPerWeek,
+    ),
   };
 
   for (let i = 0; i < totalWeeks; i += SESSION_BATCH_WEEKS) {
