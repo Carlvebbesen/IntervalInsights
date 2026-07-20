@@ -74,7 +74,7 @@ async function planGuardWarnings(
     }
 
     const warnings: PlanGuardWarning[] = [];
-    let previousWeekDistanceMeters: number | null = null;
+    let peakPrecedingWeekDistanceMeters: number | null = null;
     detail.weeks.forEach((week, ordinal) => {
       const sessions = sessionsByWeekId.get(week.id) ?? [];
       if (weekId === undefined || week.id === weekId) {
@@ -85,13 +85,16 @@ async function planGuardWarnings(
               weekIndex: week.weekIndex,
               ordinal,
               phase: week.phase,
-              previousWeekDistanceMeters,
+              peakPrecedingWeekDistanceMeters,
             },
             sessions,
           ),
         );
       }
-      previousWeekDistanceMeters = weekVolumeMeters(sessions);
+      peakPrecedingWeekDistanceMeters = Math.max(
+        peakPrecedingWeekDistanceMeters ?? 0,
+        weekVolumeMeters(sessions),
+      );
     });
 
     return warnings;

@@ -1,7 +1,7 @@
 import {
   capLongestRunSpike,
   capMaxWeekly,
-  clampWeeklyRamp,
+  clampRampAgainstPeak,
   enforceDaysPerWeek,
   estimatePlannedSessionDistanceMeters,
   IMPLIED_LONG_RUN_FRACTION,
@@ -74,7 +74,14 @@ export type PlanGuardWeek = {
   weekIndex: number;
   ordinal: number;
   phase: PlanWeekPhase | null;
-  previousWeekDistanceMeters: number | null;
+  /**
+   * The highest volume of any PRECEDING week — not the immediately prior week.
+   * The builder's final ramp invariant (`clampRampAgainstPeak`) is peak-relative
+   * precisely so the rebuild after a down week stays legal; measuring this
+   * advisory check prev-relative made it fire on every 4-week-cadence plan the
+   * builder itself produced (~+39% off a 72% down week).
+   */
+  peakPrecedingWeekDistanceMeters: number | null;
 };
 
 export type PlanGuardSession = {
@@ -88,6 +95,18 @@ export type PlanGuardSession = {
 function km(meters: number): string {
   return `${(meters / 1000).toFixed(1)} km`;
 }
+
+/**
+ * A week's observed volume is *reconstructed* from per-session estimates — and
+ * the builder's own fill runs carry a `~X.X km` hint rounded to 100 m each. Up
+ * to seven of those can sum a few hundred metres above an exactly-computed
+ * ceiling, so an exact comparison makes the builder warn about its own output.
+ * Slack well under any breach worth telling an athlete about.
+ */
+const VOLUME_ESTIMATE_TOLERANCE_METERS = 500;
+
+const exceeds = (observed: number, allowed: number) =>
+  observed > allowed + VOLUME_ESTIMATE_TOLERANCE_METERS;
 
 export function weekVolumeMeters(sessions: PlanGuardSession[]): number {
   return sessions.reduce(
@@ -110,14 +129,14 @@ export function evaluatePlanWeek(
   const warnings: PlanGuardWarning[] = [];
   const observed = weekVolumeMeters(sessions);
 
-  const prev = week.previousWeekDistanceMeters;
-  if (prev != null && prev > 0 && observed > 0) {
+  const peak = week.peakPrecedingWeekDistanceMeters;
+  if (peak != null && peak > 0 && observed > 0) {
     const ramp = VOLUME_RAMP[ctx.volumeAggressiveness];
-    const [, allowed] = clampWeeklyRamp([prev, observed], ramp.ceiling, ramp.burst);
-    if (allowed < observed) {
+    const [, allowed] = clampRampAgainstPeak([peak, observed], ramp.ceiling, ramp.burst);
+    if (exceeds(observed, allowed)) {
       warnings.push({
         code: "weekly_ramp_exceeded",
-        message: `Week ${week.weekIndex} ramps to ${km(observed)} from ${km(prev)}; the ${ctx.volumeAggressiveness} ramp ceiling allows ${km(allowed)}. Over-ramping is the top cause of running injury.`,
+        message: `Week ${week.weekIndex} ramps to ${km(observed)} against a previous peak of ${km(peak)}; the ${ctx.volumeAggressiveness} ramp ceiling allows ${km(allowed)}. Over-ramping is the top cause of running injury.`,
         observed,
         limit: allowed,
         weekIndex: week.weekIndex,
@@ -130,7 +149,7 @@ export function evaluatePlanWeek(
     // exponent — so padding with zeros evaluates this week at its own ordinal.
     const padded = [...Array(week.ordinal).fill(0), observed];
     const allowed = capLongestRunSpike(padded, ctx.longestRunMeters)[week.ordinal];
-    if (allowed < observed) {
+    if (exceeds(observed, allowed)) {
       const impliedLong = Math.round(observed * IMPLIED_LONG_RUN_FRACTION);
       const limitLong = Math.round(allowed * IMPLIED_LONG_RUN_FRACTION);
       warnings.push({
@@ -172,7 +191,7 @@ export function evaluatePlanWeek(
 
   if (ctx.maxWeeklyVolumeMeters != null && observed > 0) {
     const [allowed] = capMaxWeekly([observed], ctx.maxWeeklyVolumeMeters);
-    if (allowed < observed) {
+    if (exceeds(observed, allowed)) {
       warnings.push({
         code: "max_weekly_volume_exceeded",
         message: `Week ${week.weekIndex} totals ${km(observed)}, over the athlete's ${km(ctx.maxWeeklyVolumeMeters)} weekly ceiling.`,

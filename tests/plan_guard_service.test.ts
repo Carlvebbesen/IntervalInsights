@@ -25,7 +25,7 @@ const baseWeek: PlanGuardWeek = {
   weekIndex: 2,
   ordinal: 1,
   phase: null,
-  previousWeekDistanceMeters: null,
+  peakPrecedingWeekDistanceMeters: null,
 };
 
 /** A structureless session carrying the plan-builder's `~X.X km` volume hint. */
@@ -114,7 +114,7 @@ describe("evaluatePlanWeek — weekly_ramp_exceeded", () => {
   it("warns when the week outgrows the steady ramp ceiling", () => {
     const warnings = evaluatePlanWeek(
       baseCtx,
-      { ...baseWeek, previousWeekDistanceMeters: 40_000 },
+      { ...baseWeek, peakPrecedingWeekDistanceMeters: 40_000 },
       [easy("2026-01-05", 60)],
     );
     const ramp = warnings.find((w) => w.code === "weekly_ramp_exceeded");
@@ -127,7 +127,7 @@ describe("evaluatePlanWeek — weekly_ramp_exceeded", () => {
   it("stays silent inside the ceiling", () => {
     const warnings = evaluatePlanWeek(
       baseCtx,
-      { ...baseWeek, previousWeekDistanceMeters: 40_000 },
+      { ...baseWeek, peakPrecedingWeekDistanceMeters: 40_000 },
       [easy("2026-01-05", 43)],
     );
     expect(warnings).toEqual([]);
@@ -136,14 +136,79 @@ describe("evaluatePlanWeek — weekly_ramp_exceeded", () => {
   it("lets a recovery week through", () => {
     const warnings = evaluatePlanWeek(
       baseCtx,
-      { ...baseWeek, previousWeekDistanceMeters: 40_000 },
+      { ...baseWeek, peakPrecedingWeekDistanceMeters: 40_000 },
       [easy("2026-01-05", 30)],
     );
     expect(warnings).toEqual([]);
   });
 
+  // The write guard used to be prev-relative while the builder's final invariant
+  // is peak-relative, so every 4-week-cadence plan the builder produced tripped
+  // its own warning on the week after each down week — editing anything in a
+  // rebuild week warned the athlete about a shape we generated.
+  it("does not warn on the rebuild week after a down week", () => {
+    const warnings = evaluatePlanWeek(
+      baseCtx,
+      { ...baseWeek, weekIndex: 5, ordinal: 4, peakPrecedingWeekDistanceMeters: 48_400 },
+      [easy("2026-02-02", 53.2)], // rebuild off a 34.8 km down week, under the prior peak + 10%
+    );
+    expect(warnings).toEqual([]);
+  });
+
+  it("still warns when the week outgrows the highest week before it", () => {
+    const warnings = evaluatePlanWeek(
+      baseCtx,
+      { ...baseWeek, weekIndex: 5, ordinal: 4, peakPrecedingWeekDistanceMeters: 48_400 },
+      [easy("2026-02-02", 70)],
+    );
+    expect(warnings.find((w) => w.code === "weekly_ramp_exceeded")).toBeDefined();
+  });
+
+  it("agrees with the shape the plan builder itself produces", async () => {
+    const { shapeMacro } = await import("../src/agent/planning/guards");
+    const weeks = Array.from({ length: 8 }, (_, i) => ({
+      weekIndex: i + 1,
+      startDate: "2026-01-05",
+      phase: "build" as const,
+      targetDistanceMeters: 60_000,
+      notes: null,
+      keySessions: [],
+    }));
+    const { macro } = shapeMacro(
+      { name: "n", rationale: "r", weeks },
+      { startDate: "2026-01-05", endDate: "2026-03-01", raceEventId: null } as never,
+      {
+        baselineWeeklyMeters: 40_000,
+        longestRunMeters: null,
+        volumeAggressiveness: "steady",
+        maxWeeklyVolumeMeters: null,
+        raceDistanceMeters: null,
+      },
+    );
+
+    let peak: number | null = null;
+    for (const [i, w] of macro.weeks.entries()) {
+      const meters = w.targetDistanceMeters;
+      const warnings = evaluatePlanWeek(
+        baseCtx,
+        {
+          weekIndex: w.weekIndex,
+          ordinal: i,
+          phase: w.phase,
+          peakPrecedingWeekDistanceMeters: peak,
+        },
+        [easy(w.startDate, meters / 1000)],
+      );
+      expect({
+        week: w.weekIndex,
+        ramp: warnings.filter((x) => x.code === "weekly_ramp_exceeded").length,
+      }).toEqual({ week: w.weekIndex, ramp: 0 });
+      peak = Math.max(peak ?? 0, meters);
+    }
+  });
+
   it("allows a bigger jump at progressive than at gradual", () => {
-    const week = { ...baseWeek, previousWeekDistanceMeters: 40_000 };
+    const week = { ...baseWeek, peakPrecedingWeekDistanceMeters: 40_000 };
     const sessions = [easy("2026-01-05", 48)];
     expect(
       evaluatePlanWeek({ ...baseCtx, volumeAggressiveness: "progressive" }, week, sessions),
@@ -291,7 +356,7 @@ describe("evaluatePlanWeek — composition", () => {
     ];
     const codes = evaluatePlanWeek(
       ctx,
-      { ...baseWeek, ordinal: 0, phase: "base", previousWeekDistanceMeters: 30_000 },
+      { ...baseWeek, ordinal: 0, phase: "base", peakPrecedingWeekDistanceMeters: 30_000 },
       sessions,
     ).map((w) => w.code);
 
@@ -318,7 +383,7 @@ describe("evaluatePlanWeek — composition", () => {
     expect(
       evaluatePlanWeek(
         ctx,
-        { ...baseWeek, ordinal: 1, phase: "build", previousWeekDistanceMeters: 42_000 },
+        { ...baseWeek, ordinal: 1, phase: "build", peakPrecedingWeekDistanceMeters: 42_000 },
         sessions,
       ),
     ).toEqual([]);
