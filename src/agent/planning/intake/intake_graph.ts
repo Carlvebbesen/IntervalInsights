@@ -3,7 +3,7 @@ import { END, START, StateGraph } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { getCheckpointer } from "../../analysis_graph";
 import { windowMessages } from "../../training/message_window";
-import { INTAKE_SYSTEM_PROMPT, invokeIntakeModel } from "./intake_agent";
+import { intakeSystemPrompt, invokeIntakeModel } from "./intake_agent";
 import { type IntakeState, IntakeStateAnnotation } from "./intake_state";
 import { intakeTools } from "./intake_tools";
 
@@ -14,7 +14,7 @@ export async function resetIntakeThread(threadId: string): Promise<void> {
 
 async function agentNode(state: IntakeState): Promise<Partial<IntakeState>> {
   const ai = await invokeIntakeModel([
-    new SystemMessage(INTAKE_SYSTEM_PROMPT),
+    new SystemMessage(intakeSystemPrompt()),
     ...windowMessages(state.messages),
   ]);
   return { messages: [ai] };

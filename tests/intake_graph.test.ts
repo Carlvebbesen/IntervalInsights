@@ -79,4 +79,43 @@ describe("intake graph — draft merging and finalize", () => {
     expect(result.ready).toBe(true);
     expect(result.athleteBrief).toBe(brief);
   });
+
+  // "Actually, no volume cap" — the model clears a retracted setting by
+  // passing null; the reducer must delete the key, not store the null.
+  it("clears a retracted draft field when update_plan_draft passes null", async () => {
+    const graph = await buildIntakeGraph();
+    script = [
+      aiToolCall("update_plan_draft", { maxWeeklyVolumeMeters: 30000 }),
+      aiText("Capped at 30 km."),
+    ];
+    await graph.invoke(
+      { userId: "user-1", messages: [new HumanMessage("Cap me at 30 km")] },
+      config,
+    );
+
+    script = [
+      aiToolCall("update_plan_draft", { maxWeeklyVolumeMeters: null }),
+      aiText("Cap removed."),
+    ];
+    const result = await graph.invoke(
+      { userId: "user-1", messages: [new HumanMessage("Actually, no cap")] },
+      config,
+    );
+
+    expect(result.draft).toEqual({
+      goalText: "sub-20 5k",
+      daysPerWeek: 4,
+      preferredLongRunDay: 6,
+    });
+    expect("maxWeeklyVolumeMeters" in result.draft).toBe(false);
+  });
+});
+
+describe("intake system prompt", () => {
+  it("carries today's date and the clearing/ceiling rules", () => {
+    const prompt = intakeAgent.intakeSystemPrompt(new Date("2026-07-20T10:00:00Z"));
+    expect(prompt).toContain("TODAY is Monday 2026-07-20");
+    expect(prompt).toContain("explicitly null to clear it");
+    expect(prompt).toContain("NOT a ceiling");
+  });
 });
