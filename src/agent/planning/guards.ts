@@ -174,21 +174,24 @@ export const DOWN_WEEK_CADENCE = 4;
 export const DOWN_WEEK_FACTOR = 0.72;
 
 /**
- * Force week 1 to the athlete's REAL trailing baseline — never the race goal.
+ * Cap week 1 at the athlete's REAL trailing baseline — never the race goal.
  * Starting above what they are actually running is the top cause of over-ramp
- * injury.
+ * injury. A pure CEILING: a plausible LLM week 1 BELOW the baseline is
+ * preserved (under-anchoring is the safe direction — the ramp grows the plan
+ * from there). Overwriting in both directions used to RAISE a beginner's
+ * requested ~5 km first week to the 20 km no-data default, un-fixable by
+ * feedback.
  *
- * The `DEFAULT_BASELINE_WEEKLY_METERS` floor applies ONLY when there is no
+ * The `DEFAULT_BASELINE_WEEKLY_METERS` ceiling applies ONLY when there is no
  * usable data at all. It used to also apply below `MIN_BASELINE_WEEKLY_METERS`
  * (5 km/wk), which meant a genuinely low-volume athlete — 2 × 5 km a month, a
  * real and common starting point — was anchored at 20 km, roughly 4× their
  * actual volume: precisely the over-anchoring this guard exists to prevent,
- * inflicted by the guard itself. When some real running exists, week 1 never
- * exceeds it, however small; the ramp ceilings grow the plan from there.
+ * inflicted by the guard itself.
  *
  * The remaining floor is `MIN_PLAUSIBLE_WEEKLY_METERS` — below ~1 km/week the
- * number is noise rather than a small training week, and anchoring week 1 to 0
- * (or to 1 metre) propagates through the whole ramp into a plan of empty weeks.
+ * LLM's week 1 is missing data rather than a small training week, and the
+ * usable baseline is used outright.
  */
 export function anchorWeekOne(targets: number[], baselineWeeklyMeters: number | null): number[] {
   if (targets.length === 0) return targets;
@@ -199,7 +202,10 @@ export function anchorWeekOne(targets: number[], baselineWeeklyMeters: number | 
       ? baselineWeeklyMeters
       : DEFAULT_BASELINE_WEEKLY_METERS;
   const out = [...targets];
-  out[0] = Math.round(usable);
+  out[0] =
+    out[0] >= MIN_PLAUSIBLE_WEEKLY_METERS
+      ? Math.min(Math.round(out[0]), Math.round(usable))
+      : Math.round(usable);
   return out;
 }
 
@@ -832,43 +838,75 @@ function longRunDate(sessions: GeneratedSession[]): string | null {
 // structure — the schema has no dedicated cross-training value (OTHER is the
 // catch-all). The app renders OTHER; the title/description carry the intent.
 export const CROSS_TRAINING_TITLE = "Cross-training (elliptical / spinning)";
-const CROSS_TRAINING_DESCRIPTION =
+export const CROSS_TRAINING_INJURY_DESCRIPTION =
   "Elliptical or spinning (indoor bike) substitute for an easy run to protect the active injury — same duration/load.";
+export const CROSS_TRAINING_REQUEST_DESCRIPTION =
+  "Low-impact aerobic session — elliptical or spinning, easy effort.";
 export const MAX_CROSS_TRAINING_PER_WEEK = 2;
 
-function toCrossTraining(s: GeneratedSession): GeneratedSession {
+// The LLM sometimes emits its own cross-training days from the prose (observed:
+// "Elliptical cross-train" as OTHER) — those count against the resolved total,
+// or the week ends up with more cross-training than the athlete's setting.
+const CROSS_TRAINING_HINT =
+  /cross[\s-]?train|elliptical|spin(?:ning)?\b|indoor bike|cycling|swim|aqua[\s-]?jog|low[\s-]?impact/i;
+
+export function isCrossTrainingSession(s: GeneratedSession): boolean {
+  return (
+    s.sessionType === "OTHER" &&
+    (!s.structure || s.structure.length === 0) &&
+    CROSS_TRAINING_HINT.test(`${s.title} ${s.description ?? ""}`)
+  );
+}
+
+function toCrossTraining(s: GeneratedSession, injuryDriven: boolean): GeneratedSession {
   return {
     ...s,
     sessionType: "OTHER",
     structure: null,
     title: CROSS_TRAINING_TITLE,
-    description: CROSS_TRAINING_DESCRIPTION,
+    description: injuryDriven
+      ? CROSS_TRAINING_INJURY_DESCRIPTION
+      : CROSS_TRAINING_REQUEST_DESCRIPTION,
   };
 }
 
 /**
- * For an athlete with an active injury: convert up to `count` (capped 1–2)
- * EASY/RECOVERY runs into cross-training sessions, protecting the injury while
- * preserving easy volume 1:1. Never touches a LONG or quality session, and only
- * acts in weeks with ≥2 easy runs to spare.
+ * Hold the week to exactly `count` (capped 0–2) cross-training sessions.
+ * LLM-emitted cross days count first; any beyond the count demote to easy runs
+ * (day counts stay intact). The shortfall converts EASY/RECOVERY runs 1:1 —
+ * protecting an injury or honouring the athlete's request while preserving
+ * easy volume. Never touches a LONG or quality session, and only converts in
+ * weeks with ≥2 easy runs to spare. `injuryDriven` picks the description: the
+ * injury wording only when the count comes from an active injury.
  */
 export function substituteCrossTraining(
   sessions: GeneratedSession[],
   count: number,
+  injuryDriven: boolean,
 ): GeneratedSession[] {
   const want = Math.min(MAX_CROSS_TRAINING_PER_WEEK, Math.max(0, count));
-  if (want === 0) return sessions;
-  const easyIdx = sessions
+  const existing = sessions
     .map((s, i) => ({ s, i }))
-    .filter(
-      ({ s }) =>
-        (s.sessionType === "EASY" || s.sessionType === "RECOVERY") &&
-        !isHardSession(s.sessionType, s.structure),
-    )
+    .filter(({ s }) => isCrossTrainingSession(s))
     .map(({ i }) => i);
-  if (easyIdx.length < 2) return sessions;
-  const convert = new Set(easyIdx.slice(0, Math.min(want, easyIdx.length)));
-  return sessions.map((s, i) => (convert.has(i) ? toCrossTraining(s) : s));
+  const demote = new Set(existing.slice(want));
+  const missing = want - Math.min(existing.length, want);
+  let convert = new Set<number>();
+  if (missing > 0) {
+    const easyIdx = sessions
+      .map((s, i) => ({ s, i }))
+      .filter(
+        ({ s }) =>
+          (s.sessionType === "EASY" || s.sessionType === "RECOVERY") &&
+          !isHardSession(s.sessionType, s.structure),
+      )
+      .map(({ i }) => i);
+    if (easyIdx.length >= 2) convert = new Set(easyIdx.slice(0, missing));
+  }
+  if (demote.size === 0 && convert.size === 0) return sessions;
+  return sessions.map((s, i) =>
+    demote.has(i) ? downgradeToEasy(s) : convert.has(i) ? toCrossTraining(s, injuryDriven) : s,
+  );
 }
 
 /**
@@ -899,6 +937,8 @@ export type SessionGuardParams = {
   daysPerWeek: number;
   preferredLongRunDay: number | null;
   crossTrainingCount: number;
+  crossTrainingInjuryDriven: boolean;
+  raceDistanceMeters: number | null;
 };
 
 // A long run beyond ~40% of the week's volume is an outsized injury risk —
@@ -906,6 +946,12 @@ export type SessionGuardParams = {
 // to the volume FILL: with few unstructured sessions the even split otherwise
 // dumps nearly the whole weekly target onto the long run (observed: 71 km).
 export const LONG_RUN_MAX_FILL_SHARE = 0.4;
+
+// Weighted volume-fill: the long run carries this weight against 1 for every
+// other fill run, so it is actually the week's longest run instead of an
+// even-split clone of the easies (observed: a 100 km marathon week whose
+// "32–34 km long run" hinted ~19 km, same as every easy day).
+export const LONG_RUN_FILL_WEIGHT = 2.5;
 
 function appendDistanceHint(description: string | null | undefined, meters: number): string {
   const hint = `~${(meters / 1000).toFixed(1)} km`;
@@ -996,37 +1042,68 @@ export function assembleWeekSessionsWithNotices(
       weekIndex: week.weekIndex,
     });
   }
-  sessions = substituteCrossTraining(sessions, params.crossTrainingCount);
+  sessions = substituteCrossTraining(
+    sessions,
+    params.crossTrainingCount,
+    params.crossTrainingInjuryDriven,
+  );
   sessions.sort((a, b) => a.date.localeCompare(b.date));
 
   const structuredMeters = sessions.reduce(
     (n, s) => n + estimateStructureDistanceMeters(s.structure),
     0,
   );
-  const fill = sessions.filter((s) => !s.structure || s.structure.length === 0);
+  const unstructured = sessions.filter((s) => !s.structure || s.structure.length === 0);
+  // Race day is pinned at the race distance, never a fill slot (observed: a
+  // marathon labeled "~6.8 km") — and it consumes budget before the split so
+  // race-week easies stay small.
+  const races = unstructured.filter((s) => s.sessionType === "RACE");
+  let raceMeters = 0;
+  if (params.raceDistanceMeters != null && params.raceDistanceMeters > 0) {
+    raceMeters = races.length * params.raceDistanceMeters;
+    for (const s of races) {
+      s.description = appendDistanceHint(s.description, params.raceDistanceMeters);
+    }
+  }
+  const fill = unstructured.filter((s) => s.sessionType !== "RACE");
   if (fill.length > 0) {
-    const budget = Math.max(0, week.targetDistanceMeters - structuredMeters);
-    const per = Math.round(budget / fill.length);
+    const budget = Math.max(0, week.targetDistanceMeters - structuredMeters - raceMeters);
     const longFill = sessions.length >= 2 ? fill.find(isLongBucket) : undefined;
     const longMax = Math.round(week.targetDistanceMeters * LONG_RUN_MAX_FILL_SHARE);
-    if (longFill && per > longMax) {
-      const others = fill.filter((s) => s !== longFill);
-      // No other fill run to absorb the excess → it is simply not planned;
-      // planned < target is the honest outcome, a 71 km long run is not.
-      const perOther = others.length > 0 ? Math.round((budget - longMax) / others.length) : 0;
-      for (const s of fill) {
-        s.description = appendDistanceHint(s.description, s === longFill ? longMax : perOther);
+    const others = fill.filter((s) => s !== longFill);
+    const totalWeight = others.length + (longFill ? LONG_RUN_FILL_WEIGHT : 0);
+    const longShare = longFill ? Math.round((budget * LONG_RUN_FILL_WEIGHT) / totalWeight) : 0;
+    const longMeters = Math.min(longShare, longMax);
+    if (longFill) {
+      longFill.description = appendDistanceHint(longFill.description, longMeters);
+      if (longShare > longMax) {
+        // Excess with no other fill run to absorb it is simply not planned;
+        // planned < target is the honest outcome, a 71 km long run is not.
+        notices.push({
+          kind: "clamped",
+          code: "long_run_share_capped",
+          message: `Week ${week.weekIndex}'s long run was held to ${fmtKm(longMax)} instead of ${fmtKm(longShare)}: a single long run beyond ${Math.round(LONG_RUN_MAX_FILL_SHARE * 100)}% of the week's volume is an outsized injury risk. The remaining distance ${others.length > 0 ? "moves to the week's other runs" : "is left unplanned"}.`,
+          observed: longShare,
+          limit: longMax,
+          weekIndex: week.weekIndex,
+        });
       }
+    }
+    const perOther = others.length > 0 ? Math.round((budget - longMeters) / others.length) : 0;
+    // No easy fill run may out-distance the week's (possibly capped) long run —
+    // an "easy shakeout" absorbing 60% of the week dodged the long-run cap by
+    // not being typed LONG. Capped excess is dropped, not reassigned.
+    const otherMeters = longFill ? Math.min(perOther, longMeters) : perOther;
+    for (const s of others) s.description = appendDistanceHint(s.description, otherMeters);
+    if (longFill && perOther > longMeters) {
       notices.push({
         kind: "clamped",
-        code: "long_run_share_capped",
-        message: `Week ${week.weekIndex}'s long run was held to ${fmtKm(longMax)} instead of ${fmtKm(per)}: a single long run beyond ${Math.round(LONG_RUN_MAX_FILL_SHARE * 100)}% of the week's volume is an outsized injury risk. The remaining distance ${others.length > 0 ? "moves to the week's other runs" : "is left unplanned"}.`,
-        observed: per,
-        limit: longMax,
+        code: "fill_run_capped",
+        message: `Week ${week.weekIndex}'s easy runs were held to ${fmtKm(otherMeters)} so no easy run exceeds the long run; the remaining distance is left unplanned rather than overloading a single easy day.`,
+        observed: perOther,
+        limit: otherMeters,
         weekIndex: week.weekIndex,
       });
-    } else {
-      for (const s of fill) s.description = appendDistanceHint(s.description, per);
     }
   }
 

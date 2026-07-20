@@ -195,6 +195,8 @@ describe("safety clamps refuse out loud", () => {
       daysPerWeek: 5,
       preferredLongRunDay: null,
       crossTrainingCount: 0,
+      crossTrainingInjuryDriven: false,
+      raceDistanceMeters: null,
     });
 
     const cap = notices.find((n) => n.code === "quality_sessions_exceeded");

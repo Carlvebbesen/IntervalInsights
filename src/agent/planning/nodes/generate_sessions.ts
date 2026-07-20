@@ -18,14 +18,18 @@ import { invokeGenerateSessionsAgent, SESSION_BATCH_WEEKS } from "../plan_sessio
 /**
  * Cross-training sessions/week: the larger of the injury-derived count and what
  * the athlete explicitly asked for (wizard input or review feedback), capped at
- * MAX_CROSS_TRAINING_PER_WEEK.
+ * MAX_CROSS_TRAINING_PER_WEEK. `injuryDriven` marks an active injury behind the
+ * count, so the substituted sessions carry injury wording only when it is true.
  */
 export function resolveCrossTrainingCount(
   activeEventCount: number,
   requested: number | null | undefined,
-): number {
+): { count: number; injuryDriven: boolean } {
   const injuryDerived = Math.min(MAX_CROSS_TRAINING_PER_WEEK, Math.max(0, activeEventCount));
-  return Math.min(MAX_CROSS_TRAINING_PER_WEEK, Math.max(injuryDerived, requested ?? 0));
+  return {
+    count: Math.min(MAX_CROSS_TRAINING_PER_WEEK, Math.max(injuryDerived, requested ?? 0)),
+    injuryDriven: injuryDerived > 0,
+  };
 }
 
 /**
@@ -55,15 +59,18 @@ export async function generateSessions(
   const sessionsByWeek: GeneratedWeekSessions[] = [];
   const notices: PlanNotice[] = [];
 
+  const crossTraining = resolveCrossTrainingCount(
+    ctx.activeHealthEvents.length,
+    state.input.crossTrainingPerWeek,
+  );
   const guardParams = {
     intensityAggressiveness:
       state.input.intensityAggressiveness ?? DEFAULT_INTENSITY_AGGRESSIVENESS,
     daysPerWeek: resolveDaysPerWeek(state.input.daysPerWeek, observedRunDaysPerWeek(ctx)),
     preferredLongRunDay: state.input.preferredLongRunDay ?? null,
-    crossTrainingCount: resolveCrossTrainingCount(
-      ctx.activeHealthEvents.length,
-      state.input.crossTrainingPerWeek,
-    ),
+    crossTrainingCount: crossTraining.count,
+    crossTrainingInjuryDriven: crossTraining.injuryDriven,
+    raceDistanceMeters: ctx.race?.distanceMeters ?? null,
   };
 
   for (let i = 0; i < totalWeeks; i += SESSION_BATCH_WEEKS) {

@@ -256,6 +256,8 @@ describe("assembleWeekSessions composition invariants (adversarial LLM weeks)", 
       daysPerWeek: int(r, 1, 7),
       preferredLongRunDay: pick(r, [null, 0, 3, 6]),
       crossTrainingCount: int(r, 0, 3),
+      crossTrainingInjuryDriven: r() < 0.5,
+      raceDistanceMeters: pick(r, [null, 10_000, 42_195]),
     };
     const raw = adversarialSessions(r, week.startDate);
     return { seed, week, params, raw, out: assembleWeekSessions(week, raw, params) };
@@ -366,6 +368,8 @@ describe("assembleWeekSessions composition invariants (adversarial LLM weeks)", 
         daysPerWeek: int(r, 1, 7),
         preferredLongRunDay: pick(r, [null, 0, 3, 6]),
         crossTrainingCount: int(r, 0, 3),
+        crossTrainingInjuryDriven: r() < 0.5,
+        raceDistanceMeters: pick(r, [null, 21_097]),
       };
       const hardType = pick(r, ["TEMPO", "LONG_INTERVALS", "HILL_SPRINTS"] as const);
       const raw: GeneratedSession[] = [
@@ -437,6 +441,8 @@ describe("assembleWeekSessions composition invariants (adversarial LLM weeks)", 
       daysPerWeek: 6,
       preferredLongRunDay: 6, // Sunday
       crossTrainingCount: 0,
+      crossTrainingInjuryDriven: false,
+      raceDistanceMeters: null,
     });
 
     const long = out.find(isLong);
@@ -457,7 +463,11 @@ describe("assembleWeekSessions composition invariants (adversarial LLM weeks)", 
   it("distributes the week's volume budget only across structureless fill runs", () => {
     for (const { seed, week, out } of cases) {
       const structured = out.reduce((n, s) => n + estimateStructureDistanceMeters(s.structure), 0);
-      const fill = out.filter((s) => !s.structure || s.structure.length === 0);
+      // RACE sessions are pinned at the race distance (no hint when unknown),
+      // never filled — they are outside this invariant.
+      const fill = out.filter(
+        (s) => (!s.structure || s.structure.length === 0) && s.sessionType !== "RACE",
+      );
       if (fill.length === 0 || week.targetDistanceMeters <= structured) continue;
       for (const s of fill) {
         expect({ seed, hinted: /~[\d.]+ km/.test(s.description ?? "") }).toEqual({

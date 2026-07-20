@@ -7,6 +7,8 @@ import {
   capMaxWeekly,
   clampVolumeRamp,
   clampWeeklyRamp,
+  CROSS_TRAINING_INJURY_DESCRIPTION,
+  CROSS_TRAINING_REQUEST_DESCRIPTION,
   CROSS_TRAINING_TITLE,
   DEFAULT_BASELINE_WEEKLY_METERS,
   DEFAULT_DAYS_PER_WEEK,
@@ -16,6 +18,7 @@ import {
   enforceQualityCount,
   estimateStructureDistanceMeters,
   expectedWeekStarts,
+  isCrossTrainingSession,
   isHardSession,
   LONG_RUN_MAX_FILL_SHARE,
   longRunOffset,
@@ -137,25 +140,37 @@ describe("estimateStructureDistanceMeters", () => {
   });
 });
 
-describe("anchorWeekOne", () => {
-  it("forces week 1 to the real baseline, never the LLM's goal week", () => {
-    expect(anchorWeekOne([30000, 34000, 36000], 42000)).toEqual([42000, 34000, 36000]);
+describe("anchorWeekOne (pure ceiling)", () => {
+  it("caps an over-baseline week 1 down to the real baseline, never the LLM's goal week", () => {
+    expect(anchorWeekOne([60000, 34000, 36000], 42000)).toEqual([42000, 34000, 36000]);
   });
 
-  it("falls back to the conservative floor when there is no history", () => {
+  // Raising was the beginner-persona bug: a requested ~5 km first week was
+  // inflated to the 20 km no-data default, un-fixable by feedback.
+  it("preserves a plausible week 1 below the baseline (both default and real)", () => {
+    expect(anchorWeekOne([5000, 8000], null)).toEqual([5000, 8000]);
+    expect(anchorWeekOne([5000, 8000], 40000)).toEqual([5000, 8000]);
+  });
+
+  it("caps at the conservative default when there is no history", () => {
     expect(anchorWeekOne([30000], null)).toEqual([DEFAULT_BASELINE_WEEKLY_METERS]);
   });
 
-  // The 20 km floor is for NO data, not for little data — applying it to a real
-  // low-volume athlete anchors them above what they actually run.
-  it("keeps a small real baseline instead of inflating it to the floor", () => {
+  // The 20 km ceiling is for NO data, not for little data — applying it to a
+  // real low-volume athlete anchors them above what they actually run.
+  it("keeps a small real baseline instead of inflating it to the default", () => {
     expect(anchorWeekOne([30000], 2500)).toEqual([2500]);
     expect(anchorWeekOne([30000], 4000)).toEqual([4000]);
   });
 
-  it("still uses the floor for a zero or non-finite baseline", () => {
+  it("still uses the default ceiling for a zero or non-finite baseline", () => {
     expect(anchorWeekOne([30000], 0)).toEqual([DEFAULT_BASELINE_WEEKLY_METERS]);
     expect(anchorWeekOne([30000], Number.NaN)).toEqual([DEFAULT_BASELINE_WEEKLY_METERS]);
+  });
+
+  it("floors a missing/garbage week 1 to the usable baseline", () => {
+    expect(anchorWeekOne([0, 8000], 40000)).toEqual([40000, 8000]);
+    expect(anchorWeekOne([500], null)).toEqual([DEFAULT_BASELINE_WEEKLY_METERS]);
   });
 
   it("no-ops on an empty plan", () => {
@@ -528,9 +543,16 @@ describe("substituteCrossTraining", () => {
     sess("2026-01-08", "EASY"),
     sess("2026-01-10", "RECOVERY"),
   ];
+  const llmCross = (date: string): GeneratedSession => ({
+    date,
+    sessionType: "OTHER",
+    title: "Elliptical cross-train",
+    description: "Low-impact aerobic work.",
+    structure: null,
+  });
 
   it("converts up to count easy/recovery runs to OTHER cross-training", () => {
-    const out = substituteCrossTraining(injuryWeek(), 2);
+    const out = substituteCrossTraining(injuryWeek(), 2, true);
     const cross = out.filter((s) => s.sessionType === "OTHER");
     expect(cross).toHaveLength(2);
     expect(cross.every((s) => s.structure === null && s.title === CROSS_TRAINING_TITLE)).toBe(true);
@@ -540,13 +562,46 @@ describe("substituteCrossTraining", () => {
 
   it("caps substitutions at 2 per week", () => {
     const week = ["2026-01-05", "2026-01-06", "2026-01-08", "2026-01-10"].map((d) => sess(d, "EASY"));
-    expect(substituteCrossTraining(week, 5).filter((s) => s.sessionType === "OTHER")).toHaveLength(2);
+    expect(substituteCrossTraining(week, 5, true).filter((s) => s.sessionType === "OTHER")).toHaveLength(2);
   });
 
   it("no-ops with count 0 or fewer than 2 easy runs to spare", () => {
-    expect(substituteCrossTraining(injuryWeek(), 0)).toEqual(injuryWeek());
+    expect(substituteCrossTraining(injuryWeek(), 0, false)).toEqual(injuryWeek());
     const oneEasy = [sess("2026-01-05", "LONG"), sess("2026-01-08", "EASY")];
-    expect(substituteCrossTraining(oneEasy, 2)).toEqual(oneEasy);
+    expect(substituteCrossTraining(oneEasy, 2, true)).toEqual(oneEasy);
+  });
+
+  it("counts an LLM-emitted cross session against the total (1 requested + 1 emitted → exactly 1)", () => {
+    const week = [
+      llmCross("2026-01-05"),
+      sess("2026-01-06", "LONG"),
+      sess("2026-01-08", "EASY"),
+      sess("2026-01-10", "EASY"),
+    ];
+    const out = substituteCrossTraining(week, 1, false);
+    expect(out.filter(isCrossTrainingSession)).toHaveLength(1);
+    expect(out.filter((s) => s.sessionType === "EASY")).toHaveLength(2);
+  });
+
+  it("demotes excess LLM-emitted cross sessions to easy runs, keeping day counts", () => {
+    const week = [llmCross("2026-01-05"), llmCross("2026-01-07"), sess("2026-01-09", "EASY")];
+    const out = substituteCrossTraining(week, 1, false);
+    expect(out).toHaveLength(3);
+    expect(out.filter(isCrossTrainingSession)).toHaveLength(1);
+    expect(out[1].sessionType).toBe("EASY");
+    expect(out[1].title).toBe("Easy run");
+  });
+
+  it("uses injury wording only for an injury-driven count, neutral wording for a request", () => {
+    const injured = substituteCrossTraining(injuryWeek(), 1, true);
+    expect(injured.find((s) => s.sessionType === "OTHER")?.description).toBe(
+      CROSS_TRAINING_INJURY_DESCRIPTION,
+    );
+    const requested = substituteCrossTraining(injuryWeek(), 1, false);
+    expect(requested.find((s) => s.sessionType === "OTHER")?.description).toBe(
+      CROSS_TRAINING_REQUEST_DESCRIPTION,
+    );
+    expect(CROSS_TRAINING_REQUEST_DESCRIPTION).not.toContain("injury");
   });
 });
 
@@ -579,24 +634,24 @@ describe("observedRunDaysPerWeek", () => {
 });
 
 describe("resolveCrossTrainingCount", () => {
-  it("honours an athlete request with no injury", () => {
-    expect(resolveCrossTrainingCount(0, 1)).toBe(1);
-    expect(resolveCrossTrainingCount(0, 2)).toBe(2);
+  it("honours an athlete request with no injury (not injury-driven)", () => {
+    expect(resolveCrossTrainingCount(0, 1)).toEqual({ count: 1, injuryDriven: false });
+    expect(resolveCrossTrainingCount(0, 2)).toEqual({ count: 2, injuryDriven: false });
   });
 
-  it("takes the max of the injury-derived count and the request", () => {
-    expect(resolveCrossTrainingCount(2, 1)).toBe(2);
-    expect(resolveCrossTrainingCount(1, 2)).toBe(2);
+  it("takes the max of the injury-derived count and the request, flagging the injury", () => {
+    expect(resolveCrossTrainingCount(2, 1)).toEqual({ count: 2, injuryDriven: true });
+    expect(resolveCrossTrainingCount(1, 2)).toEqual({ count: 2, injuryDriven: true });
   });
 
   it("stays capped at MAX_CROSS_TRAINING_PER_WEEK and zero without either signal", () => {
-    expect(resolveCrossTrainingCount(3, 5)).toBe(2);
-    expect(resolveCrossTrainingCount(0, null)).toBe(0);
-    expect(resolveCrossTrainingCount(0, undefined)).toBe(0);
+    expect(resolveCrossTrainingCount(3, 5)).toEqual({ count: 2, injuryDriven: true });
+    expect(resolveCrossTrainingCount(0, null)).toEqual({ count: 0, injuryDriven: false });
+    expect(resolveCrossTrainingCount(0, undefined)).toEqual({ count: 0, injuryDriven: false });
   });
 });
 
-describe("assembleWeekSessionsWithNotices (long-run fill share cap)", () => {
+describe("assembleWeekSessionsWithNotices (weighted volume fill + long-run share cap)", () => {
   const week = (targetDistanceMeters: number): PlanMacroWeek => ({
     weekIndex: 3,
     startDate: "2026-01-05",
@@ -610,6 +665,8 @@ describe("assembleWeekSessionsWithNotices (long-run fill share cap)", () => {
     daysPerWeek: 5,
     preferredLongRunDay: null,
     crossTrainingCount: 0,
+    crossTrainingInjuryDriven: false,
+    raceDistanceMeters: null,
   };
 
   it("clamps a lone long fill run to the share cap and reports it (the 71 km bug shape)", () => {
@@ -628,26 +685,68 @@ describe("assembleWeekSessionsWithNotices (long-run fill share cap)", () => {
     expect(notice?.weekIndex).toBe(3);
   });
 
-  it("redistributes the clamped excess onto the other fill runs", () => {
-    const raw = [sess("2026-01-06", "EASY"), sess("2026-01-11", "LONG")];
-    const { sessions, notices } = assembleWeekSessionsWithNotices(week(40000), raw, params);
-    expect(sessions.find((s) => s.sessionType === "LONG")?.description).toBe("~16.0 km");
-    expect(sessions.find((s) => s.sessionType === "EASY")?.description).toBe("~24.0 km");
-    expect(notices.some((n) => n.code === "long_run_share_capped")).toBe(true);
+  // The marathoner bug shape: 6 run days on 100 km used to even-split into six
+  // identical ~16.7 km runs — a "long run" no longer than the easies.
+  it("weights the long run so it clearly exceeds the easies (6-fill 100 km week)", () => {
+    const raw = [
+      sess("2026-01-05", "EASY"),
+      sess("2026-01-06", "EASY"),
+      sess("2026-01-07", "EASY"),
+      sess("2026-01-08", "EASY"),
+      sess("2026-01-09", "EASY"),
+      sess("2026-01-11", "LONG"),
+    ];
+    const { sessions, notices } = assembleWeekSessionsWithNotices(week(100_000), raw, {
+      ...params,
+      daysPerWeek: 6,
+    });
+    expect(sessions.find((s) => s.sessionType === "LONG")?.description).toBe("~33.3 km");
+    for (const s of sessions.filter((x) => x.sessionType === "EASY")) {
+      expect(s.description).toBe("~13.3 km");
+    }
+    expect(notices).toHaveLength(0);
   });
 
-  // With ≥3 fill runs the even split assigns the long run at most a third of
-  // the budget, which never crosses the 40% share cap — documented so the cap's
-  // scope (1–2 fill sessions) is explicit.
-  it("leaves a 3-fill week's even split alone (share cannot exceed the cap)", () => {
+  // The 19.9 km "shakeout" bug shape: an EASY fill run must never out-distance
+  // the (capped) long run; the excess is dropped, not reassigned.
+  it("caps every non-long fill run at the long run's distance (2-fill 33.4 km week)", () => {
+    const raw = [sess("2026-01-06", "EASY"), sess("2026-01-11", "LONG")];
+    const { sessions, notices } = assembleWeekSessionsWithNotices(week(33_400), raw, params);
+    expect(sessions.find((s) => s.sessionType === "LONG")?.description).toBe("~13.4 km");
+    expect(sessions.find((s) => s.sessionType === "EASY")?.description).toBe("~13.4 km");
+    expect(notices.some((n) => n.code === "long_run_share_capped")).toBe(true);
+    const capped = notices.find((n) => n.code === "fill_run_capped");
+    expect(capped?.kind).toBe("clamped");
+    expect(capped?.observed).toBe(20_040);
+    expect(capped?.limit).toBe(13_360);
+  });
+
+  it("scales down to a beginner week: long run modestly larger than the easies", () => {
     const raw = [
       sess("2026-01-06", "EASY"),
       sess("2026-01-08", "EASY"),
       sess("2026-01-11", "LONG"),
     ];
-    const { sessions, notices } = assembleWeekSessionsWithNotices(week(60000), raw, params);
-    for (const s of sessions) expect(s.description).toBe("~20.0 km");
-    expect(notices.some((n) => n.code === "long_run_share_capped")).toBe(false);
+    const { sessions, notices } = assembleWeekSessionsWithNotices(week(6_000), raw, params);
+    expect(sessions.find((s) => s.sessionType === "LONG")?.description).toBe("~2.4 km");
+    for (const s of sessions.filter((x) => x.sessionType === "EASY")) {
+      expect(s.description).toBe("~1.8 km");
+    }
+    expect(notices.some((n) => n.code === "fill_run_capped")).toBe(false);
+  });
+
+  it("share-caps a 3-fill week whose weighted long share crosses 40%", () => {
+    const raw = [
+      sess("2026-01-06", "EASY"),
+      sess("2026-01-08", "EASY"),
+      sess("2026-01-11", "LONG"),
+    ];
+    const { sessions, notices } = assembleWeekSessionsWithNotices(week(60_000), raw, params);
+    expect(sessions.find((s) => s.sessionType === "LONG")?.description).toBe("~24.0 km");
+    for (const s of sessions.filter((x) => x.sessionType === "EASY")) {
+      expect(s.description).toBe("~18.0 km");
+    }
+    expect(notices.some((n) => n.code === "long_run_share_capped")).toBe(true);
   });
 
   it("leaves a single-session week untouched", () => {
@@ -655,6 +754,61 @@ describe("assembleWeekSessionsWithNotices (long-run fill share cap)", () => {
     const { sessions, notices } = assembleWeekSessionsWithNotices(week(50000), raw, params);
     expect(sessions[0].description).toBe("~50.0 km");
     expect(notices.some((n) => n.code === "long_run_share_capped")).toBe(false);
+  });
+});
+
+describe("assembleWeekSessionsWithNotices (RACE sessions pinned at race distance)", () => {
+  const raceWeek = (targetDistanceMeters: number): PlanMacroWeek => ({
+    weekIndex: 12,
+    startDate: "2026-01-05",
+    phase: "race",
+    targetDistanceMeters,
+    notes: null,
+    keySessions: [],
+  });
+  const params = {
+    intensityAggressiveness: "balanced" as const,
+    daysPerWeek: 5,
+    preferredLongRunDay: null,
+    crossTrainingCount: 0,
+    crossTrainingInjuryDriven: false,
+    raceDistanceMeters: 42_195,
+  };
+
+  it("hints the race distance on the RACE session and fills only the remainder", () => {
+    const raw = [
+      sess("2026-01-06", "EASY"),
+      sess("2026-01-08", "EASY"),
+      sess("2026-01-11", "RACE"),
+    ];
+    const { sessions } = assembleWeekSessionsWithNotices(raceWeek(50_000), raw, params);
+    expect(sessions.find((s) => s.sessionType === "RACE")?.description).toBe("~42.2 km");
+    for (const s of sessions.filter((x) => x.sessionType === "EASY")) {
+      expect(s.description).toBe("~3.9 km");
+    }
+  });
+
+  it("floors the fill budget at 0 when the race exceeds the week target", () => {
+    const raw = [sess("2026-01-06", "EASY"), sess("2026-01-11", "RACE")];
+    const { sessions } = assembleWeekSessionsWithNotices(raceWeek(30_000), raw, params);
+    expect(sessions.find((s) => s.sessionType === "RACE")?.description).toBe("~42.2 km");
+    expect(sessions.find((s) => s.sessionType === "EASY")?.description).toBe("~0.0 km");
+  });
+
+  it("appends no hint to a RACE session when the race distance is unknown", () => {
+    const raw = [
+      sess("2026-01-06", "EASY"),
+      sess("2026-01-08", "EASY"),
+      sess("2026-01-11", "RACE"),
+    ];
+    const { sessions } = assembleWeekSessionsWithNotices(raceWeek(20_000), raw, {
+      ...params,
+      raceDistanceMeters: null,
+    });
+    expect(sessions.find((s) => s.sessionType === "RACE")?.description).toBeNull();
+    for (const s of sessions.filter((x) => x.sessionType === "EASY")) {
+      expect(s.description).toBe("~10.0 km");
+    }
   });
 });
 
