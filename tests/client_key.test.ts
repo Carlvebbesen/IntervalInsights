@@ -17,6 +17,7 @@ function makeApp(opts: { key?: string; mode: "log" | "enforce" }) {
   app.get("/api/health", (c) => c.json("ok"));
   app.use("/api/*", clientKeyGuard(opts));
   app.get("/api/secret", (c) => c.json({ ok: true }));
+  app.all("/api/auth/*", (c) => c.json({ ok: true }));
   app.onError((err, c) => {
     if (err instanceof AppError) return c.json({ error: err.message }, err.status as 401);
     return c.json({ error: "boom" }, 500);
@@ -63,5 +64,21 @@ describe("clientKeyGuard — enforce mode", () => {
     // No key, yet /api/health stays open because its handler terminates the
     // chain before the later-registered guard — the whole Tier 2 exemption story.
     expect((await get(app, "/api/health")).status).toBe(200);
+  });
+  it("exempts the OAuth authorization server, which third parties must reach", async () => {
+    const app = makeApp({ key: KEY, mode: "enforce" });
+    for (const path of [
+      "/api/auth/oauth2/register",
+      "/api/auth/oauth2/authorize",
+      "/api/auth/oauth2/token",
+      "/api/auth/jwks",
+      "/api/auth/.well-known/oauth-authorization-server",
+    ]) {
+      expect((await get(app, path)).status).toBe(200);
+    }
+  });
+  it("still guards the app's own auth endpoints", async () => {
+    const app = makeApp({ key: KEY, mode: "enforce" });
+    expect((await get(app, "/api/auth/sign-in/email-otp")).status).toBe(401);
   });
 });
