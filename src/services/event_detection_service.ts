@@ -63,9 +63,9 @@ export async function detectAndPersistEvents(
   }
   log.info(
     {
-      title: title.slice(0, 60),
-      description: description.slice(0, 60),
-      notes: notes.slice(0, 120),
+      titleLen: title.length,
+      descriptionLen: description.length,
+      notesLen: notes.length,
     },
     "input",
   );

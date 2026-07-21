@@ -62,7 +62,7 @@ export async function sendSignInOtpEmail(email: string, otp: string): Promise<vo
     text: `Your Interval Insights login code is ${otp}. It expires in ${OTP_TTL_MINUTES} minutes. If you didn't request this code, you can safely ignore this email.`,
   });
   if (error) {
-    logger.error({ error, email }, "Failed to send sign-in OTP email");
+    logger.error({ error, emailDomain: email.split("@")[1] }, "Failed to send sign-in OTP email");
     throw new Error(`OTP email delivery failed: ${error.message}`);
   }
 }

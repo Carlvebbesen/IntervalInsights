@@ -127,7 +127,7 @@ export const auth = betterAuth({
       sendVerificationOTP: async ({ email, otp, type }) => {
         if (type !== "sign-in") return;
         if (isReviewAccountEmail(email)) {
-          logger.info({ email }, "review-account OTP issued — email suppressed");
+          logger.info("review-account OTP issued — email suppressed");
           return;
         }
         await sendSignInOtpEmail(email, otp);
