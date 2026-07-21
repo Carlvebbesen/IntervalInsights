@@ -5,7 +5,6 @@ import {
   assembleWeekSessionsWithNotices,
   capLongestRunSpike,
   capMaxWeekly,
-  clampVolumeRamp,
   clampWeeklyRamp,
   CROSS_TRAINING_INJURY_DESCRIPTION,
   CROSS_TRAINING_REQUEST_DESCRIPTION,
@@ -25,7 +24,7 @@ import {
   type MacroShapingParams,
   placeLongRun,
   qualityCap,
-  repairMacro,
+  shapeMacro,
   repairSessionDate,
   resolveDaysPerWeek,
   spaceHardSessions,
@@ -58,16 +57,6 @@ describe("expectedWeekStarts (Monday alignment)", () => {
 
   it("is inclusive of the week containing endDate", () => {
     expect(expectedWeekStarts("2026-01-05", "2026-01-12")).toEqual(["2026-01-05", "2026-01-12"]);
-  });
-});
-
-describe("clampVolumeRamp", () => {
-  it("clamps week-over-week growth to +20%", () => {
-    expect(clampVolumeRamp([10000, 30000, 20000, 40000])).toEqual([10000, 12000, 14400, 17280]);
-  });
-
-  it("lets recovery drops through untouched", () => {
-    expect(clampVolumeRamp([10000, 12000, 8000, 9000])).toEqual([10000, 12000, 8000, 9000]);
   });
 });
 
@@ -196,9 +185,6 @@ describe("clampWeeklyRamp (per-axis ceilings)", () => {
     ]);
   });
 
-  it("legacy clampVolumeRamp still holds the flat +20% contract", () => {
-    expect(clampVolumeRamp([10000, 30000, 20000, 40000])).toEqual([10000, 12000, 14400, 17280]);
-  });
 });
 
 describe("capLongestRunSpike", () => {
@@ -281,7 +267,7 @@ describe("applyTaper (staged tail volumes + phases)", () => {
   });
 });
 
-describe("repairMacro (orchestrated volume shaping)", () => {
+describe("shapeMacro (orchestrated volume shaping)", () => {
   const rawMacro = (targets: number[]): PlanMacro => ({
     name: "P",
     rationale: "r",
@@ -310,7 +296,7 @@ describe("repairMacro (orchestrated volume shaping)", () => {
   // Quantized shape: the smooth steady ramp (30 → 33 → 36.3) becomes a plateau
   // and one visible 5 km step, taken once the underlying trajectory reaches it.
   it("anchors week 1 to the real baseline and quantizes the steady ramp to plateau-then-step", () => {
-    const macro = repairMacro(rawMacro([60000, 70000, 80000]), timeframeInput, params());
+    const macro = shapeMacro(rawMacro([60000, 70000, 80000]), timeframeInput, params()).macro;
     expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([30000, 30000, 35000]);
     expect(macro.weeks.map((w) => w.startDate)).toEqual([
       "2026-01-05",
@@ -320,11 +306,11 @@ describe("repairMacro (orchestrated volume shaping)", () => {
   });
 
   it("applies maxWeeklyVolumeMeters as a final hard cap", () => {
-    const macro = repairMacro(
+    const macro = shapeMacro(
       rawMacro([60000, 70000, 80000]),
       timeframeInput,
       params({ baselineWeeklyMeters: 40000, maxWeeklyVolumeMeters: 43000 }),
-    );
+    ).macro;
     // Without the 43 km ceiling the third week steps to 45 km; with it the step
     // has no grid point under the cap, so the plan holds at 40 km.
     expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([40000, 40000, 40000]);
@@ -337,11 +323,11 @@ describe("repairMacro (orchestrated volume shaping)", () => {
       endDate: "2026-02-15",
       raceEventId: 5,
     };
-    const macro = repairMacro(
+    const macro = shapeMacro(
       rawMacro([40000, 40000, 40000, 40000, 40000, 40000]),
       raceInput,
       params({ baselineWeeklyMeters: 40000, raceDistanceMeters: 42195 }),
-    );
+    ).macro;
     expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([
       40000, 40000, 40000, 32000, 24000, 16000,
     ]);
@@ -863,7 +849,7 @@ describe("shapeMacro (deterministic recovery-week notes)", () => {
   // quantized (2 km grid) plateau-and-step shape; the down week dips off its
   // quantized neighbour.
   it("labels the guard-made cutback week and scrubs the LLM's recovery note from a rising week", () => {
-    const macro = repairMacro(
+    const macro = shapeMacro(
       macroOf([
         [14600, null],
         [16000, null],
@@ -874,7 +860,7 @@ describe("shapeMacro (deterministic recovery-week notes)", () => {
       ]),
       { startDate: "2026-01-05", endDate: "2026-02-15" },
       params,
-    );
+    ).macro;
     expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([
       14000, 16000, 16000, 12000, 18000, 20000,
     ]);
@@ -885,7 +871,7 @@ describe("shapeMacro (deterministic recovery-week notes)", () => {
   });
 
   it("replaces a correct LLM cutback note with the deterministic one, without duplication", () => {
-    const macro = repairMacro(
+    const macro = shapeMacro(
       macroOf([
         [20000, null],
         [14000, "Cutback week (~-30%)"],
@@ -893,14 +879,14 @@ describe("shapeMacro (deterministic recovery-week notes)", () => {
       ]),
       { startDate: "2026-01-05", endDate: "2026-01-25" },
       params,
-    );
+    ).macro;
     expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([20000, 14000, 16000]);
     expect(macro.weeks[1].notes).toBe("Recovery week (−30%).");
     expect(macro.weeks[2].notes).toBe("Rebuild");
   });
 
   it("taper and race weeks keep their own notes", () => {
-    const macro = repairMacro(
+    const macro = shapeMacro(
       macroOf([
         [40000, null],
         [40000, null],
@@ -911,7 +897,7 @@ describe("shapeMacro (deterministic recovery-week notes)", () => {
       ]),
       { startDate: "2026-01-05", endDate: "2026-02-15", raceEventId: 5 },
       { ...params, baselineWeeklyMeters: 40000, raceDistanceMeters: 42195 },
-    );
+    ).macro;
     expect(macro.weeks.map((w) => w.phase)).toEqual([
       "build",
       "build",
@@ -940,7 +926,7 @@ describe("shapeMacro (invalidated week notes)", () => {
         keySessions: [],
       })),
     };
-    const macro = repairMacro(
+    const macro = shapeMacro(
       raw,
       { startDate: "2026-01-05", endDate: "2026-01-25" },
       {
@@ -952,7 +938,7 @@ describe("shapeMacro (invalidated week notes)", () => {
         maxWeeklyVolumeMeters: null,
         raceDistanceMeters: null,
       },
-    );
+    ).macro;
     // Quantization plateaus all three weeks at 30 km: weeks 2–3 moved <15% so
     // their notes survive; week 1 was halved from 60 km and loses its note.
     expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([30000, 30000, 30000]);

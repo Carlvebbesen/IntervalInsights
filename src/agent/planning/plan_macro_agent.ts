@@ -90,7 +90,8 @@ ${weeks || "  - no recent runs on record"}`;
 // constraint. Deterministic guards still run after generation; where a constraint
 // conflicts with an explicit structured input (e.g. a "long run Saturday"
 // constraint vs a `preferredLongRunDay` input), the structured input wins because
-// assembleWeekSessions re-places the long run deterministically after the LLM.
+// assembleWeekSessionsWithNotices re-places the long run deterministically
+// after the LLM.
 export function constraintsBlock(constraintsText: string | null | undefined): string {
   const text = constraintsText?.trim();
   if (!text) return "";

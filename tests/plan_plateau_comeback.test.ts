@@ -9,7 +9,7 @@ import {
   MIN_FILL_RUN_METERS,
   PLATEAU_BAND,
   quantizeWeeklyTargets,
-  repairMacro,
+  shapeMacro,
   VOLUME_RAMP,
 } from "../src/agent/planning/guards";
 import { invokeProposeMacroAgent } from "../src/agent/planning/plan_macro_agent";
@@ -126,11 +126,11 @@ describe("comeback return lane (proven capacity)", () => {
   });
 
   it("a comeback athlete (proven 40 km) reaches ≥30 km within 10 weeks at gradual; a no-history athlete stays on the novice curve", () => {
-    const comeback = repairMacro(
+    const comeback = shapeMacro(
       rawMacro(10, 60000),
       tenWeeks,
       params({ provenWeeklyMeters: 40000 }),
-    );
+    ).macro;
     expect(comeback.weeks.map((w) => w.targetDistanceMeters)).toEqual([
       14000, 18000, 22000, 16000, 28000, 30000, 35000, 26000, 40000, 45000,
     ]);
@@ -138,7 +138,7 @@ describe("comeback return lane (proven capacity)", () => {
       30000,
     );
 
-    const novice = repairMacro(rawMacro(10, 60000), tenWeeks, params());
+    const novice = shapeMacro(rawMacro(10, 60000), tenWeeks, params()).macro;
     expect(novice.weeks.map((w) => w.targetDistanceMeters)).toEqual([
       14000, 16000, 16000, 12000, 18000, 20000, 22000, 16000, 24000, 26000,
     ]);

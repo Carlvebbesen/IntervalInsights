@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
-  assembleWeekSessions,
+  assembleWeekSessionsWithNotices,
   assertPlanHasSessions,
   estimateStructureDistanceMeters,
   IMPLIED_LONG_RUN_FRACTION,
@@ -11,7 +11,7 @@ import {
   longRunSpikeReference,
   peakRampAllowance,
   qualityCap,
-  repairMacro,
+  shapeMacro,
   type SessionGuardParams,
   VOLUME_RAMP,
 } from "../src/agent/planning/guards";
@@ -47,7 +47,7 @@ const int = (r: () => number, lo: number, hi: number) => lo + Math.floor(r() * (
 
 const SEEDS = Array.from({ length: 60 }, (_, i) => i + 1);
 
-// ── repairMacro ──────────────────────────────────────────────────────────────
+// ── shapeMacro ──────────────────────────────────────────────────────────────
 
 /** Absurd weekly volumes: negative, zero, missing, and marathon-a-week nonsense. */
 function adversarialTargets(r: () => number, n: number): number[] {
@@ -61,7 +61,7 @@ function adversarialMacro(r: () => number, n: number): PlanMacro {
     name: "adversarial",
     rationale: "r",
     weeks: adversarialTargets(r, n).map((targetDistanceMeters, i) => ({
-      // Week index/startDate are deliberately garbage — repairMacro rebuilds them.
+      // Week index/startDate are deliberately garbage — shapeMacro rebuilds them.
       weekIndex: pick(r, [i + 1, 0, 99, -3]),
       startDate: pick(r, ["not-a-date", "2020-01-01", ""]),
       phase: pick(r, planWeekPhaseEnum.enumValues),
@@ -84,7 +84,7 @@ function inputForWeeks(n: number, over: Partial<PlanBuilderInput> = {}): PlanBui
   };
 }
 
-describe("repairMacro composition invariants (adversarial macros)", () => {
+describe("shapeMacro composition invariants (adversarial macros)", () => {
   const cases = SEEDS.map((seed) => {
     const r = rng(seed);
     const weeks = int(r, 1, 20);
@@ -105,7 +105,7 @@ describe("repairMacro composition invariants (adversarial macros)", () => {
       seed,
       params,
       raceAnchored,
-      out: repairMacro(adversarialMacro(r, weeks), input, params).weeks,
+      out: shapeMacro(adversarialMacro(r, weeks), input, params).macro.weeks,
     };
   });
 
@@ -224,7 +224,7 @@ describe("repairMacro composition invariants (adversarial macros)", () => {
   });
 });
 
-// ── assembleWeekSessions ─────────────────────────────────────────────────────
+// ── assembleWeekSessionsWithNotices ─────────────────────────────────────────────────────
 
 const ALL_TYPES = trainingTypeEnum.enumValues;
 
@@ -270,7 +270,7 @@ function adversarialSessions(r: () => number, weekStart: string): GeneratedSessi
 const daysApart = (a: string, b: string) =>
   Math.abs(new Date(`${a}T00:00:00Z`).getTime() - new Date(`${b}T00:00:00Z`).getTime()) / 86_400_000;
 
-describe("assembleWeekSessions composition invariants (adversarial LLM weeks)", () => {
+describe("assembleWeekSessionsWithNotices composition invariants (adversarial LLM weeks)", () => {
   const cases = SEEDS.map((seed) => {
     const r = rng(seed);
     const week: PlanMacroWeek = {
@@ -291,7 +291,7 @@ describe("assembleWeekSessions composition invariants (adversarial LLM weeks)", 
       provenWeeklyMeters: pick(r, [null, 8_000, 40_000]),
     };
     const raw = adversarialSessions(r, week.startDate);
-    return { seed, week, params, raw, out: assembleWeekSessions(week, raw, params) };
+    return { seed, week, params, raw, out: assembleWeekSessionsWithNotices(week, raw, params).sessions };
   });
 
   it("never schedules more sessions than the athlete's run-day count", () => {
@@ -423,7 +423,7 @@ describe("assembleWeekSessions composition invariants (adversarial LLM weeks)", 
           structure: null,
         },
       ] as GeneratedSession[];
-      const out = assembleWeekSessions(week, raw, params);
+      const out = assembleWeekSessionsWithNotices(week, raw, params).sessions;
       const longs = out.filter(isLong);
       expect({ seed, survived: longs.length > 0 }).toEqual({ seed, survived: true });
       expect({ seed, pinned: longs.some((s) => s.date === preferredDay(week, params)) }).toEqual({
@@ -468,7 +468,7 @@ describe("assembleWeekSessions composition invariants (adversarial LLM weeks)", 
       { date: "2026-01-10", sessionType: "TEMPO", title: "t", description: null, structure },
     ] as GeneratedSession[];
 
-    const out = assembleWeekSessions(week, raw, {
+    const out = assembleWeekSessionsWithNotices(week, raw, {
       intensityAggressiveness: "balanced",
       daysPerWeek: 6,
       preferredLongRunDay: 6, // Sunday
@@ -476,7 +476,7 @@ describe("assembleWeekSessions composition invariants (adversarial LLM weeks)", 
       crossTrainingInjuryDriven: false,
       raceDistanceMeters: null,
       provenWeeklyMeters: null,
-    });
+    }).sessions;
 
     const long = out.find(isLong);
     expect(long?.sessionType).toBe("PROGRESSIVE_LONG");
