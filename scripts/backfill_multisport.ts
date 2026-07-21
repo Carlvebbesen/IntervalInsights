@@ -26,12 +26,12 @@ import { runScript } from "./_harness";
  *   DRY_RUN=1 bun run scripts/backfill_multisport.ts             # report only, no writes
  *   ONLY_STEP=sync  bun run scripts/backfill_multisport.ts       # bikes sync + linking only
  *   ONLY_STEP=reset bun run scripts/backfill_multisport.ts       # re-queue non-run imports only
- *   ONLY_CLERK_ID=user_xxx bun run scripts/backfill_multisport.ts   # scope to one user
+ *   ONLY_USER_EMAIL=a@b.c bun run scripts/backfill_multisport.ts   # scope to one user
  *   LIMIT=5 DELAY_MS=2000 bun run scripts/backfill_multisport.ts
  */
 
 const DRY_RUN = process.env.DRY_RUN === "1" || process.env.DRY_RUN === "true";
-const ONLY_CLERK_ID = process.env.ONLY_CLERK_ID; // NB: not `USER` (shell sets that)
+const ONLY_USER_EMAIL = process.env.ONLY_USER_EMAIL;
 const ONLY_STEP = process.env.ONLY_STEP as "sync" | "reset" | undefined;
 const LIMIT = process.env.LIMIT ? Number(process.env.LIMIT) : undefined;
 const DELAY_MS = Number(process.env.DELAY_MS ?? 1500);
@@ -60,14 +60,14 @@ async function runWithRetry<T>(fn: () => Promise<T>): Promise<T> {
 
 async function syncGear(): Promise<void> {
   let users = await db
-    .select({ id: schema.users.id, clerkId: schema.users.clerkId })
+    .select({ id: schema.users.id, email: schema.users.email })
     .from(schema.users)
     .where(isNotNull(schema.users.stravaId));
-  if (ONLY_CLERK_ID) users = users.filter((u) => u.clerkId === ONLY_CLERK_ID);
+  if (ONLY_USER_EMAIL) users = users.filter((u) => u.email === ONLY_USER_EMAIL);
   if (LIMIT) users = users.slice(0, LIMIT);
 
   console.log(
-    `[backfill-multisport] sync: ${users.length} strava-linked user(s)${ONLY_CLERK_ID ? ` (scoped to ${ONLY_CLERK_ID})` : ""}${DRY_RUN ? " — DRY_RUN" : ""}`,
+    `[backfill-multisport] sync: ${users.length} strava-linked user(s)${ONLY_USER_EMAIL ? ` (scoped to ${ONLY_USER_EMAIL})` : ""}${DRY_RUN ? " — DRY_RUN" : ""}`,
   );
 
   let totalCreated = 0;
@@ -113,13 +113,13 @@ async function syncGear(): Promise<void> {
 
 async function resetUnanalyzed(): Promise<void> {
   let userId: string | undefined;
-  if (ONLY_CLERK_ID) {
+  if (ONLY_USER_EMAIL) {
     const [u] = await db
       .select({ id: schema.users.id })
       .from(schema.users)
-      .where(eq(schema.users.clerkId, ONLY_CLERK_ID));
+      .where(eq(schema.users.email, ONLY_USER_EMAIL));
     if (!u) {
-      console.log(`[backfill-multisport] reset: no user for clerkId ${ONLY_CLERK_ID}`);
+      console.log(`[backfill-multisport] reset: no user for email ${ONLY_USER_EMAIL}`);
       return;
     }
     userId = u.id;
@@ -148,7 +148,7 @@ async function resetUnanalyzed(): Promise<void> {
     const bySport = new Map<string, number>();
     for (const r of rows) bySport.set(r.sportType, (bySport.get(r.sportType) ?? 0) + 1);
     console.log(
-      `[backfill-multisport] reset: WOULD re-queue ${rows.length} non-run activity(ies) to pending${ONLY_CLERK_ID ? ` (scoped to ${ONLY_CLERK_ID})` : ""} — ${[...bySport.entries()].map(([s, n]) => `${s}=${n}`).join(", ") || "none"} (DRY_RUN — nothing written)`,
+      `[backfill-multisport] reset: WOULD re-queue ${rows.length} non-run activity(ies) to pending${ONLY_USER_EMAIL ? ` (scoped to ${ONLY_USER_EMAIL})` : ""} — ${[...bySport.entries()].map(([s, n]) => `${s}=${n}`).join(", ") || "none"} (DRY_RUN — nothing written)`,
     );
     return;
   }

@@ -44,7 +44,7 @@ bun run scripts:run        # == bun run scripts/run_pending.ts
 ```
 
 Migration-style runner: checks `script_runs`, then runs only the run-once scripts that
-haven't completed yet (in order, clerk sync last), streaming each script's output and
+haven't completed yet (in registry order), streaming each script's output and
 stopping on the first failure. Already-completed scripts are skipped. The ordered registry
 lives in `scripts/_registry.ts` (shared with `status.ts`) — keep it in sync with the
 `once: true` scripts. This is a manual command; it is **not** wired into deploy

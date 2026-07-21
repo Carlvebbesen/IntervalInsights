@@ -167,7 +167,11 @@ function signInPage(): Response {
   return new Response(html, { headers: HTML_HEADERS });
 }
 
-function consentPage(clientName: string, clientUri: string | null, scopes: string[]): Response {
+export function consentPage(
+  clientName: string,
+  clientUri: string | null,
+  scopes: string[],
+): Response {
   const scopeItems = scopes
     .map((s) => `<li>${escapeHtml(SCOPE_LABELS[s] ?? s)}</li>`)
     .join("\n      ");
@@ -270,6 +274,12 @@ export function registerOAuthProviderPages<E extends Env>(app: Hono<E>): void {
 
     const requested = (c.req.query("scope") ?? "").split(" ").filter(Boolean);
     const scopes = requested.length ? requested : [...MCP_SCOPES];
+
+    // A session that lapsed between authorize and consent lands here; send it
+    // back through sign-in with the same signed query rather than dead-ending.
+    if (!(await auth.api.getSession({ headers: c.req.raw.headers }))) {
+      return c.redirect(`${OAUTH_LOGIN_PAGE}?${new URL(c.req.url).searchParams}`, 302);
+    }
 
     let client: Awaited<ReturnType<typeof auth.api.getOAuthClientPublic>> | null = null;
     try {
