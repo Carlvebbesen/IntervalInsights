@@ -6,6 +6,7 @@ import { existingStravaIdsForUser } from "../repositories/activity_repository";
 import { activities } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { SummaryActivity } from "../types/strava/IDetailedActivity";
+import { type MatchSubject, withinMatchTolerance } from "./activity_match";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { publishSync } from "./progress_service";
 import { type StravaRateLimit, stravaApiService } from "./strava_api_service";
@@ -21,9 +22,6 @@ const MAX_DESCRIPTION_FETCHES = 200;
 const PROGRESS_EVERY = 20;
 const DESC_PROGRESS_EVERY = 5;
 
-const TIME_TOLERANCE_MS = 5 * 60 * 1000;
-const DISTANCE_TOLERANCE_RATIO = 0.03;
-
 const SYNC_KIND = "strava_master_sync";
 const SYNC_TITLE = "Strava";
 
@@ -37,25 +35,24 @@ export interface StravaMasterSyncResult {
   failed: number;
 }
 
-type FuzzyLocal = {
+type FuzzyLocal = MatchSubject & {
   id: number;
-  startMs: number;
-  distance: number;
   descriptionResolved: boolean;
   intervalsStravaId: number | null;
 };
 
 function findUniqueMatch(summary: SummaryActivity, locals: FuzzyLocal[]): FuzzyLocal | null {
-  const startMs = new Date(summary.start_date_local).getTime();
-  if (Number.isNaN(startMs) || summary.distance == null) return null;
-
-  const minDistance = summary.distance * (1 - DISTANCE_TOLERANCE_RATIO);
-  const maxDistance = summary.distance * (1 + DISTANCE_TOLERANCE_RATIO);
+  const ref: MatchSubject = {
+    startMs: new Date(summary.start_date_local).getTime(),
+    distance: summary.distance,
+    movingTime: summary.moving_time ?? null,
+    sportType: summary.sport_type || summary.type,
+  };
+  if (Number.isNaN(ref.startMs)) return null;
 
   let found: FuzzyLocal | null = null;
   for (const local of locals) {
-    if (Math.abs(startMs - local.startMs) > TIME_TOLERANCE_MS) continue;
-    if (local.distance < minDistance || local.distance > maxDistance) continue;
+    if (!withinMatchTolerance(ref, local)) continue;
     if (found) return null;
     found = local;
   }
@@ -131,6 +128,8 @@ export async function syncAllFromStrava(
         id: activities.id,
         startDateLocal: activities.startDateLocal,
         distance: activities.distance,
+        movingTime: activities.movingTime,
+        sportType: activities.sportType,
         stravaActivityId: activities.stravaActivityId,
         intervalsStravaId: activities.intervalsStravaId,
         description: activities.description,
@@ -150,6 +149,8 @@ export async function syncAllFromStrava(
           id: row.id,
           startMs: row.startDateLocal.getTime(),
           distance: row.distance,
+          movingTime: row.movingTime,
+          sportType: row.sportType,
           descriptionResolved: row.description != null,
           intervalsStravaId: row.intervalsStravaId,
         });

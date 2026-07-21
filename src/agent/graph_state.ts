@@ -34,7 +34,12 @@ export const AnalysisStateAnnotation = Annotation.Root({
   isIndoor: Annotation<boolean>({ reducer: overwrite, default: () => false }),
   activityTitle: Annotation<string>({ reducer: overwrite, default: () => "" }),
   activityDescription: Annotation<string>({ reducer: overwrite, default: () => "" }),
-  activityStartDateLocal: Annotation<Date | null>({ reducer: overwrite, default: () => null }),
+  // `string` is not a lie: every node after the interrupt reads this back off the
+  // LangGraph checkpointer, which round-trips state through JSON.
+  activityStartDateLocal: Annotation<Date | string | null>({
+    reducer: overwrite,
+    default: () => null,
+  }),
   activityType: Annotation<string>({ reducer: overwrite, default: () => "" }),
   totalElevationGain: Annotation<number>({ reducer: overwrite, default: () => 0 }),
   streams: Annotation<StreamSet | null>({ reducer: overwrite, default: () => null }),

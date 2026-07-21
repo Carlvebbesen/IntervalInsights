@@ -7,7 +7,7 @@ import { activities, type InsertActivity, users } from "../schema";
 import type { IGlobalBindings } from "../types/IRouters";
 import type { IIntervalsActivity } from "../types/intervals/IIntervalsActivity";
 import { computeAndStoreActivityLoad } from "./activity_load_service";
-import { distanceBand, TIME_TOLERANCE_MS, withinMatchTolerance } from "./activity_match";
+import { type MatchSubject, TIME_TOLERANCE_MS, withinMatchTolerance } from "./activity_match";
 import { userHasHeartRateConsent } from "./heart_rate_consent_service";
 import { classifyUserActivity } from "./ingest_gating";
 import { intervalsApiService } from "./intervals_api_service";
@@ -80,21 +80,34 @@ export interface LinkResult {
   intervalsActivityId: string;
 }
 
+function intervalsMatchSubject(intervalsActivity: IIntervalsActivity): MatchSubject {
+  return {
+    startMs: parseIntervalsLocalStartMs(intervalsActivity.start_date_local),
+    distance: intervalsActivity.distance ?? 0,
+    movingTime: intervalsActivity.moving_time ?? null,
+    sportType: intervalsActivity.type ?? null,
+  };
+}
+
 async function findLocalByFuzzyMatch(
   db: Executor,
   userId: string,
   intervalsActivity: IIntervalsActivity,
 ): Promise<{ id: number } | null> {
-  const startMs = parseIntervalsLocalStartMs(intervalsActivity.start_date_local);
-  if (Number.isNaN(startMs)) return null;
-  if (intervalsActivity.distance == null) return null;
+  const ref = intervalsMatchSubject(intervalsActivity);
+  if (Number.isNaN(ref.startMs)) return null;
 
-  const minTime = new Date(startMs - TIME_TOLERANCE_MS);
-  const maxTime = new Date(startMs + TIME_TOLERANCE_MS);
-  const { min: minDistance, max: maxDistance } = distanceBand(intervalsActivity.distance);
+  const minTime = new Date(ref.startMs - TIME_TOLERANCE_MS);
+  const maxTime = new Date(ref.startMs + TIME_TOLERANCE_MS);
 
   const candidates = await db
-    .select({ id: activities.id })
+    .select({
+      id: activities.id,
+      startDateLocal: activities.startDateLocal,
+      distance: activities.distance,
+      movingTime: activities.movingTime,
+      sportType: activities.sportType,
+    })
     .from(activities)
     .where(
       and(
@@ -102,13 +115,20 @@ async function findLocalByFuzzyMatch(
         isNull(activities.intervalsIcuId),
         gte(activities.startDateLocal, minTime),
         lte(activities.startDateLocal, maxTime),
-        gte(activities.distance, minDistance),
-        lte(activities.distance, maxDistance),
       ),
     );
 
-  if (candidates.length !== 1) return null;
-  return candidates[0];
+  const matches = candidates.filter((c) =>
+    withinMatchTolerance(ref, {
+      startMs: c.startDateLocal.getTime(),
+      distance: c.distance,
+      movingTime: c.movingTime,
+      sportType: c.sportType,
+    }),
+  );
+
+  if (matches.length !== 1) return null;
+  return { id: matches[0].id };
 }
 
 async function commitLink(
@@ -336,6 +356,8 @@ export async function linkFromLocalActivity(
       id: true,
       startDateLocal: true,
       distance: true,
+      movingTime: true,
+      sportType: true,
       intervalsIcuId: true,
       stravaActivityId: true,
     },
@@ -379,16 +401,15 @@ export async function linkFromLocalActivity(
     }
   }
 
-  const fuzzy = candidates.filter((candidate) => {
-    const candidateStart = parseIntervalsLocalStartMs(candidate.start_date_local);
-    if (Number.isNaN(candidateStart)) return false;
-    return withinMatchTolerance(
-      candidateStart,
-      candidate.distance,
-      localStartMs,
-      activity.distance,
-    );
-  });
+  const local: MatchSubject = {
+    startMs: localStartMs,
+    distance: activity.distance,
+    movingTime: activity.movingTime,
+    sportType: activity.sportType,
+  };
+  const fuzzy = candidates.filter((candidate) =>
+    withinMatchTolerance(intervalsMatchSubject(candidate), local),
+  );
   if (fuzzy.length !== 1) return null;
 
   let full: IIntervalsActivity;
@@ -480,10 +501,8 @@ export interface MasterSyncResult extends SyncIntervalsResult {
   processed: number;
 }
 
-type FuzzyLocal = {
+type FuzzyLocal = MatchSubject & {
   id: number;
-  startMs: number;
-  distance: number;
   stravaActivityId: number | null;
 };
 
@@ -496,12 +515,12 @@ function findUniqueInMemoryMatch(
     if (exact.length === 1) return exact[0];
   }
 
-  const startMs = parseIntervalsLocalStartMs(intervalsActivity.start_date_local);
-  if (Number.isNaN(startMs)) return null;
+  const ref = intervalsMatchSubject(intervalsActivity);
+  if (Number.isNaN(ref.startMs)) return null;
 
   let found: FuzzyLocal | null = null;
   for (const local of locals) {
-    if (withinMatchTolerance(startMs, intervalsActivity.distance, local.startMs, local.distance)) {
+    if (withinMatchTolerance(ref, local)) {
       if (found) return null;
       found = local;
     }
@@ -558,6 +577,8 @@ export async function syncAllFromIntervals(
         id: activities.id,
         startDateLocal: activities.startDateLocal,
         distance: activities.distance,
+        movingTime: activities.movingTime,
+        sportType: activities.sportType,
         intervalsIcuId: activities.intervalsIcuId,
         stravaActivityId: activities.stravaActivityId,
       })
@@ -574,6 +595,8 @@ export async function syncAllFromIntervals(
           id: row.id,
           startMs: row.startDateLocal.getTime(),
           distance: row.distance,
+          movingTime: row.movingTime,
+          sportType: row.sportType,
           stravaActivityId: row.stravaActivityId,
         });
       }

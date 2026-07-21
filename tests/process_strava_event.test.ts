@@ -12,7 +12,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { eq } from "drizzle-orm";
 import * as gearRepo from "../src/repositories/gear_repository";
 import { updateUserSettings } from "../src/repositories/user_settings_repository";
-import { activities, gears } from "../src/schema";
+import { activities, gears, users } from "../src/schema";
 import { progressService } from "../src/services/progress_service";
 import { stravaApiService } from "../src/services/strava_api_service";
 import { closePool, createTestUser, deleteTestUser, getDb } from "./helpers/db";
@@ -64,12 +64,23 @@ function createEvent(objectId: number, ownerId: number, aspect: "create" | "upda
   };
 }
 
+function athleteUpdateEvent(ownerId: number, updates: Record<string, string>) {
+  return {
+    object_type: "athlete" as const,
+    object_id: ownerId,
+    aspect_type: "update" as const,
+    owner_id: ownerId,
+    subscription_id: 999,
+    event_time: Math.floor(Date.now() / 1000),
+    updates,
+  };
+}
+
 async function createStravaUser(opts?: { lastSeenDaysAgo?: number; processHeartRate?: boolean }) {
   const user = await createTestUser({ role: "premium", processHeartRate: opts?.processHeartRate });
   const athleteId = nextAthleteId();
   const lastSeenAt =
     opts?.lastSeenDaysAgo != null ? new Date(Date.now() - opts.lastSeenDaysAgo * DAY_MS) : null;
-  const { users } = await import("../src/schema");
   await db
     .update(users)
     .set({ stravaId: String(athleteId), lastSeenAt })
@@ -596,6 +607,60 @@ describe("processStravaWebhook (real implementation)", () => {
         getActivityResult = stravaActivity(stravaActivityId, user.athleteId);
         await processStravaWebhook(createEvent(stravaActivityId, user.athleteId, "create"), context);
         expect(calls.count).toBe(0);
+      } finally {
+        await deleteTestUser(user.id);
+      }
+    });
+  });
+
+  // The athlete-update branch wipes every activity, zeroes gear counters and
+  // drops the token. Strava sends athlete-updates only for deauthorization
+  // today, but that is an undocumented assumption about a third party.
+  describe("athlete update (deauthorization)", () => {
+    async function seedForDeauth() {
+      const user = await createStravaUser();
+      await insertActivity(user.id, { sportType: "Run" });
+      return user;
+    }
+
+    it("deletes nothing when the payload is not a deauthorization", async () => {
+      const user = await seedForDeauth();
+      try {
+        await processStravaWebhook(athleteUpdateEvent(user.athleteId, { weight: "72.5" }), context);
+
+        expect(await activitiesFor(user.id)).toHaveLength(1);
+        const [row] = await db.select().from(users).where(eq(users.id, user.id));
+        expect(row.stravaId).toBe(String(user.athleteId));
+      } finally {
+        await deleteTestUser(user.id);
+      }
+    });
+
+    it("deletes nothing when `authorized` is present but true", async () => {
+      const user = await seedForDeauth();
+      try {
+        await processStravaWebhook(
+          athleteUpdateEvent(user.athleteId, { authorized: "true" }),
+          context,
+        );
+
+        expect(await activitiesFor(user.id)).toHaveLength(1);
+      } finally {
+        await deleteTestUser(user.id);
+      }
+    });
+
+    it("still wipes the account on the real deauthorization payload", async () => {
+      const user = await seedForDeauth();
+      try {
+        await processStravaWebhook(
+          athleteUpdateEvent(user.athleteId, { authorized: "false" }),
+          context,
+        );
+
+        expect(await activitiesFor(user.id)).toHaveLength(0);
+        const [row] = await db.select().from(users).where(eq(users.id, user.id));
+        expect(row.stravaId).toBeNull();
       } finally {
         await deleteTestUser(user.id);
       }
