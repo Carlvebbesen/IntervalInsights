@@ -156,7 +156,7 @@ function flatPaces(sets: ExpandedIntervalSet[]): (number | null)[] {
   return sets.flatMap((s) => s.steps.map((st) => st.target_pace));
 }
 
-// A unique clerk user per describe block keeps the structure-signature lookup
+// A unique user per describe block keeps the structure-signature lookup
 // (which filters by activities.userId) isolated even though signatures are
 // globally unique.
 async function freshUser() {

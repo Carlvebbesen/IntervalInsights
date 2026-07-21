@@ -1,7 +1,7 @@
 # Endpoint tests
 
 These tests exercise every `/api/*` route against a real Postgres instance.
-External services (Clerk, Strava REST, intervals.icu REST, OpenAI/LangGraph) are
+External services (Strava REST, intervals.icu REST, OpenAI/LangGraph) are
 mocked via `bun:test`'s `mock.module()` in `tests/setup.ts`, so the tests run
 offline and finish in well under a second.
 
@@ -27,26 +27,26 @@ TEST_DATABASE_URL=postgres://user:pass@localhost:5432/intervals_test bun test
   `intervals_link_service`, `pace_service`, `lap_derivation_service`,
   `requeue_service`, `process_strava_event`, `process_intervals_event`,
   `parse_intervals_agent`).
-- Mocks `@clerk/backend` and `@hono/clerk-auth` so no real auth network calls
-  are made. Provider tokens live in Postgres (`oauth_provider_tokens`) —
-  `createTestUser` seeds encrypted Strava + Intervals rows by default so the
-  real Strava/Intervals middlewares pass through (opt out with
-  `{ strava: false }` / `{ intervals: false }`).
 - Mocks `src/services/auth_email.ts` (OTP delivery) into an in-memory capture
-  (`otpCapture`) so the dual-auth guard tests (`better_auth_guard.test.ts`)
-  can complete a real Better Auth OTP sign-in.
+  (`otpCapture`) so the auth-guard tests (`better_auth_guard.test.ts`) can
+  complete a real Better Auth OTP sign-in.
+
+Provider tokens live in Postgres (`oauth_provider_tokens`) — `createTestUser`
+seeds encrypted Strava + Intervals rows by default so the real Strava/Intervals
+middlewares pass through (opt out with `{ strava: false }` / `{ intervals: false }`).
 
 ## Test architecture
 
 - `tests/helpers/test_app.ts` builds a fresh Hono app that mirrors
-  `src/index.ts` but replaces the dual-auth `authGuard` with a test guard
-  that reads identity from an `AsyncLocalStorage` populated by `withIdentity()`.
-  The real guard (Better Auth bearer + Clerk fallback) is exercised by the
-  focused `better_auth_guard.test.ts` suite.
+  `src/index.ts` but replaces `authGuard` with a test guard that reads identity
+  from an `AsyncLocalStorage` populated by `withIdentity()`. The real guard
+  (Better Auth bearer session) is exercised by the focused
+  `better_auth_guard.test.ts` suite.
 - `tests/helpers/db.ts` owns the Postgres pool, plus
-  `createTestUser` / `deleteTestUser` helpers that prefix Clerk IDs with
-  `test_clerk_` and clean up cascaded children explicitly (the FKs from
-  `users.id` are `ON DELETE NO ACTION`).
+  `createTestUser` / `deleteTestUser` helpers. Seeded users get a unique
+  `test-user-<uuid>@test.local` email (the column is `NOT NULL UNIQUE`, and the
+  prefix is what `purgeOrphanedTestUsers` matches on); cleanup walks cascaded
+  children explicitly (the FKs from `users.id` are `ON DELETE NO ACTION`).
 - `tests/helpers/fixtures.ts` has tiny factories for activities + events.
 
 ## File layout

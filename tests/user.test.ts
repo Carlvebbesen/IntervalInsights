@@ -29,7 +29,7 @@ describe("/api/user", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.id).toBe(user.id);
-      expect(body.clerkId).toBe(user.clerkId);
+      expect(body.email).toBe(user.email);
       expect(typeof body.currentPrivacyPolicyVersion).toBe("string");
       expect(typeof body.currentTermsOfServiceVersion).toBe("string");
     }));

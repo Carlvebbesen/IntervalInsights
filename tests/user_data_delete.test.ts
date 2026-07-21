@@ -132,7 +132,7 @@ afterAll(async () => {
 });
 
 describe("DELETE /api/v1/user/data", () => {
-  it("removes every row user A owns, clears Clerk metadata, and leaves user B untouched", () =>
+  it("removes every row user A owns and leaves user B untouched", () =>
     withIdentity(
       { userId: userA.id, role: "premium" },
       async () => {
