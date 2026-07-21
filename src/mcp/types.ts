@@ -5,9 +5,9 @@ import type { IGlobalBindings } from "../types/IRouters";
 export type TMcpEnv = {
   Bindings: IGlobalBindings;
   Variables: {
-    clerkUserId: string;
     userId: string;
     user: SelectUser;
+    scopes: string[];
     requestId: string;
     logger: Logger;
   };

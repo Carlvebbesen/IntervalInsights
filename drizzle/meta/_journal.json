@@ -267,6 +267,20 @@
       "when": 1784501635498,
       "tag": "0037_drop_events_description",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1784645288803,
+      "tag": "0038_oauth_provider_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1784645435194,
+      "tag": "0039_drop_clerk_id",
+      "breakpoints": true
     }
   ]
 }

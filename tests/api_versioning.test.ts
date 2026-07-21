@@ -8,7 +8,7 @@ import { buildTestApp, withIdentity } from "./helpers/test_app";
 
 const app = buildTestApp(getPool());
 
-let user: { id: string; clerkId: string };
+let user: { id: string; email: string };
 
 beforeAll(async () => {
   user = await createTestUser({ role: "premium" });
@@ -21,7 +21,6 @@ afterAll(async () => {
 
 const identity = () => ({
   userId: user.id,
-  clerkUserId: user.clerkId,
   role: "premium" as const,
 });
 

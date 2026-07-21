@@ -20,8 +20,8 @@ import { closePool, createTestUser, deleteTestUser, getDb } from "./helpers/db";
 
 const corpus = getDemoCorpus();
 
-let reviewUser: { id: string; clerkId: string };
-let normalUser: { id: string; clerkId: string };
+let reviewUser: { id: string; email: string };
+let normalUser: { id: string; email: string };
 
 async function seedDemoActivity(userId: string, demoKey: string): Promise<number> {
   const demo = corpus.activities.find((a) => a.demoKey === demoKey);

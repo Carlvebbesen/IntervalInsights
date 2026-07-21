@@ -40,7 +40,6 @@ export const UpdateUserSettingsSchema = z
 export const UserSchema = z
   .object({
     id: z.string(),
-    clerkId: z.string().nullable(),
     email: z.string().nullable(),
     name: z.string().nullable(),
     image: z.string().nullable(),

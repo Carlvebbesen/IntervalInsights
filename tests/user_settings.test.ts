@@ -11,7 +11,7 @@ afterAll(async () => {
   await closePool();
 });
 
-async function withFreshUser<T>(fn: (user: { id: string; clerkId: string }) => Promise<T>) {
+async function withFreshUser<T>(fn: (user: { id: string; email: string }) => Promise<T>) {
   const user = await createTestUser({ role: "premium" });
   try {
     return await fn(user);
@@ -23,7 +23,7 @@ async function withFreshUser<T>(fn: (user: { id: string; clerkId: string }) => P
 describe("/api/v1/user settings", () => {
   it("GET /api/v1/user materializes default settings for a user with no row yet", () =>
     withFreshUser((user) =>
-      withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+      withIdentity({ userId: user.id, role: "premium" }, async () => {
         const res = await app.fetch(new Request("http://test/api/v1/user"));
         expect(res.status).toBe(200);
         const body = await res.json();
@@ -46,7 +46,7 @@ describe("/api/v1/user settings", () => {
 
   it("PATCH /api/v1/user/settings changes only the sent fields and returns full settings", () =>
     withFreshUser((user) =>
-      withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+      withIdentity({ userId: user.id, role: "premium" }, async () => {
         const first = await app.fetch(
           new Request("http://test/api/v1/user/settings", {
             method: "PATCH",
@@ -85,7 +85,7 @@ describe("/api/v1/user settings", () => {
 
   it("PATCH /api/v1/user/settings persists paceProgression and rejects an invalid value", () =>
     withFreshUser((user) =>
-      withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+      withIdentity({ userId: user.id, role: "premium" }, async () => {
         const set = await app.fetch(
           new Request("http://test/api/v1/user/settings", {
             method: "PATCH",
@@ -112,7 +112,7 @@ describe("/api/v1/user settings", () => {
 
   it("PATCH /api/v1/user/settings rejects an empty body", () =>
     withFreshUser((user) =>
-      withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+      withIdentity({ userId: user.id, role: "premium" }, async () => {
         const res = await app.fetch(
           new Request("http://test/api/v1/user/settings", {
             method: "PATCH",
@@ -126,7 +126,7 @@ describe("/api/v1/user settings", () => {
 
   it("legacy PATCH /api/v1/user with maxHeartRate dual-writes the settings row", () =>
     withFreshUser((user) =>
-      withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+      withIdentity({ userId: user.id, role: "premium" }, async () => {
         const res = await app.fetch(
           new Request("http://test/api/v1/user", {
             method: "PATCH",
@@ -164,7 +164,7 @@ describe("/api/v1/user settings", () => {
   it("GET /api/v1/user seeds a fresh settings row from legacy users HR columns", async () => {
     const user = await createTestUser({ role: "premium", maxHeartRate: 185, processHeartRate: true });
     try {
-      await withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+      await withIdentity({ userId: user.id, role: "premium" }, async () => {
         const res = await app.fetch(new Request("http://test/api/v1/user"));
         expect(res.status).toBe(200);
         const body = await res.json();
@@ -180,7 +180,7 @@ describe("/api/v1/user settings", () => {
 
   it("PATCH /api/v1/user/settings roundtrips the threshold fields, then clears them", () =>
     withFreshUser((user) =>
-      withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+      withIdentity({ userId: user.id, role: "premium" }, async () => {
         const set = await app.fetch(
           new Request("http://test/api/v1/user/settings", {
             method: "PATCH",
@@ -228,7 +228,7 @@ describe("/api/v1/user settings", () => {
 
   it("PATCH /api/v1/user/settings rejects out-of-bounds threshold fields", () =>
     withFreshUser((user) =>
-      withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+      withIdentity({ userId: user.id, role: "premium" }, async () => {
         for (const bad of [
           { thresholdPaceMps: 20 },
           { thresholdPaceMps: -1 },
@@ -254,7 +254,7 @@ describe("/api/v1/user settings", () => {
   it("first-ever PATCH /api/v1/user/settings preserves legacy HR columns seeded into the new row", async () => {
     const user = await createTestUser({ role: "premium", maxHeartRate: 185, processHeartRate: true });
     try {
-      await withIdentity({ userId: user.id, clerkUserId: user.clerkId, role: "premium" }, async () => {
+      await withIdentity({ userId: user.id, role: "premium" }, async () => {
         const res = await app.fetch(
           new Request("http://test/api/v1/user/settings", {
             method: "PATCH",

@@ -19,8 +19,6 @@ import { wellnessStub } from "./helpers/wellness_stub";
 process.env.NODE_ENV = "test";
 
 const ENV_DEFAULTS: Record<string, string> = {
-  CLERK_SECRET_KEY: "sk_test_dummy",
-  CLERK_PUBLISHABLE_KEY: "pk_test_dummy",
   STRAVA_CLIENT_ID: "111111",
   STRAVA_CLIENT_SECRET: "strava_secret_dummy",
   STRAVA_WEBHOOK_VERIFY_TOKEN: "verify-dummy",

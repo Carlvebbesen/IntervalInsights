@@ -10,8 +10,6 @@ process.env.NODE_ENV = "test";
 
 // Required by routers at module-load time.
 const ENV_DEFAULTS: Record<string, string> = {
-  CLERK_SECRET_KEY: "sk_test_dummy",
-  CLERK_PUBLISHABLE_KEY: "pk_test_dummy",
   STRAVA_CLIENT_ID: "111111",
   STRAVA_CLIENT_SECRET: "strava_secret_dummy",
   STRAVA_WEBHOOK_VERIFY_TOKEN: "verify-dummy",
@@ -251,71 +249,6 @@ mock.module("../src/agent/chat_title.ts", () => ({
   generateConversationTitle: (question: string, answer: string) =>
     chatTitleMock.generateConversationTitle(question, answer),
 }));
-
-// Clerk: the real client makes HTTPS calls. Stub it. Provider OAuth tokens live
-// in Postgres (`oauth_provider_tokens`, seeded by tests/helpers/db.ts), so the
-// only remaining `getUser` consumer is the dual-auth guard's identity
-// enrichment, which reads verified email addresses + name.
-const defaultGetUser = async () => ({
-  primaryEmailAddress: {
-    emailAddress: "clerk-test-user@example.test",
-    verification: { status: "verified" },
-  },
-  emailAddresses: [
-    { emailAddress: "clerk-test-user@example.test", verification: { status: "verified" } },
-  ],
-  firstName: "Clerk",
-  lastName: "TestUser",
-});
-// Default: no OAuth token — MCP requests are unauthenticated until a test
-// swaps this to return a real-looking auth object.
-const defaultAuthenticateRequest = async () => ({ toAuth: () => null });
-
-// Mutable delegate: a test file may swap these (e.g. to return an expired
-// token) and MUST call reset() when done — the mock is global across files.
-export const clerkUsersMock = {
-  getUser: defaultGetUser as (userId?: string) => Promise<unknown>,
-  authenticateRequest: defaultAuthenticateRequest as (
-    request?: Request,
-    options?: unknown,
-  ) => Promise<{ toAuth: () => unknown }>,
-  reset() {
-    this.getUser = defaultGetUser;
-    this.authenticateRequest = defaultAuthenticateRequest;
-  },
-};
-
-mock.module("@clerk/backend", () => ({
-  createClerkClient: () => ({
-    users: {
-      getUser: (userId?: string) => clerkUsersMock.getUser(userId),
-    },
-    authenticateRequest: (request?: Request, options?: unknown) =>
-      clerkUsersMock.authenticateRequest(request, options),
-  }),
-}));
-
-// Clerk Hono helpers: we never want the real JWT check in tests. The test app
-// (tests/helpers/test_app.ts) replaces auth entirely; these stubs keep imports
-// happy for code that still references them. `getAuth` is a mutable delegate so
-// the dual-auth guard tests (tests/better_auth_guard.test.ts) can turn the
-// Clerk fallback off/on per test — call reset() when done (global across files).
-export const clerkAuthMock = {
-  getAuth: (() => ({ userId: "clerk_test_user" })) as () => { userId: string } | null,
-  reset() {
-    this.getAuth = () => ({ userId: "clerk_test_user" });
-  },
-};
-
-mock.module("@hono/clerk-auth", () => {
-  const noopMiddleware = async (_c: unknown, next: () => Promise<void>) => {
-    await next();
-  };
-  return {
-    clerkMiddleware: () => noopMiddleware,
-    getAuth: () => clerkAuthMock.getAuth(),
-  };
-});
 
 // Better Auth OTP delivery: capture instead of sending (Resend would 401 with
 // the dummy key anyway). The dual-auth guard tests read the captured code to

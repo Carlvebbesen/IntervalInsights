@@ -8,10 +8,14 @@ import { activities, events, users } from "../../src/schema";
 import * as schema from "../../src/schema";
 import { writeProviderToken } from "../../src/services/oauth_token_store";
 
-// Mirrors the far-future tokens the old Clerk `getUser` mock returned, now seeded
-// (encrypted) into `oauth_provider_tokens` so the real strava/intervals
-// middlewares resolve for every test user by default.
+// Far-future provider tokens, seeded (encrypted) into `oauth_provider_tokens`
+// so the real strava/intervals middlewares resolve for every test user by default.
 const TOKEN_FAR_FUTURE = Math.floor(Date.now() / 1000) + 86_400;
+
+// `users.email` is NOT NULL + UNIQUE, so every seeded user needs its own address.
+// The prefix is also what purgeOrphanedTestUsers() matches on.
+const TEST_EMAIL_PREFIX = "test-user-";
+const TEST_EMAIL_DOMAIN = "@test.local";
 
 const DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
@@ -53,11 +57,11 @@ export async function createTestUser(opts?: {
   intervals?: boolean;
 }) {
   const db = getDb();
-  const clerkId = `test_clerk_${randomUUID()}`;
+  const email = `${TEST_EMAIL_PREFIX}${randomUUID()}${TEST_EMAIL_DOMAIN}`;
   const [user] = await db
     .insert(users)
     .values({
-      clerkId,
+      email,
       role: opts?.role ?? "premium",
       processHeartRate: opts?.processHeartRate ?? false,
       maxHeartRate: opts?.maxHeartRate,
@@ -80,7 +84,7 @@ export async function createTestUser(opts?: {
       athlete_id: "i12345",
     });
   }
-  return { id: user.id, clerkId };
+  return { id: user.id, email };
 }
 
 /**
@@ -107,11 +111,12 @@ export async function deleteTestUser(userId: string) {
   await pool.query(`DELETE FROM users WHERE id = $1`, [userId]);
 }
 
-/** Bulk-cleanup helper: nuke every test_clerk_ user the suite may have left behind. */
+/** Bulk-cleanup helper: nuke every seeded test user the suite may have left behind. */
 export async function purgeOrphanedTestUsers() {
   const pool = getPool();
   const { rows } = await pool.query<{ id: string }>(
-    `SELECT id FROM users WHERE clerk_id LIKE 'test_clerk_%'`,
+    `SELECT id FROM users WHERE email LIKE $1`,
+    [`${TEST_EMAIL_PREFIX}%${TEST_EMAIL_DOMAIN}`],
   );
   for (const row of rows) {
     await deleteTestUser(row.id);

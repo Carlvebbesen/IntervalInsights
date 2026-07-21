@@ -30,9 +30,9 @@ import { checkpointerMock } from "./setup";
 const app = buildTestApp(getPool());
 const db = getDb();
 
-let userA: { id: string; clerkId: string };
-let userB: { id: string; clerkId: string };
-let userC: { id: string; clerkId: string };
+let userA: { id: string; email: string };
+let userB: { id: string; email: string };
+let userC: { id: string; email: string };
 const conversationIds: Record<string, string> = {};
 
 const fetchCalls: string[] = [];
@@ -134,7 +134,7 @@ afterAll(async () => {
 describe("DELETE /api/v1/user/data", () => {
   it("removes every row user A owns, clears Clerk metadata, and leaves user B untouched", () =>
     withIdentity(
-      { userId: userA.id, clerkUserId: userA.clerkId, role: "premium" },
+      { userId: userA.id, role: "premium" },
       async () => {
         const before = await countOwnedRows(userA.id);
         expect(before).toEqual({
@@ -215,7 +215,7 @@ describe("DELETE /api/v1/user/data", () => {
 
   it("tolerates a throwing coach-thread delete without aborting the account deletion", () =>
     withIdentity(
-      { userId: userC.id, clerkUserId: userC.clerkId, role: "premium" },
+      { userId: userC.id, role: "premium" },
       async () => {
         checkpointerMock.deleteCoachThread = async () => {
           throw new Error("checkpointer unavailable");

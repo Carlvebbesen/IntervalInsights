@@ -6,7 +6,7 @@ import { buildTestApp, withIdentity } from "./helpers/test_app";
 
 const app = buildTestApp(getPool());
 
-let user: { id: string; clerkId: string };
+let user: { id: string; email: string };
 let originalFetch: typeof globalThis.fetch;
 
 beforeAll(async () => {
@@ -22,14 +22,12 @@ afterAll(async () => {
 
 const identity = () => ({
   userId: user.id,
-  clerkUserId: user.clerkId,
   role: "premium" as const,
 });
 
 // Webhook subscription management is admin-only (it manages the app-wide push sub).
 const adminIdentity = () => ({
   userId: user.id,
-  clerkUserId: user.clerkId,
   role: "admin" as const,
 });
 

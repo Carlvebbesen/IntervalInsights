@@ -3,8 +3,6 @@ import { z } from "zod";
 const envSchema = z
   .object({
     DATABASE_URL: z.string().min(1),
-    CLERK_SECRET_KEY: z.string().min(1),
-    CLERK_PUBLISHABLE_KEY: z.string().min(1),
     OPENAI_API_KEY: z.string().min(1),
     PLAN_BUILDER_MODEL: z.string().min(1).optional(),
     PLAN_BUILDER_REASONING_EFFORT: z.enum(["minimal", "low", "medium", "high"]).optional(),
@@ -32,10 +30,6 @@ const envSchema = z
     PROGRESS_HEARTBEAT_MS: z.coerce.number().default(25000),
     SSE_HEARTBEAT_MS: z.coerce.number().default(15000),
     BRAIN_DIR: z.string().optional(),
-    MCP_ENFORCE_AUDIENCE: z
-      .string()
-      .optional()
-      .transform((v) => v === "true"),
 
     STRAVA_CLIENT_ID: z.string().min(1),
     STRAVA_CLIENT_SECRET: z.string().min(1),

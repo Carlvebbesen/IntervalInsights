@@ -70,7 +70,7 @@ describe("GET /fitness (computed series)", () => {
       await seedLoad(user.id, { day: "2026-05-01", trainingLoad: 80 });
       await seedLoad(user.id, { day: "2026-05-05", trainingLoad: 100 });
       await withIdentity(
-        { userId: user.id, clerkUserId: user.clerkId, role: "premium" },
+        { userId: user.id, role: "premium" },
         async () => {
           const res = await app.fetch(
             new Request("http://test/api/v1/dashboard/fitness?oldest=2026-05-01&newest=2026-05-10"),
@@ -112,7 +112,7 @@ describe("GET /fitness (computed series)", () => {
         },
       }));
       await withIdentity(
-        { userId: user.id, clerkUserId: user.clerkId, role: "premium" },
+        { userId: user.id, role: "premium" },
         async () => {
           const res = await app.fetch(
             new Request("http://test/api/v1/dashboard/fitness?oldest=2026-05-01&newest=2026-05-10"),
@@ -141,7 +141,7 @@ describe("GET /fitness (computed series)", () => {
       await seedLoad(user.id, { day: "2026-05-02", sport: "Run", trainingLoad: 50 });
       await seedLoad(user.id, { day: "2026-05-02", sport: "Ride", trainingLoad: 90 });
       await withIdentity(
-        { userId: user.id, clerkUserId: user.clerkId, role: "premium" },
+        { userId: user.id, role: "premium" },
         async () => {
           const combined = await (
             await app.fetch(
@@ -184,7 +184,7 @@ describe("GET /fitness/day/:date (computed)", () => {
     try {
       await seedLoad(user.id, { day: "2026-05-03", trainingLoad: 70 });
       await withIdentity(
-        { userId: user.id, clerkUserId: user.clerkId, role: "premium" },
+        { userId: user.id, role: "premium" },
         async () => {
           const res = await app.fetch(
             new Request("http://test/api/v1/dashboard/fitness/day/2026-05-03"),

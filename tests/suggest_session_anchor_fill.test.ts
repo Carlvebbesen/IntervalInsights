@@ -7,7 +7,7 @@ import { suggestSessionAgentMock } from "./setup";
 
 const app = buildTestApp(getPool());
 
-let anchoredUser: { id: string; clerkId: string };
+let anchoredUser: { id: string; email: string };
 
 const structure: WorkoutStructureSet[] = [
   {
@@ -60,7 +60,6 @@ beforeEach(() => suggestSessionAgentMock.reset());
 
 const identity = () => ({
   userId: anchoredUser.id,
-  clerkUserId: anchoredUser.clerkId,
   role: "premium" as const,
 });
 

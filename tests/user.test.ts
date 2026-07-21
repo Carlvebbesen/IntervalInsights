@@ -6,7 +6,7 @@ import { buildTestApp, type TestIdentity, withIdentity } from "./helpers/test_ap
 
 const app = buildTestApp(getPool());
 
-let user: { id: string; clerkId: string };
+let user: { id: string; email: string };
 
 beforeAll(async () => {
   user = await createTestUser({ role: "premium" });
@@ -19,7 +19,6 @@ afterAll(async () => {
 
 const identity = () => ({
   userId: user.id,
-  clerkUserId: user.clerkId,
   role: "premium" as const,
 });
 
@@ -95,8 +94,8 @@ describe("/api/admin — role management", () => {
     return row?.role;
   };
 
-  const patchRole = (actor: { id: string; clerkId: string }, actorRole: TestIdentity["role"], targetId: string, body: unknown) =>
-    withIdentity({ userId: actor.id, clerkUserId: actor.clerkId, role: actorRole }, () =>
+  const patchRole = (actor: { id: string; email: string }, actorRole: TestIdentity["role"], targetId: string, body: unknown) =>
+    withIdentity({ userId: actor.id, role: actorRole }, () =>
       app.fetch(
         new Request(`http://test/api/v1/admin/users/${targetId}/role`, {
           method: "PATCH",

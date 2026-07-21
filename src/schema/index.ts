@@ -7,6 +7,7 @@ export * from "./gears";
 export * from "./interval_segments";
 export * from "./interval_structure";
 export * from "./oauth_provider_tokens";
+export * from "./oauth_server";
 export * from "./script_runs";
 export * from "./training_plans";
 export * from "./user_settings";

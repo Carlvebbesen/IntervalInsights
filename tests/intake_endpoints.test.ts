@@ -14,17 +14,16 @@ import { buildTestApp, withIdentity } from "./helpers/test_app";
 
 const app = buildTestApp(getPool());
 
-let premium: { id: string; clerkId: string };
-let other: { id: string; clerkId: string };
-let guest: { id: string; clerkId: string };
+let premium: { id: string; email: string };
+let other: { id: string; email: string };
+let guest: { id: string; email: string };
 
 const asPremium = () => ({
   userId: premium.id,
-  clerkUserId: premium.clerkId,
   role: "premium" as const,
 });
-const asOther = () => ({ userId: other.id, clerkUserId: other.clerkId, role: "premium" as const });
-const asGuest = () => ({ userId: guest.id, clerkUserId: guest.clerkId, role: "guest" as const });
+const asOther = () => ({ userId: other.id, role: "premium" as const });
+const asGuest = () => ({ userId: guest.id, role: "guest" as const });
 
 let callId = 0;
 const aiToolCall = (name: string, args: Record<string, unknown>) =>

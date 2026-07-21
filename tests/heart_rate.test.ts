@@ -8,8 +8,8 @@ import { buildTestApp, withIdentity } from "./helpers/test_app";
 
 const app = buildTestApp(getPool());
 
-let user: { id: string; clerkId: string };
-let noConsentUser: { id: string; clerkId: string };
+let user: { id: string; email: string };
+let noConsentUser: { id: string; email: string };
 let structureId: number;
 let intervalActivityId: number;
 let oldActivityId: number;
@@ -95,9 +95,8 @@ afterAll(async () => {
   await closePool();
 });
 
-const identity = (u: { id: string; clerkId: string }) => ({
+const identity = (u: { id: string; email: string }) => ({
   userId: u.id,
-  clerkUserId: u.clerkId,
   role: "premium" as const,
 });
 

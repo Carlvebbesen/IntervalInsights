@@ -16,7 +16,7 @@
 //
 // This preload keeps only what's needed to import the real dep graph without
 // real I/O: env-var defaults (config.ts validates them at import time) and leaf
-// network mocks (Clerk/Strava/intervals). The history tests seed interval
+// network mocks (Strava/intervals). The history tests seed interval
 // segments in a real disposable Postgres, so getSegmentsForActivity hits its
 // stored-rows fast path and never calls those leaves anyway; the mocks are
 // cheap insurance for the import graph.
@@ -26,8 +26,6 @@ import { mock } from "bun:test";
 process.env.NODE_ENV = "test";
 
 const ENV_DEFAULTS: Record<string, string> = {
-  CLERK_SECRET_KEY: "sk_test_dummy",
-  CLERK_PUBLISHABLE_KEY: "pk_test_dummy",
   STRAVA_CLIENT_ID: "111111",
   STRAVA_CLIENT_SECRET: "strava_secret_dummy",
   STRAVA_WEBHOOK_VERIFY_TOKEN: "verify-dummy",
@@ -70,28 +68,3 @@ mock.module("../src/services/intervals_api_service.ts", () => ({
   },
 }));
 
-const FAR_FUTURE = Math.floor(Date.now() / 1000) + 86_400;
-mock.module("@clerk/backend", () => ({
-  createClerkClient: () => ({
-    users: {
-      getUser: async () => ({
-        privateMetadata: {
-          strava: {
-            access_token: "test-strava-token",
-            refresh_token: "test-strava-refresh",
-            expires_at: FAR_FUTURE,
-            athlete_id: 12345,
-          },
-          intervals: {
-            access_token: "test-intervals-token",
-            refresh_token: "test-intervals-refresh",
-            expires_at: FAR_FUTURE,
-            athlete_id: "i12345",
-          },
-        },
-        publicMetadata: {},
-      }),
-      updateUserMetadata: async () => ({}),
-    },
-  }),
-}));

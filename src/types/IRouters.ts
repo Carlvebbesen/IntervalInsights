@@ -7,7 +7,6 @@ export interface IGlobalBindings {
 }
 
 export interface IGlobalVariables {
-  clerkUserId: string | null;
   userId: string;
   role: "guest" | "premium" | "admin";
   user: SelectUser;

@@ -18,10 +18,10 @@ import { suggestSessionAgentMock } from "./setup";
 
 const app = buildTestApp(getPool());
 
-let planUser: { id: string; clerkId: string };
-let plainUser: { id: string; clerkId: string };
+let planUser: { id: string; email: string };
+let plainUser: { id: string; email: string };
 // Same active plan as planUser, but the role was downgraded (lapsed subscription).
-let downgradedUser: { id: string; clerkId: string };
+let downgradedUser: { id: string; email: string };
 
 const structure: WorkoutStructureSet[] = [
   {
@@ -72,18 +72,15 @@ beforeEach(() => suggestSessionAgentMock.reset());
 
 const planIdentity = () => ({
   userId: planUser.id,
-  clerkUserId: planUser.clerkId,
   role: "premium" as const,
 });
 const plainIdentity = () => ({
   userId: plainUser.id,
-  clerkUserId: plainUser.clerkId,
   role: "premium" as const,
 });
 
 const downgradedIdentity = () => ({
   userId: downgradedUser.id,
-  clerkUserId: downgradedUser.clerkId,
   role: "guest" as const,
 });
 
@@ -229,12 +226,11 @@ describe("POST /api/v1/agents/suggest-session — plan mode (D8)", () => {
 // The due planned session here is an UNSTRUCTURED easy run — the case that used
 // to hijack an explicit structureId request into the plan path and 422.
 describe("POST /api/v1/agents/suggest-session — unstructured due session routing", () => {
-  let owner: { id: string; clerkId: string };
+  let owner: { id: string; email: string };
   let structureId: number;
 
   const ownerIdentity = () => ({
     userId: owner.id,
-    clerkUserId: owner.clerkId,
     role: "premium" as const,
   });
 

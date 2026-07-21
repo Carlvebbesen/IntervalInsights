@@ -47,8 +47,8 @@ const stravaStreamSet = {
   heartrate: { data: [100, 110] },
 };
 
-let consentUser: { id: string; clerkId: string };
-let noConsentUser: { id: string; clerkId: string };
+let consentUser: { id: string; email: string };
+let noConsentUser: { id: string; email: string };
 const activityIds: number[] = [];
 
 async function seedActivity(

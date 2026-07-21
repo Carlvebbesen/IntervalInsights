@@ -109,8 +109,8 @@ describe("EditorStateResponseSchema", () => {
 describe("POST /api/v1/activity/:id/editor-state (endpoint)", () => {
   const app = buildTestApp(getPool());
 
-  let user: { id: string; clerkId: string };
-  let otherUser: { id: string; clerkId: string };
+  let user: { id: string; email: string };
+  let otherUser: { id: string; email: string };
   let activityId: number;
   let foreignActivityId: number;
 
@@ -147,7 +147,6 @@ describe("POST /api/v1/activity/:id/editor-state (endpoint)", () => {
 
   const identity = () => ({
     userId: user.id,
-    clerkUserId: user.clerkId,
     role: "premium" as const,
   });
 

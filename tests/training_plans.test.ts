@@ -5,8 +5,8 @@ import { buildTestApp, withIdentity } from "./helpers/test_app";
 
 const app = buildTestApp(getPool());
 
-let userA: { id: string; clerkId: string };
-let userB: { id: string; clerkId: string };
+let userA: { id: string; email: string };
+let userB: { id: string; email: string };
 
 beforeAll(async () => {
   userA = await createTestUser({ role: "premium" });
@@ -19,8 +19,8 @@ afterAll(async () => {
   await closePool();
 });
 
-const identityA = () => ({ userId: userA.id, clerkUserId: userA.clerkId, role: "premium" as const });
-const identityB = () => ({ userId: userB.id, clerkUserId: userB.clerkId, role: "premium" as const });
+const identityA = () => ({ userId: userA.id, role: "premium" as const });
+const identityB = () => ({ userId: userB.id, role: "premium" as const });
 
 const workoutStructure = [
   {
@@ -41,7 +41,6 @@ const workoutStructure = [
 
 async function createPlanWithChildren(identity: {
   userId: string;
-  clerkUserId: string;
   role: "premium";
 }) {
   return withIdentity(identity, async () => {
