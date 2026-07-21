@@ -10,7 +10,7 @@ import {
   PARSE_INTERVALS_QUOTA,
 } from "../middlewares/quota_middleware";
 import { softStravaMiddleware, stravaMiddleware } from "../middlewares/strava_middleware";
-import { trainingTypeEnum } from "../schema/enums";
+import { analysisStatusEnum, trainingTypeEnum } from "../schema/enums";
 import {
   EditedSegmentSchema,
   ErrorSchema,
@@ -58,8 +58,18 @@ agentsRouter.post(
     description: "Start the LangGraph analysis pipeline for an activity",
     responses: {
       200: {
-        description: "Analysis started",
-        content: { "application/json": { schema: resolver(z.object({ success: z.boolean() })) } },
+        description:
+          "Analysis started. `analysisStatus` is the activity's status after the claim attempt — `ongoing_init` when this call started a run, otherwise the status that blocked it (a run already in flight, or an already-finished activity).",
+        content: {
+          "application/json": {
+            schema: resolver(
+              z.object({
+                success: z.boolean(),
+                analysisStatus: z.enum(analysisStatusEnum.enumValues),
+              }),
+            ),
+          },
+        },
       },
       400: {
         description: "Bad request",

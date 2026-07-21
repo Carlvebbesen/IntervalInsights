@@ -75,6 +75,16 @@ function classify(title: string): WorkoutAnalysisOutput {
   if (title.startsWith("structureless")) {
     return { ...base, training_type: "LONG_INTERVALS", structure: [] } as WorkoutAnalysisOutput;
   }
+  // The cross-training shape: real structure, but classified as a type that
+  // needs no per-segment breakdown (an elliptical interval session drafts as
+  // RECOVERY far more often than as LONG_INTERVALS).
+  if (title.startsWith("structured recovery")) {
+    return {
+      ...base,
+      training_type: "RECOVERY",
+      structure: intervalStructure(6),
+    } as WorkoutAnalysisOutput;
+  }
   // "10x1000m …" interval titles → a real 10-rep LONG_INTERVALS draft.
   return {
     ...base,
@@ -280,6 +290,32 @@ describe("auto-resume (review-mode bypass) — end-to-end on the real graph", ()
       .from(intervalSegments)
       .where(eq(intervalSegments.activityId, id));
     expect(segs).toHaveLength(0);
+
+    await resetAnalysisThread(id);
+  });
+
+  it("intervals_only: a structured RECOVERY draft stays paused at initial", async () => {
+    await setMode("intervals_only");
+    const { id, strava } = await seedActivity("structured recovery on the wheel");
+    await driveToInitial(id, strava);
+    expect(await statusOf(id)).toBe("initial");
+
+    await runHook(id);
+
+    expect(await statusOf(id)).toBe("initial");
+
+    await resetAnalysisThread(id);
+  });
+
+  it("none: a structured RECOVERY draft still auto-completes", async () => {
+    await setMode("none");
+    const { id, strava } = await seedActivity("structured recovery, mode none");
+    await driveToInitial(id, strava);
+    expect(await statusOf(id)).toBe("initial");
+
+    await runHook(id);
+
+    expect(await statusOf(id)).toBe("completed");
 
     await resetAnalysisThread(id);
   });

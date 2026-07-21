@@ -11,10 +11,11 @@ import type { AnalysisStatus, TrainingType } from "../schema";
 import type { PendingActivitySchema } from "../schemas/api_schemas";
 import {
   autoCompleteAnalysis,
+  claimForAnalysis,
   NoPendingInterruptError,
   ResumeValidationError,
   resumeAnalysis,
-  startAnalysis,
+  runClaimedAnalysis,
 } from "../services/analysis_service";
 import { createGearSuggester } from "../services/gear_suggestion_service";
 import { formatStructureSummary } from "../services/interval_structure_service";
@@ -61,24 +62,34 @@ export async function getPending(
   );
 }
 
+/**
+ * Claims the activity synchronously, then runs the graph in the background. The
+ * claim decision is awaited so the response can carry the activity's real
+ * status: a declined claim (another run owns it, or it is already done) emits no
+ * progress event at all, so a client that optimistically assumed `ongoing_init`
+ * would be stuck showing a phantom in-flight row until some unrelated refetch.
+ */
 export async function startActivityAnalysis(
   db: Db,
   accessToken: string | undefined,
   activityId: number,
   userId: string,
   force = false,
-): Promise<{ success: true }> {
+): Promise<{ success: true; analysisStatus: AnalysisStatus }> {
   if (!accessToken) {
     throw new AppError(400, "Access token missing");
   }
   const owned = await activityRepo.requireOwnedActivity(db, userId, activityId);
+  if (!(await claimForAnalysis(db, activityId, force))) {
+    return { success: true, analysisStatus: owned.analysisStatus ?? "pending" };
+  }
   recordAnalysisRun({ phase: "start", trigger: force ? "reanalyze" : "manual" });
   runInBackground(
     "analysis.start",
-    () => startAnalysis(db, accessToken, activityId, owned.stravaActivityId, userId, force),
+    () => runClaimedAnalysis(db, accessToken, activityId, owned.stravaActivityId, userId),
     { attributes: { "activity.id": activityId, "user.id": userId } },
   );
-  return { success: true };
+  return { success: true, analysisStatus: "ongoing_init" };
 }
 
 export interface ResumeAnalysisInput {
