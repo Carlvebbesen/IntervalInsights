@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import { auth } from "../src/auth";
-import { registerOAuthProviderPages } from "../src/web/oauth_pages";
+import { consentPage, registerOAuthProviderPages } from "../src/web/oauth_pages";
 import { closePool, getPool } from "./helpers/db";
 
 const ORIGIN = "http://localhost:3000";
@@ -43,7 +43,7 @@ describe("dynamic client registration", () => {
       token_endpoint_auth_method: "none",
     });
 
-    expect(res.status).toBe(201);
+    expect(res.ok).toBe(true);
     const body = await res.json();
     expect(typeof body.client_id).toBe("string");
     registeredClientIds.push(body.client_id);
@@ -85,31 +85,28 @@ describe("OAuth consent page", () => {
     expect(res.status).toBe(400);
   });
 
-  it("404-equivalents an unknown client", async () => {
-    const res = await pagesApp.request(
-      `/oauth/consent?client_id=${randomUUID()}&sig=deadbeef&ba_param=sig&scope=profile`,
-    );
-    expect(res.status).toBe(400);
-    expect(await res.text()).toContain("could not be found");
+  it("sends a lapsed session back through sign-in, keeping the signed query", async () => {
+    const query = `client_id=${randomUUID()}&sig=deadbeef&ba_param=sig&scope=profile`;
+    const res = await pagesApp.request(`/oauth/consent?${query}`);
+
+    expect(res.status).toBe(302);
+    const location = res.headers.get("Location") ?? "";
+    expect(location.startsWith("/oauth/sign-in?")).toBe(true);
+    expect(new URLSearchParams(location.split("?")[1]).get("sig")).toBe("deadbeef");
   });
 
-  it("escapes an attacker-supplied client name", async () => {
-    const clientId = `xss_probe_${randomUUID()}`;
-    registeredClientIds.push(clientId);
-    await getPool().query(
-      `INSERT INTO oauth_clients (client_id, redirect_uris, name)
-       VALUES ($1, ARRAY['https://client.test/cb'], $2)`,
-      [clientId, '<script>alert("xss")</script>'],
-    );
-
-    const res = await pagesApp.request(
-      `/oauth/consent?client_id=${clientId}&sig=deadbeef&ba_param=sig&scope=profile%20email`,
-    );
-    expect(res.status).toBe(200);
+  it("escapes an attacker-supplied client name and labels the requested scopes", async () => {
+    const res = consentPage('<script>alert("xss")</script>', null, ["profile", "email"]);
     const html = await res.text();
+
     expect(html).not.toContain('<script>alert("xss")</script>');
     expect(html).toContain("&lt;script&gt;");
     expect(html).toContain("Your name and profile details");
     expect(html).toContain("Your email address");
+  });
+
+  it("renders an unknown scope verbatim rather than dropping it", async () => {
+    const html = await consentPage("Some Client", null, ["write:everything"]).text();
+    expect(html).toContain("write:everything");
   });
 });

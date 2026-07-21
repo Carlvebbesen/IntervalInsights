@@ -77,9 +77,10 @@ async function seedOpaqueToken(opts: {
 }
 
 async function signAccessToken(payload: Record<string, unknown>): Promise<string> {
-  return (await auth.api.signJWT({
+  const { token } = await auth.api.signJWT({
     body: { payload: { iss: AUTH_ISSUER, aud: MCP_RESOURCE_URL, ...payload } },
-  })) as unknown as string;
+  });
+  return token;
 }
 
 const post = (token?: string) =>
