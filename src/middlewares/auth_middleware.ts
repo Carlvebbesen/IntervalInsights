@@ -116,7 +116,7 @@ export const authGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
     }
     if (!dbUser) {
       c.var.logger.warn(
-        { clerkUserId: clerkAuth.userId, email },
+        { clerkUserId: clerkAuth.userId },
         "Email already owned by another user — creating row without email",
       );
       const [emailless] = await c.env.db

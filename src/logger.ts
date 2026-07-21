@@ -35,10 +35,14 @@ const destination = {
   },
 };
 
+const PII_KEYS = ["email", "title", "description", "notes", "userNotes"];
+const REDACT_PATHS = PII_KEYS.flatMap((key) => [key, `*.${key}`, `*.*.${key}`]);
+
 export const logger = pino(
   {
     level: process.env.LOG_LEVEL ?? (process.env.NODE_ENV === "production" ? "info" : "debug"),
     base: { service: SERVICE_NAME },
+    redact: { paths: REDACT_PATHS, remove: true },
     formatters: {
       level: (label) => ({ level: label }),
     },
