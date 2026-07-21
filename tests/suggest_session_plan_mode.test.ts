@@ -159,6 +159,24 @@ describe("POST /api/v1/agents/suggest-session — plan mode (D8)", () => {
     expect(suggestSessionAgentMock.calls).toBeGreaterThan(0);
   });
 
+  // An inline structure is as signature-shaped as a structureId — auto must not
+  // hijack it onto the due planned session.
+  it("an inline structure with no mode stays on the signature path when a plan session is due", async () => {
+    const res = await withIdentity(planIdentity(), () => post({ structure }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.mode).toBe("signature");
+    expect(body.plannedSessionId ?? null).toBe(null);
+  });
+
+  // Pre-rename wire value from installed app builds; the backend may deploy first.
+  it("accepts legacy mode 'recommended' as 'ai'", async () => {
+    const res = await withIdentity(planIdentity(), () => post({ mode: "recommended", structure }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.mode).toBe("ai");
+  });
+
   it("explicit plan mode with nothing due 404s", async () => {
     const res = await withIdentity(plainIdentity(), () => post({ mode: "plan" }));
     expect(res.status).toBe(404);

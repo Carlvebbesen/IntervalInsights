@@ -295,14 +295,14 @@ async function resolveRequestMode(
   requested: RequestMode | undefined,
   date: string,
   role: SuggestSessionRole,
-  hasExplicitStructureId: boolean,
+  hasExplicitStructure: boolean,
 ): Promise<ResolvedRequestMode> {
   if (requested === "signature" || requested === "ai") return { mode: requested, due: null };
 
-  // An explicit structureId is a signature-shaped request: only an explicit
-  // mode "plan" may override it. Auto used to hijack it onto a due planned
-  // session — and 422 when that session happened to be an unstructured easy run.
-  if (requested == null && hasExplicitStructureId) return { mode: "signature", due: null };
+  // An explicit structureId or inline structure is a signature-shaped request:
+  // only an explicit mode "plan" may override it. Auto used to hijack it onto a
+  // due planned session — and 422 when that session was an unstructured easy run.
+  if (requested == null && hasExplicitStructure) return { mode: "signature", due: null };
 
   // This endpoint is deliberately free for all users, but training plans are a
   // premium feature in whole — so the plan-reading branch (which returns planId,
@@ -407,7 +407,7 @@ export async function suggestSession(
     input.mode,
     date,
     role,
-    input.structureId != null,
+    input.structureId != null || (input.structure?.length ?? 0) > 0,
   );
   const log = logger.child({
     route: "suggest-session",
