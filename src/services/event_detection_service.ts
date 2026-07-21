@@ -48,7 +48,7 @@ export type EventDetectionInput = {
   title: string;
   description: string;
   notes: string;
-  activityStartDateLocal: Date | null;
+  activityStartDateLocal: Date | string | null;
 };
 
 export async function detectAndPersistEvents(
