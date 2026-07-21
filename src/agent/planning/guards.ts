@@ -2,6 +2,13 @@ import { AppError } from "../../error";
 import type { TrainingType } from "../../schema/enums";
 import { INTERVAL_TRAINING_TYPES, type PlanWeekPhase, trainingBucketFor } from "../../schema/enums";
 import type { WorkoutStructureSet } from "../../schemas/agent_schemas";
+import {
+  addDaysISO,
+  daysBetweenISO,
+  mondayOfISO,
+  parseISODateUTC,
+  toISODate,
+} from "../../services/utils";
 import type {
   GeneratedSession,
   PlanMacro,
@@ -20,39 +27,12 @@ export const EASY_PACE_MPS = 5000 / 1800;
 
 const MAX_SESSIONS_PER_WEEK = 7;
 
-function parseUTC(d: string): Date {
-  const [y, m, day] = d.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, day));
-}
-
-function fmt(dt: Date): string {
-  return dt.toISOString().split("T")[0];
-}
-
-function addDays(dateStr: string, days: number): string {
-  const d = parseUTC(dateStr);
-  d.setUTCDate(d.getUTCDate() + days);
-  return fmt(d);
-}
-
-function daysBetween(a: string, b: string): number {
-  return Math.abs((parseUTC(b).getTime() - parseUTC(a).getTime()) / 86_400_000);
-}
-
-function mondayOf(d: Date): Date {
-  const diff = (d.getUTCDay() + 6) % 7; // 0 = Monday
-  const r = new Date(d);
-  r.setUTCDate(r.getUTCDate() - diff);
-  return r;
-}
-
 /** Monday-aligned week starts (YYYY-MM-DD) whose weeks cover startDate..endDate. */
 export function expectedWeekStarts(startDate: string, endDate: string): string[] {
-  const first = mondayOf(parseUTC(startDate));
-  const lastMonday = mondayOf(parseUTC(endDate));
+  const lastMonday = mondayOfISO(endDate);
   const out: string[] = [];
-  for (const cur = new Date(first); cur <= lastMonday; cur.setUTCDate(cur.getUTCDate() + 7)) {
-    out.push(fmt(cur));
+  for (let cur = mondayOfISO(startDate); cur <= lastMonday; cur = addDaysISO(cur, 7)) {
+    out.push(cur);
   }
   return out;
 }
@@ -64,13 +44,12 @@ export function expectedWeekStarts(startDate: string, endDate: string): string[]
  * the persisted session.
  */
 export function repairSessionDate(date: string, weekStart: string): string {
-  const d = parseUTC(date);
-  const start = parseUTC(weekStart);
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 6);
-  if (Number.isNaN(d.getTime())) return fmt(start);
-  if (d < start) return fmt(start);
-  if (d > end) return fmt(end);
+  const d = parseISODateUTC(date);
+  const start = parseISODateUTC(weekStart);
+  const end = parseISODateUTC(addDaysISO(weekStart, 6));
+  if (Number.isNaN(d.getTime())) return toISODate(start);
+  if (d < start) return toISODate(start);
+  if (d > end) return toISODate(end);
   return date;
 }
 
@@ -966,7 +945,7 @@ export function spaceHardSessions(
   const movable = (x: GeneratedSession) => pinnedDate == null || x.date !== pinnedDate;
   // Would moving s[idx] onto `date` clear every *other* hard session?
   const clears = (idx: number, date: string) =>
-    s.every((o, k) => k === idx || !hard(o) || daysBetween(o.date, date) > 1);
+    s.every((o, k) => k === idx || !hard(o) || daysBetweenISO(o.date, date) > 1);
 
   for (let guard = 0, i = 1; i < s.length && guard < 64; i++) {
     if (!hard(s[i])) continue;
@@ -977,7 +956,7 @@ export function spaceHardSessions(
         break;
       }
     }
-    if (prev < 0 || daysBetween(s[prev].date, s[i].date) > 1) continue;
+    if (prev < 0 || daysBetweenISO(s[prev].date, s[i].date) > 1) continue;
 
     let swapped = false;
     for (const m of movable(s[i]) ? [i, prev] : [prev]) {
@@ -986,7 +965,9 @@ export function spaceHardSessions(
       const candidates = s
         .map((_, j) => j)
         .filter((j) => j !== m && !hard(s[j]) && movable(s[j]) && clears(m, s[j].date))
-        .sort((a, b) => daysBetween(s[a].date, s[m].date) - daysBetween(s[b].date, s[m].date));
+        .sort(
+          (a, b) => daysBetweenISO(s[a].date, s[m].date) - daysBetweenISO(s[b].date, s[m].date),
+        );
       if (candidates.length > 0) {
         const j = candidates[0];
         const tmp = s[m].date;
@@ -1021,7 +1002,7 @@ export function downgradeAdjacentHardSessions(sessions: GeneratedSession[]): Gen
   let lastHardIdx = -1;
   for (let i = 0; i < out.length; i++) {
     if (!hard(out[i])) continue;
-    if (lastHardIdx >= 0 && daysBetween(out[lastHardIdx].date, out[i].date) <= 1) {
+    if (lastHardIdx >= 0 && daysBetweenISO(out[lastHardIdx].date, out[i].date) <= 1) {
       const victim = isLongBucket(out[i]) && !isLongBucket(out[lastHardIdx]) ? lastHardIdx : i;
       out[victim] = demoteHardSession(out[victim]);
       if (victim === lastHardIdx) lastHardIdx = i;
@@ -1098,7 +1079,7 @@ export function placeLongRun(
   weekStart: string,
   preferredLongRunDay: number | null | undefined,
 ): GeneratedSession[] {
-  const target = addDays(weekStart, longRunOffset(preferredLongRunDay));
+  const target = addDaysISO(weekStart, longRunOffset(preferredLongRunDay));
   const s = sessions.map((x) => ({ ...x }));
   const idx = s.findIndex((x) => trainingBucketFor(x.sessionType) === "LONG");
   if (idx >= 0) {

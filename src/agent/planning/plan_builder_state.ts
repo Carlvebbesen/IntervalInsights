@@ -1,11 +1,12 @@
 import { Annotation } from "@langchain/langgraph";
 import type { EventType, TrainingType } from "../../schema/enums";
 import type { GraphDb } from "../graph_state";
-import type {
-  GeneratedWeekSessions,
-  PlanMacro,
-  PlanNotice,
-  PlanReviewAction,
+import {
+  type GeneratedWeekSessions,
+  MAX_REVIEW_ROUNDS,
+  type PlanMacro,
+  type PlanNotice,
+  type PlanReviewAction,
 } from "./plan_builder_schemas";
 
 // Runna-style 2-axis aggressiveness dial (per-plan). The volume axis drives the
@@ -144,3 +145,26 @@ export const PlanBuilderStateAnnotation = Annotation.Root({
 });
 
 export type PlanBuilderState = typeof PlanBuilderStateAnnotation.State;
+
+/**
+ * The one concatenation order for the three notice channels (see the channel
+ * split documented on the annotation above). Tolerates missing channels so the
+ * controller can pass a possibly-empty checkpoint's values.
+ */
+export function collectNotices(
+  state: Partial<Pick<PlanBuilderState, "contextNotices" | "feedbackNotices" | "guardNotices">>,
+): PlanNotice[] {
+  return [
+    ...(state.contextNotices ?? []),
+    ...(state.feedbackNotices ?? []),
+    ...(state.guardNotices ?? []),
+  ];
+}
+
+export function reviewRoundMeta(round: number) {
+  return {
+    round,
+    maxRounds: MAX_REVIEW_ROUNDS,
+    roundsRemaining: Math.max(0, MAX_REVIEW_ROUNDS - round),
+  };
+}

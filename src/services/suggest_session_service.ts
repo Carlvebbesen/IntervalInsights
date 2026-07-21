@@ -16,7 +16,7 @@ import type { IGlobalBindings } from "../types/IRouters";
 import { buildAthleteProfileBlock } from "./athlete_profile_service";
 import { applyHeatAdjustment, heatZoneForTrainingType } from "./heat_service";
 import { computeAdjustedPace, resolveReadiness } from "./prescription_pace_service";
-import { toISODate } from "./utils";
+import { addDaysISO, toISODate } from "./utils";
 import { toWorkoutStructure } from "./workout_structure_format";
 
 type Db = IGlobalBindings["db"];
@@ -263,12 +263,6 @@ function writeCache(key: string, value: SuggestSessionResponse): void {
   cache.set(key, { at: nowMs, value });
 }
 
-function shiftDateISO(dateISO: string, days: number): string {
-  const d = new Date(`${dateISO}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return toISODate(d);
-}
-
 /** Drop the pace fields from a stored plan structure to get the pace-agnostic input shape. */
 function structureToWorkoutSets(structure: WorkoutStructureSet[]): WorkoutSet[] {
   return structure.map((set) => ({
@@ -311,7 +305,7 @@ async function resolveRequestMode(
   // session due: explicit mode "plan" 404s exactly as it would with no plan, and
   // auto falls through to the free signature path.
   const canReadPlan = role === "premium" || role === "admin";
-  const tomorrow = shiftDateISO(date, 1);
+  const tomorrow = addDaysISO(date, 1);
   const due = canReadPlan ? await planRepo.findDuePlannedSession(db, userId, date, tomorrow) : null;
 
   if (requested === "plan") {

@@ -4,7 +4,7 @@ import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { buildPlanBuilderGraph } from "../agent/planning/plan_builder_graph";
 import type { PlanReviewResume } from "../agent/planning/plan_builder_schemas";
-import type { PlanBuilderInput } from "../agent/planning/plan_builder_state";
+import { collectNotices, type PlanBuilderInput } from "../agent/planning/plan_builder_state";
 import { AppError } from "../error";
 import type { Logger } from "../logger";
 import type { TGlobalEnv } from "../types/IRouters";
@@ -45,11 +45,7 @@ async function emitTerminalEvent(
     JSON.stringify({
       planId: state.values.persistedPlanId,
       threadId,
-      notices: [
-        ...(state.values.contextNotices ?? []),
-        ...(state.values.feedbackNotices ?? []),
-        ...(state.values.guardNotices ?? []),
-      ],
+      notices: collectNotices(state.values),
     }),
   );
 }

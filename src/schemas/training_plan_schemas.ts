@@ -25,6 +25,41 @@ export const PlanGuardWarningSchema = z
  */
 const planGuardWarnings = z.array(PlanGuardWarningSchema).optional();
 
+// Shared INPUT shapes: the REST router and the coach/MCP tools validate the
+// very same fields, so they must come from one place.
+export const PlannedSessionInputSchema = z.object({
+  date: z.string().date(),
+  sessionType: z.enum(trainingTypeEnum.enumValues),
+  title: z.string().min(1),
+  description: z.string().min(1).optional(),
+  structure: z.array(WorkoutStructureSetSchema).optional(),
+  sortOrder: z.number().int().optional(),
+});
+
+export const PlanWeekInputSchema = z.object({
+  weekIndex: z.number().int().nonnegative(),
+  startDate: z.string().date(),
+  phase: z.enum(planWeekPhaseEnum.enumValues).optional(),
+  targetDistanceMeters: z.number().int().positive().optional(),
+  targetLoad: z.number().int().positive().optional(),
+  notes: z.string().min(1).optional(),
+  sessions: z.array(PlannedSessionInputSchema).optional(),
+});
+
+export const DUPLICATE_WEEK_INDEX_MESSAGE =
+  "Duplicate weekIndex values are not allowed within a plan";
+
+/** Array positions holding a weekIndex already seen earlier in the array. */
+export function duplicateWeekIndexPositions(weeks: readonly { weekIndex: number }[]): number[] {
+  const seen = new Set<number>();
+  const duplicates: number[] = [];
+  weeks.forEach((week, index) => {
+    if (seen.has(week.weekIndex)) duplicates.push(index);
+    seen.add(week.weekIndex);
+  });
+  return duplicates;
+}
+
 export const PlannedSessionSchema = z
   .object({
     id: z.number(),

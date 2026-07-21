@@ -11,6 +11,7 @@ import { findOrCreateUserSettings } from "../../../repositories/user_settings_re
 import { RUNNING_SPORT_TYPES, type TrainingType, trainingTypeEnum } from "../../../schema/enums";
 import { computeFitnessDay } from "../../../services/fitness_metrics_service";
 import { fetchPaceAnchor, predictRaceTimeSecFromVdot } from "../../../services/pace_anchor_service";
+import { toISODate } from "../../../services/utils";
 import { DEFAULT_BASELINE_WEEKLY_METERS, MIN_BASELINE_WEEKLY_METERS } from "../guards";
 import type { PlanNotice } from "../plan_builder_schemas";
 import type {
@@ -45,10 +46,6 @@ const STRUCTURED_INTERVAL_TYPES: readonly TrainingType[] = [
 ];
 
 const VALID_TRAINING_TYPES = new Set<string>(trainingTypeEnum.enumValues);
-
-function toISODate(d: Date | string): string {
-  return (typeof d === "string" ? new Date(d) : d).toISOString().slice(0, 10);
-}
 
 // Minimum evidence before a computed trailing average is trusted as a full
 // training baseline. Below either threshold the 28-day window is thin enough

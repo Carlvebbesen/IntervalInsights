@@ -8,7 +8,7 @@ import {
   trainingPlans,
 } from "../schema";
 import type { WorkoutStructureSet } from "../schemas/agent_schemas";
-import { toISODate } from "./utils";
+import { addDaysISO, daysBetweenISO } from "./utils";
 
 const LINK_SCORE_THRESHOLD = 5;
 
@@ -20,17 +20,6 @@ function isUniqueViolation(err: unknown, constraint: string): boolean {
   if (typeof candidate !== "object" || candidate === null || !("code" in candidate)) return false;
   const pgErr = candidate as { code?: string; constraint?: string };
   return pgErr.code === "23505" && pgErr.constraint === constraint;
-}
-
-function shiftDate(dateStr: string, days: number): string {
-  const d = new Date(`${dateStr}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return toISODate(d);
-}
-
-function dayDiff(a: string, b: string): number {
-  const ms = Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`);
-  return Math.abs(Math.round(ms / 86_400_000));
 }
 
 function structureWorkRepCount(structure: WorkoutStructureSet[] | null | undefined): number | null {
@@ -95,8 +84,8 @@ export async function matchActivityToPlannedSession(
     .where(eq(plannedSessions.completedActivityId, input.activityId));
   if (alreadyLinked) return { linked: false };
 
-  const minDate = shiftDate(input.activityDateLocal, -1);
-  const maxDate = shiftDate(input.activityDateLocal, 1);
+  const minDate = addDaysISO(input.activityDateLocal, -1);
+  const maxDate = addDaysISO(input.activityDateLocal, 1);
 
   const candidates = await db
     .select({
@@ -130,8 +119,8 @@ export async function matchActivityToPlannedSession(
     .filter((c) => c.score >= LINK_SCORE_THRESHOLD)
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      const diffA = dayDiff(a.date, input.activityDateLocal);
-      const diffB = dayDiff(b.date, input.activityDateLocal);
+      const diffA = daysBetweenISO(a.date, input.activityDateLocal);
+      const diffB = daysBetweenISO(b.date, input.activityDateLocal);
       if (diffA !== diffB) return diffA - diffB;
       return a.id - b.id;
     });
@@ -158,7 +147,7 @@ export async function sweepOverduePlannedSessions(
   userId: string,
   todayLocal: string,
 ): Promise<number> {
-  const cutoff = shiftDate(todayLocal, -1);
+  const cutoff = addDaysISO(todayLocal, -1);
 
   const overdue = await db
     .select({ id: plannedSessions.id })

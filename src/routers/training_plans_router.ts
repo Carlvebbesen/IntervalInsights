@@ -28,8 +28,12 @@ import {
 import { WorkoutStructureSetSchema } from "../schemas/agent_schemas";
 import {
   DeleteTrainingPlanResponseSchema,
+  DUPLICATE_WEEK_INDEX_MESSAGE,
+  duplicateWeekIndexPositions,
   ErrorSchema,
+  PlannedSessionInputSchema,
   PlannedSessionSchema,
+  PlanWeekInputSchema,
   TrainingPlanDetailSchema,
   TrainingPlanListResponseSchema,
   TrainingPlanSchema,
@@ -77,25 +81,6 @@ trainingPlansRouter.get(
   },
 );
 
-const createSessionSchema = z.object({
-  date: z.string().date(),
-  sessionType: z.enum(trainingTypeEnum.enumValues),
-  title: z.string().min(1),
-  description: z.string().min(1).optional(),
-  structure: z.array(WorkoutStructureSetSchema).optional(),
-  sortOrder: z.number().int().optional(),
-});
-
-const createWeekSchema = z.object({
-  weekIndex: z.number().int().nonnegative(),
-  startDate: z.string().date(),
-  phase: z.enum(planWeekPhaseEnum.enumValues).optional(),
-  targetDistanceMeters: z.number().int().positive().optional(),
-  targetLoad: z.number().int().positive().optional(),
-  notes: z.string().min(1).optional(),
-  sessions: z.array(createSessionSchema).optional(),
-});
-
 const createTrainingPlanSchema = z
   .object({
     name: z.string().min(1),
@@ -105,21 +90,17 @@ const createTrainingPlanSchema = z
     goalText: z.string().min(1).optional(),
     constraintsText: z.string().min(1).optional(),
     status: z.enum(trainingPlanStatusEnum.enumValues).optional(),
-    weeks: z.array(createWeekSchema).optional(),
+    weeks: z.array(PlanWeekInputSchema).optional(),
   })
   .superRefine((data, ctx) => {
     if (!data.weeks) return;
-    const seen = new Set<number>();
-    data.weeks.forEach((week, index) => {
-      if (seen.has(week.weekIndex)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Duplicate weekIndex values are not allowed within a plan",
-          path: ["weeks", index, "weekIndex"],
-        });
-      }
-      seen.add(week.weekIndex);
-    });
+    for (const index of duplicateWeekIndexPositions(data.weeks)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: DUPLICATE_WEEK_INDEX_MESSAGE,
+        path: ["weeks", index, "weekIndex"],
+      });
+    }
   });
 
 trainingPlansRouter.post(
@@ -433,14 +414,7 @@ trainingPlansRouter.delete(
   },
 );
 
-const addWeekSchema = z.object({
-  weekIndex: z.number().int().nonnegative(),
-  startDate: z.string().date(),
-  phase: z.enum(planWeekPhaseEnum.enumValues).optional(),
-  targetDistanceMeters: z.number().int().positive().optional(),
-  targetLoad: z.number().int().positive().optional(),
-  notes: z.string().min(1).optional(),
-});
+const addWeekSchema = PlanWeekInputSchema.omit({ sessions: true });
 
 trainingPlansRouter.post(
   "/:id/weeks",
@@ -567,12 +541,7 @@ trainingPlansRouter.delete(
 
 const addSessionSchema = z.object({
   weekId: z.number().int().positive(),
-  date: z.string().date(),
-  sessionType: z.enum(trainingTypeEnum.enumValues),
-  title: z.string().min(1),
-  description: z.string().min(1).optional(),
-  structure: z.array(WorkoutStructureSetSchema).optional(),
-  sortOrder: z.number().int().optional(),
+  ...PlannedSessionInputSchema.shape,
 });
 
 trainingPlansRouter.post(

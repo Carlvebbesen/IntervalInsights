@@ -6,7 +6,6 @@ import {
   plannedSessionStatusEnum,
   planWeekPhaseEnum,
   raceEventStatusEnum,
-  racePriorityEnum,
   trainingPlanStatusEnum,
   trainingTypeEnum,
 } from "../../../schema/enums";
@@ -14,6 +13,16 @@ import {
   PlanRevisionChangeSchema,
   WorkoutStructureSetSchema,
 } from "../../../schemas/agent_schemas";
+import {
+  CreateRaceEventInputSchema,
+  UpdateRaceEventInputSchema,
+} from "../../../schemas/race_event_schemas";
+import {
+  DUPLICATE_WEEK_INDEX_MESSAGE,
+  duplicateWeekIndexPositions,
+  PlannedSessionInputSchema,
+  PlanWeekInputSchema,
+} from "../../../schemas/training_plan_schemas";
 import { type CoachTool, defineTool } from "../tool_types";
 
 const listTrainingPlans = defineTool({
@@ -56,14 +65,7 @@ const createRaceEvent = defineTool({
     "Create a race event the user is training for: name, date, distance, and optionally a target time and priority (A/B/C, default B).",
   keywords: ["race", "create race", "new race", "goal race", "target race"],
   requires: "db",
-  params: z.object({
-    name: z.string().min(1),
-    date: z.string().date(),
-    distanceMeters: z.number().int().positive(),
-    targetTimeSeconds: z.number().int().positive().optional(),
-    priority: z.enum(racePriorityEnum.enumValues).optional(),
-    status: z.enum(raceEventStatusEnum.enumValues).optional(),
-  }),
+  params: CreateRaceEventInputSchema,
   handler: (ctx, args) => raceEventController.createRaceEvent(ctx.db, ctx.userId, args),
 });
 
@@ -74,12 +76,7 @@ const updateRaceEvent = defineTool({
   requires: "db",
   params: z.object({
     raceEventId: z.number().int().positive(),
-    name: z.string().min(1).optional(),
-    date: z.string().date().optional(),
-    distanceMeters: z.number().int().positive().optional(),
-    targetTimeSeconds: z.number().int().positive().nullable().optional(),
-    priority: z.enum(racePriorityEnum.enumValues).optional(),
-    status: z.enum(raceEventStatusEnum.enumValues).optional(),
+    ...UpdateRaceEventInputSchema.shape,
   }),
   handler: (ctx, args) => {
     const { raceEventId, ...patch } = args;
@@ -96,33 +93,10 @@ const deleteRaceEvent = defineTool({
   handler: (ctx, args) => raceEventController.deleteRaceEvent(ctx.db, ctx.userId, args.raceEventId),
 });
 
-const plannedSessionInputSchema = z.object({
-  date: z.string().date(),
-  sessionType: z.enum(trainingTypeEnum.enumValues),
-  title: z.string().min(1),
-  description: z.string().min(1).optional(),
-  structure: z.array(WorkoutStructureSetSchema).optional(),
-  sortOrder: z.number().int().optional(),
-});
-
-const planWeekInputSchema = z.object({
-  weekIndex: z.number().int().nonnegative(),
-  startDate: z.string().date(),
-  phase: z.enum(planWeekPhaseEnum.enumValues).optional(),
-  targetDistanceMeters: z.number().int().positive().optional(),
-  targetLoad: z.number().int().positive().optional(),
-  notes: z.string().min(1).optional(),
-  sessions: z.array(plannedSessionInputSchema).optional(),
-});
-
-function assertNoDuplicateWeekIndex(weeks: z.infer<typeof planWeekInputSchema>[] | undefined) {
+function assertNoDuplicateWeekIndex(weeks: z.infer<typeof PlanWeekInputSchema>[] | undefined) {
   if (!weeks) return;
-  const seen = new Set<number>();
-  for (const week of weeks) {
-    if (seen.has(week.weekIndex)) {
-      throw new AppError(400, "Duplicate weekIndex values are not allowed within a plan");
-    }
-    seen.add(week.weekIndex);
+  if (duplicateWeekIndexPositions(weeks).length > 0) {
+    throw new AppError(400, DUPLICATE_WEEK_INDEX_MESSAGE);
   }
 }
 
@@ -140,7 +114,7 @@ const createTrainingPlan = defineTool({
     goalText: z.string().min(1).optional(),
     constraintsText: z.string().min(1).optional(),
     status: z.enum(trainingPlanStatusEnum.enumValues).optional(),
-    weeks: z.array(planWeekInputSchema).optional(),
+    weeks: z.array(PlanWeekInputSchema).optional(),
   }),
   handler: (ctx, args) => {
     assertNoDuplicateWeekIndex(args.weeks);
@@ -187,12 +161,7 @@ const addPlanWeek = defineTool({
   requires: "db",
   params: z.object({
     planId: z.number().int().positive(),
-    weekIndex: z.number().int().nonnegative(),
-    startDate: z.string().date(),
-    phase: z.enum(planWeekPhaseEnum.enumValues).optional(),
-    targetDistanceMeters: z.number().int().positive().optional(),
-    targetLoad: z.number().int().positive().optional(),
-    notes: z.string().min(1).optional(),
+    ...PlanWeekInputSchema.omit({ sessions: true }).shape,
   }),
   handler: (ctx, args) => {
     const { planId, ...input } = args;
@@ -244,12 +213,7 @@ const addPlannedSession = defineTool({
   params: z.object({
     planId: z.number().int().positive(),
     weekId: z.number().int().positive(),
-    date: z.string().date(),
-    sessionType: z.enum(trainingTypeEnum.enumValues),
-    title: z.string().min(1),
-    description: z.string().min(1).optional(),
-    structure: z.array(WorkoutStructureSetSchema).optional(),
-    sortOrder: z.number().int().optional(),
+    ...PlannedSessionInputSchema.shape,
   }),
   handler: (ctx, args) => {
     const { planId, ...input } = args;

@@ -1,15 +1,10 @@
 import { interrupt } from "@langchain/langgraph";
 import { logger } from "../../../logger";
 import { trainingBucketFor } from "../../../schema/enums";
-import {
-  applyPlanInputPatch,
-  describePlanInputPatch,
-  extractPlanInputPatch,
-  FEEDBACK_PROSE_ONLY_NOTICE,
-} from "../feedback_intent";
 import { estimatePlannedSessionDistanceMeters, isHardSession } from "../guards";
-import { MAX_REVIEW_ROUNDS, PlanReviewResumeSchema } from "../plan_builder_schemas";
-import type { PlanBuilderState } from "../plan_builder_state";
+import { MAX_REVIEW_ROUNDS } from "../plan_builder_schemas";
+import { collectNotices, type PlanBuilderState, reviewRoundMeta } from "../plan_builder_state";
+import { resolveReviewResume } from "./review_resume";
 
 /**
  * One compact row per week. The athlete is asked to approve the WHOLE plan, so
@@ -62,48 +57,15 @@ export async function sessionsReview(state: PlanBuilderState): Promise<Partial<P
     sampleWeek,
     weeks,
     totals,
-    notices: [...state.contextNotices, ...state.feedbackNotices, ...state.guardNotices],
-    round,
-    maxRounds: MAX_REVIEW_ROUNDS,
-    roundsRemaining: Math.max(0, MAX_REVIEW_ROUNDS - round),
+    notices: collectNotices(state),
+    ...reviewRoundMeta(round),
   });
 
-  const parsed = PlanReviewResumeSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new Error(`Invalid sessions-review resume payload: ${parsed.error.message}`);
-  }
-
-  if (parsed.data.action !== "adjust") {
-    log.info("sessions accepted");
-    return { action: "accept", feedbackNotices: [] };
-  }
-
-  if (round >= MAX_REVIEW_ROUNDS) {
-    log.info({ round }, "sessions adjust refused — revision rounds exhausted");
-    return {
-      action: "accept",
-      feedbackNotices: [
-        {
-          kind: "clamped",
-          code: "review_rounds_exhausted",
-          message: `You have used all ${MAX_REVIEW_ROUNDS} revision rounds, so this round of feedback was not applied and the plan is being saved as shown. Every session stays editable afterwards.`,
-          observed: round,
-          limit: MAX_REVIEW_ROUNDS,
-        },
-      ],
-    };
-  }
-
-  const patch = await extractPlanInputPatch(parsed.data.feedback, state.input, "sessions");
-  log.info(
-    { round, patched: Object.keys(patch) },
-    "sessions adjust — looping back to generateSessions",
-  );
-  return {
-    action: "adjust",
-    sessionsFeedback: [...state.sessionsFeedback, parsed.data.feedback],
-    input: applyPlanInputPatch(state.input, patch),
-    feedbackNotices:
-      Object.keys(patch).length > 0 ? describePlanInputPatch(patch) : [FEEDBACK_PROSE_ONLY_NOTICE],
-  };
+  return resolveReviewResume(raw, state, {
+    stage: "sessions",
+    feedbackKey: "sessionsFeedback",
+    exhaustedMessage: `You have used all ${MAX_REVIEW_ROUNDS} revision rounds, so this round of feedback was not applied and the plan is being saved as shown. Every session stays editable afterwards.`,
+    loopTarget: "generateSessions",
+    log,
+  });
 }
