@@ -18,7 +18,7 @@ import {
   intervalStructures,
   users,
 } from "../../schema";
-import { setReviewUserId } from "../review_account";
+import { REVIEW_STRAVA_ID, setReviewUserId } from "../review_account";
 import { buildDemoCorpus } from "./corpus";
 
 // Cheap, safe on every boot: resolve the review user, promote it (provider
@@ -36,7 +36,12 @@ export async function prepareReviewAccount(): Promise<string | null> {
 
   await db
     .update(users)
-    .set({ stravaId: "0", role: "premium", maxHeartRate: 190, processHeartRate: true })
+    .set({
+      stravaId: REVIEW_STRAVA_ID,
+      role: "premium",
+      maxHeartRate: 190,
+      processHeartRate: true,
+    })
     .where(eq(users.id, user.id));
   setReviewUserId(user.id);
   return user.id;

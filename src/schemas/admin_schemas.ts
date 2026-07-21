@@ -11,6 +11,8 @@ export const AdminStatsSchema = z
     newToday: z.number(),
     newThisWeek: z.number(),
     bannedCount: z.number(),
+    stravaConnected: z.number(),
+    intervalsConnected: z.number(),
     roleBreakdown: z.object({
       guest: z.number(),
       premium: z.number(),

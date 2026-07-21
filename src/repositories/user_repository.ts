@@ -1,6 +1,7 @@
-import { and, count, desc, eq, gte, ilike, or, type SQL, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, isNotNull, ne, or, type SQL, sql } from "drizzle-orm";
 import { type InsertUser, type SelectUser, users } from "../schema";
 import type { UserRole } from "../schema/enums";
+import { REVIEW_STRAVA_ID } from "../services/review_account";
 import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
@@ -17,6 +18,8 @@ export interface UserStats {
   newToday: number;
   newThisWeek: number;
   bannedCount: number;
+  stravaConnected: number;
+  intervalsConnected: number;
   roleBreakdown: { guest: number; premium: number; admin: number };
 }
 
@@ -37,6 +40,10 @@ export async function getUserStats(db: Db): Promise<UserStats> {
       newToday: countWhere(gte(users.createdAt, dayAgo)),
       newThisWeek: countWhere(gte(users.createdAt, weekAgo)),
       bannedCount: countWhere(eq(users.banned, true)),
+      // `<> '0'` also drops NULLs (SQL three-valued logic), so this counts real
+      // Strava links only — excluding the store-review demo account's "0" sentinel.
+      stravaConnected: countWhere(ne(users.stravaId, REVIEW_STRAVA_ID)),
+      intervalsConnected: countWhere(isNotNull(users.intervalsAthleteId)),
       guest: countWhere(eq(users.role, "guest")),
       premium: countWhere(eq(users.role, "premium")),
       admin: countWhere(eq(users.role, "admin")),
@@ -51,6 +58,8 @@ export async function getUserStats(db: Db): Promise<UserStats> {
     newToday: row?.newToday ?? 0,
     newThisWeek: row?.newThisWeek ?? 0,
     bannedCount: row?.bannedCount ?? 0,
+    stravaConnected: row?.stravaConnected ?? 0,
+    intervalsConnected: row?.intervalsConnected ?? 0,
     roleBreakdown: {
       guest: row?.guest ?? 0,
       premium: row?.premium ?? 0,
