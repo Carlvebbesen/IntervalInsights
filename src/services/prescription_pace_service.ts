@@ -23,6 +23,12 @@ export interface PrescriptionPaceInput {
   readiness?: ReadinessSignals;
   weather?: WeatherInput;
   asOf?: Date;
+  /**
+   * A pre-resolved anchor (or null for "resolution failed/absent") so a caller
+   * that prescribes twice per request — e.g. suggest-session before and after
+   * the LLM reshape — fetches the anchor once. `undefined` means "resolve here".
+   */
+  anchor?: PaceAnchorResult | null;
 }
 
 export interface PrescriptionPaceResult {
@@ -124,10 +130,12 @@ export async function computeAdjustedPace(
   const { sets, sessionType, readiness, weather, asOf } = input;
 
   const skeleton = generateCompleteIntervalSet(sets);
-  const historyPaced = await deps.history(db, userId, sets);
+  const [historyPaced, anchor] = await Promise.all([
+    deps.history(db, userId, sets),
+    input.anchor !== undefined ? input.anchor : deps.anchor(db, userId, asOf).catch(() => null),
+  ]);
   let paces = mergeHistoryPaces(skeleton, historyPaced);
 
-  const anchor = await deps.anchor(db, userId, asOf).catch(() => null);
   if (anchor && anchor.status === "ok") {
     paces = fillPacesFromAnchor(paces, anchor.data.paces, sessionType);
   }

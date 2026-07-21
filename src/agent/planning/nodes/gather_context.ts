@@ -10,7 +10,11 @@ import * as userRepo from "../../../repositories/user_repository";
 import { findOrCreateUserSettings } from "../../../repositories/user_settings_repository";
 import { RUNNING_SPORT_TYPES, type TrainingType, trainingTypeEnum } from "../../../schema/enums";
 import { computeFitnessDay } from "../../../services/fitness_metrics_service";
-import { fetchPaceAnchor, predictRaceTimeSecFromVdot } from "../../../services/pace_anchor_service";
+import {
+  fetchPaceAnchor,
+  type PaceAnchorResult,
+  predictRaceTimeSecFromVdot,
+} from "../../../services/pace_anchor_service";
 import { toISODate } from "../../../services/utils";
 import { DEFAULT_BASELINE_WEEKLY_METERS, MIN_BASELINE_WEEKLY_METERS } from "../guards";
 import type { PlanNotice } from "../plan_builder_schemas";
@@ -221,69 +225,168 @@ export async function gatherContext(
   const { db } = config.configurable as PlanBuilderConfigurable;
   const log = logger.child({ node: "gatherContext", userId: state.userId });
 
-  const user = await userRepo.findById(db, state.userId);
-  const settings = await findOrCreateUserSettings(db, state.userId);
-  const maxHeartRate = settings?.maxHeartRate ?? user?.maxHeartRate ?? null;
+  const now = new Date();
+  const since = new Date(now);
+  since.setUTCDate(since.getUTCDate() - 8 * 7);
 
-  let race: AthleteContext["race"] = null;
-  if (state.input.raceEventId != null) {
+  type Degradation = { code: string; message: string };
+
+  const RACE_ABILITY_NOTICE: Degradation = {
+    code: "context_race_ability_unavailable",
+    message:
+      "Your race-ability estimate (recent best efforts) could not be read, so paces and targets were set without it — review them carefully or retry later.",
+  };
+  const VOCABULARY_NOTICE: Degradation = {
+    code: "context_vocabulary_unavailable",
+    message:
+      "Your workout history could not be read, so sessions were chosen without knowing which workout types you already do — review them carefully or retry later.",
+  };
+
+  const loadRace = async (): Promise<AthleteContext["race"]> => {
+    if (state.input.raceEventId == null) return null;
     const r = await raceEventRepo.findByIdForUser(db, state.userId, state.input.raceEventId);
     if (!r) throw new AppError(404, "Race event not found or unauthorized");
-    race = {
+    return {
       name: r.name,
       date: r.date,
       distanceMeters: r.distanceMeters,
       targetTimeSeconds: r.targetTimeSeconds,
       priority: r.priority,
     };
-  }
-
-  // Every degradation below MUST surface to the athlete, not just the logs: a
-  // plan silently built without injury records is the bug this list prevents.
-  // `kind: "clamped"` is reused because the wizard parses kind as a closed enum.
-  const contextNotices: PlanNotice[] = [];
-  const degraded = (code: string, message: string) => {
-    contextNotices.push({ kind: "clamped", code, message });
   };
-
-  const now = new Date();
-  const since = new Date(now);
-  since.setUTCDate(since.getUTCDate() - 8 * 7);
-  const rows = (await dashboardRepo.runWeeksWithTypeSince(
-    db,
-    state.userId,
-    [...RUNNING_SPORT_TYPES],
-    since,
-  )) as WeekRow[];
-  const recentWeeks = foldWeeks(rows);
 
   // Self-computed (DB-only) fitness for EVERY athlete, incl. Strava-only —
   // no intervals.icu token required.
-  let fitness: AthleteContext["fitness"] = null;
-  try {
-    const point = await computeFitnessDay(db, state.userId, toISODate(now));
-    if (point) {
-      fitness = {
-        ctl: round1(point.ctl),
-        atl: round1(point.atl),
-        tsb: round1(point.tsb),
-        rampRate: round1(point.rampRate),
+  const loadFitness = async (): Promise<{
+    value: AthleteContext["fitness"];
+    notice?: Degradation;
+  }> => {
+    try {
+      const point = await computeFitnessDay(db, state.userId, toISODate(now));
+      if (!point) return { value: null };
+      return {
+        value: {
+          ctl: round1(point.ctl),
+          atl: round1(point.atl),
+          tsb: round1(point.tsb),
+          rampRate: round1(point.rampRate),
+        },
+      };
+    } catch (err) {
+      log.warn({ err }, "computeFitnessDay failed — degrading fitness to null");
+      return {
+        value: null,
+        notice: {
+          code: "context_fitness_unavailable",
+          message:
+            "Your current fitness metrics (form/fatigue) could not be read, so this plan was built without them — review the early weeks carefully or retry later.",
+        },
       };
     }
-  } catch (err) {
-    log.warn({ err }, "computeFitnessDay failed — degrading fitness to null");
-    fitness = null;
-    degraded(
-      "context_fitness_unavailable",
-      "Your current fitness metrics (form/fatigue) could not be read, so this plan was built without them — review the early weeks carefully or retry later.",
-    );
-  }
+  };
+
+  const loadAnchor = async (): Promise<{
+    value: PaceAnchorResult | null;
+    notice?: Degradation;
+  }> => {
+    try {
+      return { value: await fetchPaceAnchor(db, state.userId, now) };
+    } catch (err) {
+      log.warn({ err }, "pace anchor failed — degrading raceAbility to null");
+      return { value: null, notice: RACE_ABILITY_NOTICE };
+    }
+  };
+
+  const loadBaseline = async (): Promise<{
+    value: AthleteContext["baselineVolume"];
+    notice?: Degradation;
+  }> => {
+    try {
+      // Wide enough for the proven-capacity window; the 28/30-day trailing
+      // fields filter inside computeBaselineVolume.
+      const from = new Date(now);
+      from.setUTCDate(from.getUTCDate() - PROVEN_CAPACITY_WINDOW_WEEKS * 7);
+      const runs = (await dashboardRepo.runsBetween(
+        db,
+        state.userId,
+        [...RUNNING_SPORT_TYPES],
+        from,
+        now,
+      )) as RunRow[];
+      return { value: computeBaselineVolume(runs, now) };
+    } catch (err) {
+      log.warn({ err }, "baseline volume failed — degrading to null");
+      return {
+        value: null,
+        notice: {
+          code: "context_baseline_unavailable",
+          message:
+            "Your recent running volume could not be read, so this plan starts from a generic baseline instead of what you actually run — review the first weeks carefully or retry later.",
+        },
+      };
+    }
+  };
+
+  const loadHealthEvents = async (): Promise<{
+    value: ActiveHealthEvent[];
+    notice?: Degradation;
+  }> => {
+    try {
+      const eventRows = await eventRepo.listForUser(db, state.userId, { status: "active" });
+      return { value: mapActiveHealthEvents(eventRows) };
+    } catch (err) {
+      log.warn({ err }, "active health events failed — degrading to empty");
+      return {
+        value: [],
+        notice: {
+          code: "context_health_events_unavailable",
+          message:
+            "Your injury/illness records could not be read, so this plan was built WITHOUT injury accommodations — review it carefully or retry later.",
+        },
+      };
+    }
+  };
+
+  const loadStructures = async (): Promise<{
+    value: StructureRow[] | null;
+    notice?: Degradation;
+  }> => {
+    try {
+      return { value: await intervalStructureRepo.listDistinctForUser(db, state.userId) };
+    } catch (err) {
+      log.warn({ err }, "workout vocabulary failed — degrading to empty");
+      return { value: null, notice: VOCABULARY_NOTICE };
+    }
+  };
+
+  // All reads are independent; only the race-event 404 may fail the node, and
+  // Promise.all propagates it as before. Notices are pushed in a fixed order
+  // below (the old sequential order), so degradations stay deterministic.
+  const [user, settings, race, rows, fitnessRes, anchorRes, baselineRes, healthRes, structuresRes] =
+    await Promise.all([
+      userRepo.findById(db, state.userId),
+      findOrCreateUserSettings(db, state.userId),
+      loadRace(),
+      dashboardRepo.runWeeksWithTypeSince(db, state.userId, [...RUNNING_SPORT_TYPES], since),
+      loadFitness(),
+      loadAnchor(),
+      loadBaseline(),
+      loadHealthEvents(),
+      loadStructures(),
+    ]);
+
+  const maxHeartRate = settings?.maxHeartRate ?? user?.maxHeartRate ?? null;
+  const weekRows = rows as WeekRow[];
+  const recentWeeks = foldWeeks(weekRows);
+  const fitness = fitnessRes.value;
+  const baselineVolume = baselineRes.value;
+  const activeHealthEvents = healthRes.value;
 
   let raceAbility: AthleteContext["raceAbility"] = null;
-  try {
-    const anchor = await fetchPaceAnchor(db, state.userId, now);
-    if (anchor.status === "ok") {
-      const a = anchor.data;
+  let raceAbilityNotice = anchorRes.notice;
+  if (anchorRes.value?.status === "ok") {
+    try {
+      const a = anchorRes.value.data;
       const predicted = a.predictedRaces.map((p) => ({
         distanceMeters: p.distanceM,
         timeSeconds: p.timeSec,
@@ -297,50 +400,11 @@ export async function gatherContext(
         if (t != null) predicted.push({ distanceMeters: race.distanceMeters, timeSeconds: t });
       }
       raceAbility = { vdot: a.vdot, criticalSpeedMps: a.criticalSpeedMps, predicted };
+    } catch (err) {
+      log.warn({ err }, "pace anchor failed — degrading raceAbility to null");
+      raceAbility = null;
+      raceAbilityNotice = RACE_ABILITY_NOTICE;
     }
-  } catch (err) {
-    log.warn({ err }, "pace anchor failed — degrading raceAbility to null");
-    raceAbility = null;
-    degraded(
-      "context_race_ability_unavailable",
-      "Your race-ability estimate (recent best efforts) could not be read, so paces and targets were set without it — review them carefully or retry later.",
-    );
-  }
-
-  let baselineVolume: AthleteContext["baselineVolume"] = null;
-  try {
-    // Wide enough for the proven-capacity window; the 28/30-day trailing
-    // fields filter inside computeBaselineVolume.
-    const from = new Date(now);
-    from.setUTCDate(from.getUTCDate() - PROVEN_CAPACITY_WINDOW_WEEKS * 7);
-    const runs = (await dashboardRepo.runsBetween(
-      db,
-      state.userId,
-      [...RUNNING_SPORT_TYPES],
-      from,
-      now,
-    )) as RunRow[];
-    baselineVolume = computeBaselineVolume(runs, now);
-  } catch (err) {
-    log.warn({ err }, "baseline volume failed — degrading to null");
-    baselineVolume = null;
-    degraded(
-      "context_baseline_unavailable",
-      "Your recent running volume could not be read, so this plan starts from a generic baseline instead of what you actually run — review the first weeks carefully or retry later.",
-    );
-  }
-
-  let activeHealthEvents: ActiveHealthEvent[] = [];
-  try {
-    const eventRows = await eventRepo.listForUser(db, state.userId, { status: "active" });
-    activeHealthEvents = mapActiveHealthEvents(eventRows);
-  } catch (err) {
-    log.warn({ err }, "active health events failed — degrading to empty");
-    activeHealthEvents = [];
-    degraded(
-      "context_health_events_unavailable",
-      "Your injury/illness records could not be read, so this plan was built WITHOUT injury accommodations — review it carefully or retry later.",
-    );
   }
 
   let workoutVocabulary: WorkoutVocabulary = {
@@ -348,16 +412,29 @@ export async function gatherContext(
     hasStructuredIntervalHistory: false,
     structures: [],
   };
-  try {
-    const structures = await intervalStructureRepo.listDistinctForUser(db, state.userId);
-    workoutVocabulary = extractWorkoutVocabulary(rows, structures);
-  } catch (err) {
-    log.warn({ err }, "workout vocabulary failed — degrading to empty");
-    workoutVocabulary = { types: [], hasStructuredIntervalHistory: false, structures: [] };
-    degraded(
-      "context_vocabulary_unavailable",
-      "Your workout history could not be read, so sessions were chosen without knowing which workout types you already do — review them carefully or retry later.",
-    );
+  let vocabularyNotice = structuresRes.notice;
+  if (structuresRes.value != null) {
+    try {
+      workoutVocabulary = extractWorkoutVocabulary(weekRows, structuresRes.value);
+    } catch (err) {
+      log.warn({ err }, "workout vocabulary failed — degrading to empty");
+      workoutVocabulary = { types: [], hasStructuredIntervalHistory: false, structures: [] };
+      vocabularyNotice = VOCABULARY_NOTICE;
+    }
+  }
+
+  // Every degradation above MUST surface to the athlete, not just the logs: a
+  // plan silently built without injury records is the bug this list prevents.
+  // `kind: "clamped"` is reused because the wizard parses kind as a closed enum.
+  const contextNotices: PlanNotice[] = [];
+  for (const notice of [
+    fitnessRes.notice,
+    raceAbilityNotice,
+    baselineRes.notice,
+    healthRes.notice,
+    vocabularyNotice,
+  ]) {
+    if (notice) contextNotices.push({ kind: "clamped", ...notice });
   }
 
   return {

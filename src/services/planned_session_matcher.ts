@@ -149,25 +149,22 @@ export async function sweepOverduePlannedSessions(
 ): Promise<number> {
   const cutoff = addDaysISO(todayLocal, -1);
 
-  const overdue = await db
-    .select({ id: plannedSessions.id })
-    .from(plannedSessions)
-    .innerJoin(trainingPlans, eq(trainingPlans.id, plannedSessions.planId))
-    .where(
-      and(
-        eq(trainingPlans.userId, userId),
-        eq(trainingPlans.status, "active"),
-        eq(plannedSessions.status, "planned"),
-        lt(plannedSessions.date, cutoff),
-      ),
-    );
-  const ids = overdue.map((row) => row.id);
-  if (ids.length === 0) return 0;
-
   const updated = await db
     .update(plannedSessions)
     .set({ status: "skipped", updatedAt: new Date() })
-    .where(inArray(plannedSessions.id, ids))
+    .where(
+      and(
+        eq(plannedSessions.status, "planned"),
+        lt(plannedSessions.date, cutoff),
+        inArray(
+          plannedSessions.planId,
+          db
+            .select({ id: trainingPlans.id })
+            .from(trainingPlans)
+            .where(and(eq(trainingPlans.userId, userId), eq(trainingPlans.status, "active"))),
+        ),
+      ),
+    )
     .returning({ id: plannedSessions.id });
   return updated.length;
 }

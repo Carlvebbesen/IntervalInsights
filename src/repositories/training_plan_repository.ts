@@ -84,18 +84,19 @@ export interface TrainingPlanDetail {
 
 /**
  * The plan's `meta` blob, which `trainingPlanColumns` deliberately omits so it
- * never leaks into a DTO. Only the guard-context loader needs it.
+ * never leaks into a DTO, plus the raceEventId the guard context anchors on.
+ * Only the guard-context loader needs it.
  */
 export async function findMetaForUser(
   db: Db,
   userId: string,
   id: number,
-): Promise<Record<string, unknown> | undefined> {
+): Promise<{ meta: Record<string, unknown>; raceEventId: number | null } | undefined> {
   const [row] = await db
-    .select({ meta: trainingPlans.meta })
+    .select({ meta: trainingPlans.meta, raceEventId: trainingPlans.raceEventId })
     .from(trainingPlans)
     .where(and(eq(trainingPlans.id, id), eq(trainingPlans.userId, userId)));
-  return row?.meta;
+  return row;
 }
 
 export async function findByIdForUser(
@@ -255,23 +256,24 @@ export async function createWithChildren(
       })
       .returning(trainingPlanColumns);
 
-    const weeks: TrainingPlanWeekDao[] = [];
-    const sessions: PlannedSessionDao[] = [];
+    const weekInputs = input.weeks ?? [];
 
-    for (const w of input.weeks ?? []) {
-      let week: TrainingPlanWeekDao;
+    let weeks: TrainingPlanWeekDao[] = [];
+    if (weekInputs.length > 0) {
       try {
-        [week] = await tx
+        weeks = await tx
           .insert(trainingPlanWeeks)
-          .values({
-            planId: plan.id,
-            weekIndex: w.weekIndex,
-            startDate: w.startDate,
-            phase: w.phase ?? null,
-            targetDistanceMeters: w.targetDistanceMeters ?? null,
-            targetLoad: w.targetLoad ?? null,
-            notes: w.notes ?? null,
-          })
+          .values(
+            weekInputs.map((w) => ({
+              planId: plan.id,
+              weekIndex: w.weekIndex,
+              startDate: w.startDate,
+              phase: w.phase ?? null,
+              targetDistanceMeters: w.targetDistanceMeters ?? null,
+              targetLoad: w.targetLoad ?? null,
+              notes: w.notes ?? null,
+            })),
+          )
           .returning();
       } catch (err) {
         if (isUniqueViolation(err, "training_plan_weeks_plan_week_idx")) {
@@ -279,25 +281,28 @@ export async function createWithChildren(
         }
         throw err;
       }
-      weeks.push(week);
-
-      for (const s of w.sessions ?? []) {
-        const [session] = await tx
-          .insert(plannedSessions)
-          .values({
-            planId: plan.id,
-            weekId: week.id,
-            date: s.date,
-            sessionType: s.sessionType,
-            title: s.title,
-            description: s.description ?? null,
-            structure: s.structure ?? null,
-            sortOrder: s.sortOrder ?? 0,
-          })
-          .returning();
-        sessions.push(session);
-      }
     }
+
+    const weekIdByIndex = new Map(weeks.map((w) => [w.weekIndex, w.id]));
+    const sessionValues = weekInputs.flatMap((w) => {
+      const weekId = weekIdByIndex.get(w.weekIndex);
+      if (weekId === undefined) return [];
+      return (w.sessions ?? []).map((s) => ({
+        planId: plan.id,
+        weekId,
+        date: s.date,
+        sessionType: s.sessionType,
+        title: s.title,
+        description: s.description ?? null,
+        structure: s.structure ?? null,
+        sortOrder: s.sortOrder ?? 0,
+      }));
+    });
+
+    const sessions: PlannedSessionDao[] =
+      sessionValues.length > 0
+        ? await tx.insert(plannedSessions).values(sessionValues).returning()
+        : [];
 
     return { plan, weeks, sessions };
   });

@@ -15,6 +15,7 @@ import type {
 import type { IGlobalBindings } from "../types/IRouters";
 import { buildAthleteProfileBlock } from "./athlete_profile_service";
 import { applyHeatAdjustment, heatZoneForTrainingType } from "./heat_service";
+import { fetchPaceAnchor } from "./pace_anchor_service";
 import { computeAdjustedPace, resolveReadiness } from "./prescription_pace_service";
 import { addDaysISO, toISODate } from "./utils";
 import { toWorkoutStructure } from "./workout_structure_format";
@@ -340,12 +341,16 @@ async function buildPlanSuggestion(
   const sets = structureToWorkoutSets(structure);
   const sessionType = session.sessionType as TrainingType;
 
-  const readiness = await resolveReadiness(db, userId, date);
+  const [readiness, anchor] = await Promise.all([
+    resolveReadiness(db, userId, date),
+    fetchPaceAnchor(db, userId).catch(() => null),
+  ]);
   const { paces: finalPaces, advisory: combinedAdvisory } = await computeAdjustedPace(db, userId, {
     sets,
     sessionType,
     readiness,
     weather,
+    anchor,
   });
 
   const notes: string | null = session.description || combinedAdvisory || null;
@@ -474,11 +479,18 @@ export async function suggestSession(
     return hit.value;
   }
 
-  const readiness = await resolveReadiness(db, userId, date);
+  // Readiness and the anchor are resolved once and rebound into both
+  // prescriptions — the post-LLM reshape must not repeat the anchor fetch
+  // (a potential outbound best-effort-curve call).
+  const [readiness, anchor] = await Promise.all([
+    resolveReadiness(db, userId, date),
+    fetchPaceAnchor(db, userId).catch(() => null),
+  ]);
   const { paces, advisory } = await computeAdjustedPace(db, userId, {
     sets: baseStructure,
     sessionType: null,
     readiness,
+    anchor,
   });
   const [historySummary, athleteProfile] = await Promise.all([
     agentMode === "recommended"
@@ -513,6 +525,7 @@ export async function suggestSession(
         sets: finalSets,
         sessionType: trainingType,
         readiness,
+        anchor,
       })
     ).paces;
   } else {

@@ -59,9 +59,10 @@ async function planGuardWarnings(
   userId: string,
   planId: number,
   weekId?: number,
+  prefetchedDetail?: planRepo.TrainingPlanDetail,
 ): Promise<PlanGuardWarning[] | undefined> {
   try {
-    const detail = await planRepo.getWithDetailForUser(db, userId, planId);
+    const detail = prefetchedDetail ?? (await planRepo.getWithDetailForUser(db, userId, planId));
     if (!detail) return undefined;
 
     const ctx = await loadPlanGuardContext(db, userId, planId);
@@ -114,16 +115,18 @@ async function computePlanAggregates(
   userId: string,
   detail: planRepo.TrainingPlanDetail,
 ): Promise<PlanDetailAggregates> {
-  const actuals = await planRepo.actualAggregatesByWeek(db, detail.plan.id);
+  const [actuals, raceEvent] = await Promise.all([
+    planRepo.actualAggregatesByWeek(db, detail.plan.id),
+    detail.plan.raceEventId != null
+      ? raceEventRepo.findByIdForUser(db, userId, detail.plan.raceEventId)
+      : undefined,
+  ]);
   const actualByWeekId = new Map(actuals.map((a) => [a.weekId, a]));
 
   let raceCountdownDays: number | null = null;
-  if (detail.plan.raceEventId != null) {
-    const raceEvent = await raceEventRepo.findByIdForUser(db, userId, detail.plan.raceEventId);
-    if (raceEvent) {
-      const days = daysUntil(toISODate(new Date()), raceEvent.date);
-      raceCountdownDays = days >= 0 ? days : null;
-    }
+  if (raceEvent) {
+    const days = daysUntil(toISODate(new Date()), raceEvent.date);
+    raceCountdownDays = days >= 0 ? days : null;
   }
 
   return { actualByWeekId, raceCountdownDays };
@@ -190,8 +193,11 @@ export async function createTrainingPlan(
       })),
     })),
   });
-  const dto = toTrainingPlanDetailDto(detail, await computePlanAggregates(db, userId, detail));
-  return { ...dto, warnings: await planGuardWarnings(db, userId, detail.plan.id) };
+  const [aggregates, warnings] = await Promise.all([
+    computePlanAggregates(db, userId, detail),
+    planGuardWarnings(db, userId, detail.plan.id, undefined, detail),
+  ]);
+  return { ...toTrainingPlanDetailDto(detail, aggregates), warnings };
 }
 
 export interface UpdateTrainingPlanInput {
@@ -454,6 +460,9 @@ export async function applyPlanRevision(
     changes.map(stripPacesFromChange),
     rationale ?? null,
   );
-  const dto = toTrainingPlanDetailDto(detail, await computePlanAggregates(db, userId, detail));
-  return { ...dto, warnings: await planGuardWarnings(db, userId, planId) };
+  const [aggregates, warnings] = await Promise.all([
+    computePlanAggregates(db, userId, detail),
+    planGuardWarnings(db, userId, planId, undefined, detail),
+  ]);
+  return { ...toTrainingPlanDetailDto(detail, aggregates), warnings };
 }
