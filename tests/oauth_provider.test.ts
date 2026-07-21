@@ -79,6 +79,41 @@ describe("OAuth sign-in page", () => {
   });
 });
 
+describe("OAuth sign-in proxy routes", () => {
+  // These live at the app root, outside clientKeyGuard — without the signature
+  // check they would be an open OTP oracle.
+  it("401s a send with no signed authorization query", async () => {
+    const res = await pagesApp.request("/oauth/sign-in/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "victim@test.local" }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("401s a send whose signature does not verify", async () => {
+    const exp = Math.floor(Date.now() / 1000) + 600;
+    const res = await pagesApp.request("/oauth/sign-in/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: "victim@test.local",
+        oauth_query: `client_id=abc&exp=${exp}&sig=forged&ba_param=client_id&ba_param=exp&ba_param=sig`,
+      }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("401s a verify with no signed authorization query", async () => {
+    const res = await pagesApp.request("/oauth/sign-in/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "victim@test.local", otp: "123456" }),
+    });
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("OAuth consent page", () => {
   it("refuses to render without a signed authorization query", async () => {
     const res = await pagesApp.request("/oauth/consent?client_id=abc");
@@ -108,5 +143,25 @@ describe("OAuth consent page", () => {
   it("renders an unknown scope verbatim rather than dropping it", async () => {
     const html = await consentPage("Some Client", null, ["write:everything"]).text();
     expect(html).toContain("write:everything");
+  });
+
+  // client_uri comes from unauthenticated DCR, so the scheme is attacker-chosen.
+  it("refuses to hyperlink a non-http client URI", async () => {
+    for (const uri of ["javascript:alert(1)", "data:text/html,<script>x</script>", "not a url"]) {
+      const html = await consentPage("Some Client", uri, ["profile"]).text();
+      expect(html).toContain('<span class="oauth-client">Some Client</span>');
+      expect(html).not.toContain("<a class=\"oauth-client\"");
+    }
+  });
+
+  it("hyperlinks a plain https client URI", async () => {
+    const html = await consentPage("Some Client", "https://claude.ai", ["profile"]).text();
+    expect(html).toContain('href="https://claude.ai"');
+  });
+
+  it("denies framing", async () => {
+    const res = consentPage("Some Client", null, ["profile"]);
+    expect(res.headers.get("X-Frame-Options")).toBe("DENY");
+    expect(res.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
   });
 });

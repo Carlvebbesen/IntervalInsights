@@ -1,12 +1,43 @@
+import { constantTimeEqual, makeSignature } from "better-auth/crypto";
 import type { Context, Env, Hono } from "hono";
 import { auth } from "../auth";
+import { config } from "../config";
 import { logger } from "../logger";
 import { MCP_SCOPES, OAUTH_CONSENT_PAGE, OAUTH_LOGIN_PAGE } from "../services/oauth_server_tokens";
 import { shell } from "./pages";
 
+/**
+ * These routes sit outside `/api/*` so `clientKeyGuard` never blocks a
+ * connector's browser flow — which means the provider's own signature on the
+ * authorize query is the only thing keeping them from being an open OTP oracle.
+ * Mirrors the plugin's `verifyOAuthQueryParams`.
+ */
+async function signedQueryIsValid(oauthQuery: string | undefined): Promise<boolean> {
+  if (!oauthQuery) return false;
+  const params = new URLSearchParams(oauthQuery);
+  const signatures = params.getAll("sig");
+  if (signatures.length !== 1) return false;
+  const expiry = Number(params.get("exp"));
+  if (!Number.isFinite(expiry) || new Date(expiry * 1000) < new Date()) return false;
+
+  params.delete("sig");
+  const canonical = new URLSearchParams();
+  for (const [key, value] of [...params.entries()].sort(([ka, va], [kb, vb]) =>
+    ka === kb ? (va < vb ? -1 : va > vb ? 1 : 0) : ka < kb ? -1 : 1,
+  )) {
+    canonical.append(key, value);
+  }
+  return constantTimeEqual(
+    signatures[0],
+    await makeSignature(canonical.toString(), config.BETTER_AUTH_SECRET),
+  );
+}
+
 const HTML_HEADERS = {
   "Content-Type": "text/html; charset=utf-8",
   "Cache-Control": "no-store",
+  "X-Frame-Options": "DENY",
+  "Content-Security-Policy": "frame-ancestors 'none'",
 } as const;
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -14,6 +45,15 @@ const SCOPE_LABELS: Record<string, string> = {
   email: "Your email address",
   offline_access: "Continued access while you are not signed in",
 };
+
+function isHttpUrl(value: string | null): value is string {
+  if (!value) return false;
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
 
 function escapeHtml(value: string): string {
   return value
@@ -136,7 +176,10 @@ function signInPage(): Response {
         try {
           if (stage === "email") {
             if (!emailEl.value.trim()) throw new Error("Enter your email address.");
-            await post("/oauth/sign-in/send", { email: emailEl.value.trim() });
+            await post("/oauth/sign-in/send", {
+              email: emailEl.value.trim(),
+              oauth_query: signedQuery(),
+            });
             stage = "otp";
             emailEl.disabled = true;
             otpStep.classList.remove("hidden");
@@ -175,8 +218,9 @@ export function consentPage(
   const scopeItems = scopes
     .map((s) => `<li>${escapeHtml(SCOPE_LABELS[s] ?? s)}</li>`)
     .join("\n      ");
-  const clientLine = clientUri
-    ? `<a class="oauth-client" href="${escapeHtml(clientUri)}" rel="noopener noreferrer nofollow" target="_blank">${escapeHtml(clientName)}</a>`
+  const safeUri = isHttpUrl(clientUri) ? clientUri : null;
+  const clientLine = safeUri
+    ? `<a class="oauth-client" href="${escapeHtml(safeUri)}" rel="noopener noreferrer nofollow" target="_blank">${escapeHtml(clientName)}</a>`
     : `<span class="oauth-client">${escapeHtml(clientName)}</span>`;
 
   const html = shell(
@@ -248,16 +292,22 @@ export function registerOAuthProviderPages<E extends Env>(app: Hono<E>): void {
   });
 
   app.post("/oauth/sign-in/send", async (c) => {
-    const { email } = await c.req.json<{ email?: string }>();
-    if (!email) return c.json({ error: "Email is required" }, 400);
+    const body = await c.req.json<{ email?: string; oauth_query?: string }>();
+    if (!(await signedQueryIsValid(body.oauth_query))) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    if (!body.email) return c.json({ error: "Email is required" }, 400);
     return forwardToAuth(c, "/api/auth/email-otp/send-verification-otp", {
-      email,
+      email: body.email,
       type: "sign-in",
     });
   });
 
   app.post("/oauth/sign-in/verify", async (c) => {
     const body = await c.req.json<{ email?: string; otp?: string; oauth_query?: string }>();
+    if (!(await signedQueryIsValid(body.oauth_query))) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
     if (!body.email || !body.otp) return c.json({ error: "Email and code are required" }, 400);
     return forwardToAuth(c, "/api/auth/sign-in/email-otp", {
       email: body.email,

@@ -12,14 +12,28 @@ export type McpTokenClaims = {
 };
 
 const JWKS_TTL_MS = 5 * 60_000;
+// An unknown `kid` forces a refetch, so an attacker minting random kids could
+// drive one query per request without it.
+const JWKS_REFETCH_COOLDOWN_MS = 10_000;
 let jwksCache: { at: number; keySet: ReturnType<typeof createLocalJWKSet> } | null = null;
 
 async function getKeySet(force: boolean): Promise<ReturnType<typeof createLocalJWKSet>> {
-  if (!force && jwksCache && Date.now() - jwksCache.at < JWKS_TTL_MS) return jwksCache.keySet;
+  const ttl = force ? JWKS_REFETCH_COOLDOWN_MS : JWKS_TTL_MS;
+  if (jwksCache && Date.now() - jwksCache.at < ttl) return jwksCache.keySet;
   const jwks = (await auth.api.getJwks()) as JSONWebKeySet;
   const keySet = createLocalJWKSet(jwks);
   jwksCache = { at: Date.now(), keySet };
   return keySet;
+}
+
+async function clientIsUsable(clientId: unknown): Promise<boolean> {
+  if (typeof clientId !== "string") return false;
+  const [client] = await db
+    .select({ disabled: oauthClients.disabled })
+    .from(oauthClients)
+    .where(eq(oauthClients.clientId, clientId))
+    .limit(1);
+  return !!client && !client.disabled;
 }
 
 async function verifyJwtAccessToken(token: string): Promise<JWTPayload | null> {
@@ -85,6 +99,7 @@ export async function verifyMcpAccessToken(token: string): Promise<McpTokenClaim
     const payload = await verifyJwtAccessToken(token);
     if (payload) {
       if (typeof payload.sub !== "string") return null;
+      if (!(await clientIsUsable(payload.azp))) return null;
       const scope = typeof payload.scope === "string" ? payload.scope : "";
       return { userId: payload.sub, scopes: scope.split(" ").filter(Boolean) };
     }

@@ -22,6 +22,11 @@ export const mcpAuth = createMiddleware<TMcpEnv>(async (c, next) => {
   if (!dbUser) {
     return c.json({ error: "Could not resolve user" }, 401);
   }
+  // Banning revokes sessions, but `oauth_access_tokens.session_id` is ON DELETE
+  // SET NULL, so an outstanding grant survives it — this is the only gate.
+  if (dbUser.banned) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
 
   c.set("userId", dbUser.id);
   c.set("user", dbUser);

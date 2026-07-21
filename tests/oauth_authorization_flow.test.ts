@@ -123,7 +123,7 @@ describe("full authorization-code flow", () => {
     const send = await pagesApp.request("/oauth/sign-in/send", {
       method: "POST",
       headers: jsonHeaders(),
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, oauth_query: query }),
     });
     expect(send.ok).toBe(true);
     expect(otpCapture.last?.email).toBe(email);

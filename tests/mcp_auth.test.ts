@@ -121,7 +121,12 @@ describe("mcpAuth", () => {
 
   it("accepts a JWT access token and resolves the user and scopes", async () => {
     const userId = await seedUser();
-    const token = await signAccessToken({ sub: userId, scope: "profile email offline_access" });
+    const clientId = await seedClient();
+    const token = await signAccessToken({
+      sub: userId,
+      azp: clientId,
+      scope: "profile email offline_access",
+    });
 
     const res = await post(token);
     expect(res.status).toBe(200);
@@ -132,13 +137,19 @@ describe("mcpAuth", () => {
 
   it("401s a JWT issued for a different audience", async () => {
     const userId = await seedUser();
-    const token = await signAccessToken({ sub: userId, aud: "https://elsewhere.test/mcp" });
+    const clientId = await seedClient();
+    const token = await signAccessToken({
+      sub: userId,
+      azp: clientId,
+      aud: "https://elsewhere.test/mcp",
+    });
 
     expect((await post(token)).status).toBe(401);
   });
 
   it("401s a JWT whose subject is not a known user", async () => {
-    const token = await signAccessToken({ sub: randomUUID(), scope: "profile" });
+    const clientId = await seedClient();
+    const token = await signAccessToken({ sub: randomUUID(), azp: clientId, scope: "profile" });
 
     expect((await post(token)).status).toBe(401);
   });
@@ -174,12 +185,56 @@ describe("mcpAuth", () => {
 
     expect((await post(token)).status).toBe(401);
   });
+
+  it("401s a JWT access token whose client has been disabled", async () => {
+    const userId = await seedUser();
+    const clientId = await seedClient({ disabled: true });
+    const token = await signAccessToken({ sub: userId, azp: clientId, scope: "profile" });
+
+    expect((await post(token)).status).toBe(401);
+  });
+
+  it("401s a JWT access token from a client that no longer exists", async () => {
+    const userId = await seedUser();
+    const token = await signAccessToken({ sub: userId, azp: "gone", scope: "profile" });
+
+    expect((await post(token)).status).toBe(401);
+  });
+
+  it("401s a JWT minted by a different issuer", async () => {
+    const userId = await seedUser();
+    const clientId = await seedClient();
+    const token = await signAccessToken({
+      sub: userId,
+      azp: clientId,
+      iss: "https://evil.test/api/auth",
+    });
+
+    expect((await post(token)).status).toBe(401);
+  });
+
+  // Banning revokes sessions, but oauth_access_tokens.session_id is ON DELETE
+  // SET NULL — so the grant outlives the ban and this check is the only gate.
+  it("403s a banned user still holding a valid grant", async () => {
+    const userId = await seedUser();
+    const clientId = await seedClient();
+    const opaque = await seedOpaqueToken({ userId, clientId });
+    const jwt = await signAccessToken({ sub: userId, azp: clientId, scope: "profile" });
+    expect((await post(opaque)).status).toBe(200);
+
+    await getPool().query(`UPDATE users SET banned = true WHERE id = $1`, [userId]);
+    await getPool().query(`DELETE FROM sessions WHERE user_id = $1`, [userId]);
+
+    expect((await post(opaque)).status).toBe(403);
+    expect((await post(jwt)).status).toBe(403);
+  });
 });
 
 describe("mcpRouter discovery", () => {
   it("rejects GET /mcp with 405 even when authenticated (stateless server)", async () => {
     const userId = await seedUser();
-    const token = await signAccessToken({ sub: userId, scope: "profile" });
+    const clientId = await seedClient();
+    const token = await signAccessToken({ sub: userId, azp: clientId, scope: "profile" });
 
     const res = await routerFetch(
       new Request("http://test/mcp", {

@@ -288,7 +288,6 @@ async function main() {
       source,
       user: user
         ? {
-            email: user.email,
             maxHeartRate: user.maxHeartRate ?? null,
             processHeartRate: user.processHeartRate ?? null,
           }
