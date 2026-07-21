@@ -79,13 +79,36 @@ export function resolvePlanBuilderModelName(configured?: string | null): string 
   return configured?.trim() || DEFAULT_PLAN_BUILDER_MODEL;
 }
 
+// The intake interviewer needs better instruction/tool discipline than
+// gpt-4o-mini (observed: weekday-convention slips, inferred volume ceilings)
+// but must stay a fast, cheap chat model — reasoning tiers are overkill here.
+const DEFAULT_INTAKE_MODEL = "gpt-4.1-mini";
+
+export function resolveIntakeModelName(configured?: string | null): string {
+  return configured?.trim() || DEFAULT_INTAKE_MODEL;
+}
+
+export function getIntakeModel(): ChatOpenAI {
+  const model = resolveIntakeModelName(config.PLAN_INTAKE_MODEL);
+  return new ChatOpenAI({
+    model,
+    temperature: 0,
+    maxRetries: 2,
+    timeout: 45_000,
+    callbacks: [new TokenUsageCallback(model)],
+  });
+}
+
 export function getPlanBuilderModel(): ChatOpenAI {
   const model = resolvePlanBuilderModelName(config.PLAN_BUILDER_MODEL);
+  const effort = config.PLAN_BUILDER_REASONING_EFFORT;
   return new ChatOpenAI({
     model,
     maxRetries: 2,
     timeout: 300_000,
     callbacks: [new TokenUsageCallback(model)],
+    // Unset keeps the provider default; the option is ignored by non-reasoning models.
+    ...(effort ? { reasoning: { effort } } : {}),
   });
 }
 

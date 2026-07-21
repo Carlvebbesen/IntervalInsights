@@ -23,11 +23,87 @@ import type {
   TrainingType,
 } from "../schema";
 import type { PlanRevisionChange, WorkoutStructureSet } from "../schemas/agent_schemas";
+import { loadPlanGuardContext } from "../services/plan_context_service";
+import {
+  enforcePlanWriteInvariants,
+  evaluatePlanWeek,
+  type PlanGuardSession,
+  type PlanGuardWarning,
+  weekVolumeMeters,
+} from "../services/plan_guard_service";
 import { sweepOverduePlannedSessions } from "../services/planned_session_matcher";
 import { toISODate } from "../services/utils";
 import type { IGlobalBindings } from "../types/IRouters";
 
 type Db = IGlobalBindings["db"];
+
+function toGuardSession(s: planRepo.PlannedSessionDao): PlanGuardSession {
+  return {
+    date: s.date,
+    sessionType: s.sessionType,
+    title: s.title,
+    description: s.description,
+    structure: s.structure ?? null,
+  };
+}
+
+/**
+ * Advisory physiological check over the plan's weeks as they now stand.
+ * Deliberately never throws and never mutates: a caller may legitimately want a
+ * big week, and running the week-scoped plan-builder guards for real would drop
+ * sibling sessions the caller never touched. `weekId` narrows the report to the
+ * week a single-session write landed in.
+ */
+async function planGuardWarnings(
+  db: Db,
+  userId: string,
+  planId: number,
+  weekId?: number,
+  prefetchedDetail?: planRepo.TrainingPlanDetail,
+): Promise<PlanGuardWarning[] | undefined> {
+  try {
+    const detail = prefetchedDetail ?? (await planRepo.getWithDetailForUser(db, userId, planId));
+    if (!detail) return undefined;
+
+    const ctx = await loadPlanGuardContext(db, userId, planId);
+
+    const sessionsByWeekId = new Map<number, PlanGuardSession[]>();
+    for (const session of detail.sessions) {
+      const bucket = sessionsByWeekId.get(session.weekId);
+      if (bucket) bucket.push(toGuardSession(session));
+      else sessionsByWeekId.set(session.weekId, [toGuardSession(session)]);
+    }
+
+    const warnings: PlanGuardWarning[] = [];
+    let peakPrecedingWeekDistanceMeters: number | null = null;
+    detail.weeks.forEach((week, ordinal) => {
+      const sessions = sessionsByWeekId.get(week.id) ?? [];
+      if (weekId === undefined || week.id === weekId) {
+        warnings.push(
+          ...evaluatePlanWeek(
+            ctx,
+            {
+              weekIndex: week.weekIndex,
+              ordinal,
+              phase: week.phase,
+              peakPrecedingWeekDistanceMeters,
+            },
+            sessions,
+          ),
+        );
+      }
+      peakPrecedingWeekDistanceMeters = Math.max(
+        peakPrecedingWeekDistanceMeters ?? 0,
+        weekVolumeMeters(sessions),
+      );
+    });
+
+    return warnings;
+  } catch {
+    // Guard evaluation is advisory — never let it fail a write that succeeded.
+    return undefined;
+  }
+}
 
 function daysUntil(fromISO: string, targetISO: string): number {
   const ms = Date.parse(`${targetISO}T00:00:00Z`) - Date.parse(`${fromISO}T00:00:00Z`);
@@ -39,16 +115,18 @@ async function computePlanAggregates(
   userId: string,
   detail: planRepo.TrainingPlanDetail,
 ): Promise<PlanDetailAggregates> {
-  const actuals = await planRepo.actualAggregatesByWeek(db, detail.plan.id);
+  const [actuals, raceEvent] = await Promise.all([
+    planRepo.actualAggregatesByWeek(db, detail.plan.id),
+    detail.plan.raceEventId != null
+      ? raceEventRepo.findByIdForUser(db, userId, detail.plan.raceEventId)
+      : undefined,
+  ]);
   const actualByWeekId = new Map(actuals.map((a) => [a.weekId, a]));
 
   let raceCountdownDays: number | null = null;
-  if (detail.plan.raceEventId != null) {
-    const raceEvent = await raceEventRepo.findByIdForUser(db, userId, detail.plan.raceEventId);
-    if (raceEvent) {
-      const days = daysUntil(toISODate(new Date()), raceEvent.date);
-      raceCountdownDays = days >= 0 ? days : null;
-    }
+  if (raceEvent) {
+    const days = daysUntil(toISODate(new Date()), raceEvent.date);
+    raceCountdownDays = days >= 0 ? days : null;
   }
 
   return { actualByWeekId, raceCountdownDays };
@@ -105,8 +183,21 @@ export async function createTrainingPlan(
   }
   await assertRaceEventOwned(db, userId, input.raceEventId);
 
-  const detail = await planRepo.createWithChildren(db, userId, input);
-  return toTrainingPlanDetailDto(detail, await computePlanAggregates(db, userId, detail));
+  const detail = await planRepo.createWithChildren(db, userId, {
+    ...input,
+    weeks: input.weeks?.map((week) => ({
+      ...week,
+      sessions: week.sessions?.map((session) => ({
+        ...session,
+        structure: enforcePlanWriteInvariants(session.structure),
+      })),
+    })),
+  });
+  const [aggregates, warnings] = await Promise.all([
+    computePlanAggregates(db, userId, detail),
+    planGuardWarnings(db, userId, detail.plan.id, undefined, detail),
+  ]);
+  return { ...toTrainingPlanDetailDto(detail, aggregates), warnings };
 }
 
 export interface UpdateTrainingPlanInput {
@@ -189,7 +280,10 @@ export async function addWeek(
     targetLoad: input.targetLoad ?? null,
     notes: input.notes ?? null,
   });
-  return toTrainingPlanWeekDto(week);
+  return {
+    ...toTrainingPlanWeekDto(week),
+    warnings: await planGuardWarnings(db, userId, planId, week.id),
+  };
 }
 
 export interface UpdateWeekInput {
@@ -255,10 +349,13 @@ export async function addSession(
     sessionType: input.sessionType,
     title: input.title,
     description: input.description ?? null,
-    structure: input.structure ?? null,
+    structure: enforcePlanWriteInvariants(input.structure) ?? null,
     sortOrder: input.sortOrder ?? 0,
   });
-  return toPlannedSessionDto(session);
+  return {
+    ...toPlannedSessionDto(session),
+    warnings: await planGuardWarnings(db, userId, planId, session.weekId),
+  };
 }
 
 export interface UpdateSessionInput {
@@ -284,14 +381,18 @@ export async function updateSession(
   if (patch.sessionType !== undefined) updates.sessionType = patch.sessionType;
   if (patch.title !== undefined) updates.title = patch.title;
   if (patch.description !== undefined) updates.description = patch.description;
-  if (patch.structure !== undefined) updates.structure = patch.structure;
+  if (patch.structure !== undefined)
+    updates.structure = enforcePlanWriteInvariants(patch.structure);
   if (patch.status !== undefined) updates.status = patch.status;
   if (patch.sortOrder !== undefined) updates.sortOrder = patch.sortOrder;
   if (patch.weekId !== undefined) updates.weekId = patch.weekId;
 
   const updated = await planRepo.updateSessionForUser(db, userId, planId, sessionId, updates);
   if (!updated) throw new AppError(404, "Planned session not found in plan");
-  return toPlannedSessionDto(updated);
+  return {
+    ...toPlannedSessionDto(updated),
+    warnings: await planGuardWarnings(db, userId, planId, updated.weekId),
+  };
 }
 
 export async function deleteSession(
@@ -326,6 +427,25 @@ export async function unlinkSession(
   return toPlannedSessionDto(session);
 }
 
+function stripPacesFromChange(change: PlanRevisionChange): PlanRevisionChange {
+  if (change.kind === "add_session") {
+    return {
+      ...change,
+      session: {
+        ...change.session,
+        structure: enforcePlanWriteInvariants(change.session.structure),
+      },
+    };
+  }
+  if (change.kind === "update_session" && change.patch.structure !== undefined) {
+    return {
+      ...change,
+      patch: { ...change.patch, structure: enforcePlanWriteInvariants(change.patch.structure) },
+    };
+  }
+  return change;
+}
+
 export async function applyPlanRevision(
   db: Db,
   userId: string,
@@ -337,8 +457,12 @@ export async function applyPlanRevision(
     db,
     userId,
     planId,
-    changes,
+    changes.map(stripPacesFromChange),
     rationale ?? null,
   );
-  return toTrainingPlanDetailDto(detail, await computePlanAggregates(db, userId, detail));
+  const [aggregates, warnings] = await Promise.all([
+    computePlanAggregates(db, userId, detail),
+    planGuardWarnings(db, userId, planId, undefined, detail),
+  ]);
+  return { ...toTrainingPlanDetailDto(detail, aggregates), warnings };
 }

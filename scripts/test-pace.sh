@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# Runs the REAL pace-algorithm tests (tests/pace_service.test.ts) against a
+# Runs the REAL pace-algorithm tests (tests/pace_service.test.ts, tests/prescription_pace_service.test.ts) against a
 # disposable Postgres, using the dedicated bun config (tests/bunfig.pace.toml)
 # that leaves pace_service + lap_derivation_service UNMOCKED. This mirrors
 # scripts/test.sh's throwaway-DB provisioning; the only differences are the
 # `--config=` flag (which replaces the default mocking preload) and the fixed
-# target file.
+# target files.
 #
 # Usage: bun run test:pace
 set -euo pipefail
@@ -16,7 +16,7 @@ DB_PASS="test_pw"
 DB_NAME="interval_test"
 IMAGE="postgres:18"
 CONFIG="tests/bunfig.pace.toml"
-TARGET="tests/pace_service.test.ts"
+TARGETS=("tests/pace_service.test.ts" "tests/prescription_pace_service.test.ts")
 
 cleanup() {
   docker rm -fv "$CONTAINER" >/dev/null 2>&1 || true
@@ -54,4 +54,4 @@ bunx drizzle-kit export \
 export DATABASE_URL="postgres://$DB_USER:$DB_PASS@localhost:$HOST_PORT/$DB_NAME"
 export TEST_DATABASE_URL="$DATABASE_URL"
 echo "▸ Running pace tests against $DATABASE_URL (config: $CONFIG)"
-bun --config="$CONFIG" test "$TARGET" "$@"
+bun --config="$CONFIG" test "${TARGETS[@]}" "$@"

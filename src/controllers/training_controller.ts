@@ -20,7 +20,7 @@ import type { CoachArtifact, CoachChatRequest } from "../schemas/api_schemas";
 import { isReviewUser } from "../services/review_account";
 import type { IGlobalBindings, TStravaEnv } from "../types/IRouters";
 import { clearTurnActive, isTurnActive, markTurnActive } from "./active_turns";
-import { startSseHeartbeat } from "./sse_heartbeat";
+import { buildSafeWrite, startSseHeartbeat } from "./sse_heartbeat";
 
 type Db = IGlobalBindings["db"];
 
@@ -122,22 +122,7 @@ export function streamCoachChat(c: Context<TStravaEnv>, body: CoachChatRequest):
     const abort = new AbortController();
     stream.onAbort(() => abort.abort());
 
-    let clientGone = false;
-    // Serialize writes so the concurrent heartbeat can't interleave a `ping`
-    // into the middle of another SSE event.
-    let chain: Promise<void> = Promise.resolve();
-    const safeWrite = (event: string, data: string) => {
-      chain = chain.then(async () => {
-        if (clientGone) return;
-        try {
-          await stream.writeSSE({ event, data });
-        } catch {
-          clientGone = true;
-          abort.abort();
-        }
-      });
-      return chain;
-    };
+    const safeWrite = buildSafeWrite(stream, abort);
 
     let ctx: CoachCtx;
     try {

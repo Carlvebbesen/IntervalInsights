@@ -25,7 +25,15 @@ function baselineBlock(ctx: AthleteContext): string {
     b.longestRunLast30dMeters != null
       ? `${(b.longestRunLast30dMeters / 1000).toFixed(1)} km`
       : "unknown";
-  return `  - Real baseline volume (ANCHOR week-1 to this, NOT the goal): trailing 4-week avg ${avg}; longest run last 30d ${longest}`;
+  const baseline = `  - Real baseline volume (ANCHOR week-1 to this, NOT the goal): trailing 4-week avg ${avg}; longest run last 30d ${longest}`;
+  const proven = b.provenWeeklyMeters;
+  if (proven == null || (b.trailing4WeekAvgWeeklyMeters ?? 0) >= proven) return baseline;
+  const provenLongest =
+    b.provenLongestRunMeters != null
+      ? `, longest run ${(b.provenLongestRunMeters / 1000).toFixed(1)} km`
+      : "";
+  return `${baseline}
+  - Proven capacity (last 6 months): ~${(proven / 1000).toFixed(1)} km/week${provenLongest} — the athlete can RETURN toward this substantially faster than a new runner could build; week 1 still anchors to the current baseline.`;
 }
 
 function raceAbilityBlock(ctx: AthleteContext): string {
@@ -82,7 +90,8 @@ ${weeks || "  - no recent runs on record"}`;
 // constraint. Deterministic guards still run after generation; where a constraint
 // conflicts with an explicit structured input (e.g. a "long run Saturday"
 // constraint vs a `preferredLongRunDay` input), the structured input wins because
-// assembleWeekSessions re-places the long run deterministically after the LLM.
+// assembleWeekSessionsWithNotices re-places the long run deterministically
+// after the LLM.
 export function constraintsBlock(constraintsText: string | null | undefined): string {
   const text = constraintsText?.trim();
   if (!text) return "";
@@ -94,6 +103,19 @@ export function constraintsBlock(constraintsText: string | null | undefined): st
     Saturday, a track/group intervals session on Wednesday evening).
   - Do NOT schedule sessions on days the athlete says they are unavailable.
   - Otherwise honor the stated logistics as closely as the training goals allow.`;
+}
+
+// Qualitative context from the pre-plan intake chat: what the interviewer
+// learned that is NOT in the structured inputs (injury story, history,
+// preferences, motivations, method preference).
+export function intakeBriefBlock(briefText: string | null | undefined): string {
+  const text = briefText?.trim();
+  if (!text) return "";
+  return `
+  ### ATHLETE INTERVIEW NOTES (from the intake conversation)
+  A pre-plan intake interview surfaced this qualitative context — weigh it when
+  shaping the plan:
+  "${text}"`;
 }
 
 function raceBlock(ctx: AthleteContext): string {
@@ -125,6 +147,7 @@ export async function invokeProposeMacroAgent(
   - Goal: ${input.goalText ?? "(none stated)"}
 ${raceBlock(context)}
 ${constraintsBlock(input.constraintsText)}
+${intakeBriefBlock(input.intakeBriefText)}
 
   ### ATHLETE CONTEXT
 ${athleteContextBlock(context)}
@@ -144,6 +167,12 @@ ${feedbackBlock}
     of injury. If baseline is unknown, start conservatively.
   - Ramp volume gradually; avoid week-over-week jumps beyond ~20%, with periodic
     recovery-week drops.
+  - Hold weekly volume flat for 2–3 weeks, then take a visible step — do NOT
+    creep the volume a few percent every week. Deterministic shaping quantizes
+    weekly volumes onto a coarse step grid anyway.
+  - When the athlete has proven capacity (last 6 months) above their current
+    trailing volume, plan a RETURN toward it substantially faster than a new
+    runner could build — week 1 still anchors to the current baseline.
   - Use the athlete's current race-pace ability (VDOT / predicted times) to
     judge whether the stated goal is realistic and to shape phase emphasis. Do
     NOT invent paces — paces are computed later.
@@ -153,6 +182,9 @@ ${feedbackBlock}
     add a short accommodation note in the notes of the affected weeks.
   - Use taper/race phases only in the final weeks, and only when a race anchors
     the plan.
+  - keySessions must be deliverable under the plan's quality caps: base-phase
+    weeks list at most ONE quality key session; build and peak weeks may list
+    two. Never promise both a tempo and an interval set in the same base week.
   - Do NOT output paces, heart-rate targets, or per-session structure — only
     weekly intent and key-session labels.`;
 

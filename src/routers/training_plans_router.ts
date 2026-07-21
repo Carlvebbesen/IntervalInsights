@@ -1,19 +1,24 @@
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
+import { IntakeDraftSchema } from "../agent/planning/intake/intake_state";
 import {
   DEFAULT_INTENSITY_AGGRESSIVENESS,
   DEFAULT_VOLUME_AGGRESSIVENESS,
   INTENSITY_AGGRESSIVENESS,
   VOLUME_AGGRESSIVENESS,
 } from "../agent/planning/plan_builder_state";
+import * as intakeController from "../controllers/intake_controller";
 import * as planBuilderController from "../controllers/plan_builder_controller";
 import * as trainingPlanController from "../controllers/training_plan_controller";
 import {
   dailyQuota,
   PLAN_BUILDER_DAILY_MAX,
   PLAN_BUILDER_QUOTA,
+  PLAN_INTAKE_DAILY_MAX,
+  PLAN_INTAKE_QUOTA,
 } from "../middlewares/quota_middleware";
+import { requireRole } from "../middlewares/role_middleware";
 import {
   plannedSessionStatusEnum,
   planWeekPhaseEnum,
@@ -23,8 +28,12 @@ import {
 import { WorkoutStructureSetSchema } from "../schemas/agent_schemas";
 import {
   DeleteTrainingPlanResponseSchema,
+  DUPLICATE_WEEK_INDEX_MESSAGE,
+  duplicateWeekIndexPositions,
   ErrorSchema,
+  PlannedSessionInputSchema,
   PlannedSessionSchema,
+  PlanWeekInputSchema,
   TrainingPlanDetailSchema,
   TrainingPlanListResponseSchema,
   TrainingPlanSchema,
@@ -33,6 +42,10 @@ import {
 import type { TGlobalEnv } from "../types/IRouters";
 
 const trainingPlansRouter = new Hono<TGlobalEnv>();
+
+// Training plans are a premium feature in full — plan CRUD and the plan-builder
+// wizard's generate/resume alike, matching coach chat (`training_router.ts`).
+trainingPlansRouter.use("*", requireRole("premium", "admin"));
 
 function atLeastOneField(data: Record<string, unknown>) {
   return Object.values(data).some((v) => v !== undefined);
@@ -68,25 +81,6 @@ trainingPlansRouter.get(
   },
 );
 
-const createSessionSchema = z.object({
-  date: z.string().date(),
-  sessionType: z.enum(trainingTypeEnum.enumValues),
-  title: z.string().min(1),
-  description: z.string().min(1).optional(),
-  structure: z.array(WorkoutStructureSetSchema).optional(),
-  sortOrder: z.number().int().optional(),
-});
-
-const createWeekSchema = z.object({
-  weekIndex: z.number().int().nonnegative(),
-  startDate: z.string().date(),
-  phase: z.enum(planWeekPhaseEnum.enumValues).optional(),
-  targetDistanceMeters: z.number().int().positive().optional(),
-  targetLoad: z.number().int().positive().optional(),
-  notes: z.string().min(1).optional(),
-  sessions: z.array(createSessionSchema).optional(),
-});
-
 const createTrainingPlanSchema = z
   .object({
     name: z.string().min(1),
@@ -96,28 +90,24 @@ const createTrainingPlanSchema = z
     goalText: z.string().min(1).optional(),
     constraintsText: z.string().min(1).optional(),
     status: z.enum(trainingPlanStatusEnum.enumValues).optional(),
-    weeks: z.array(createWeekSchema).optional(),
+    weeks: z.array(PlanWeekInputSchema).optional(),
   })
   .superRefine((data, ctx) => {
     if (!data.weeks) return;
-    const seen = new Set<number>();
-    data.weeks.forEach((week, index) => {
-      if (seen.has(week.weekIndex)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Duplicate weekIndex values are not allowed within a plan",
-          path: ["weeks", index, "weekIndex"],
-        });
-      }
-      seen.add(week.weekIndex);
-    });
+    for (const index of duplicateWeekIndexPositions(data.weeks)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: DUPLICATE_WEEK_INDEX_MESSAGE,
+        path: ["weeks", index, "weekIndex"],
+      });
+    }
   });
 
 trainingPlansRouter.post(
   "/",
   describeRoute({
     description:
-      "Create a training plan, optionally with nested weeks and sessions in a single call.",
+      "Create a training plan, optionally with nested weeks and sessions in a single call. Target paces are stripped from any submitted structure (the plan stores intent, not paces). The response may carry advisory `warnings` where a week breaches the athlete's ramp/polarization/volume guards — the write still applies.",
     responses: {
       201: {
         description: "Created training plan with its full week/session tree",
@@ -156,6 +146,7 @@ const generatePlanSchema = z
     endDate: z.string().date(),
     goalText: z.string().max(2000).optional(),
     constraintsText: z.string().max(2000).optional(),
+    intakeBriefText: z.string().max(2000).optional(),
     volumeAggressiveness: z.enum(VOLUME_AGGRESSIVENESS).default(DEFAULT_VOLUME_AGGRESSIVENESS),
     intensityAggressiveness: z
       .enum(INTENSITY_AGGRESSIVENESS)
@@ -163,6 +154,7 @@ const generatePlanSchema = z
     maxWeeklyVolumeMeters: z.number().int().positive().optional(),
     daysPerWeek: z.number().int().min(3).max(7).optional(),
     preferredLongRunDay: z.number().int().min(0).max(6).optional(),
+    crossTrainingPerWeek: z.number().int().min(0).max(2).optional(),
   })
   .refine((data) => data.endDate >= data.startDate, {
     message: "endDate must be on or after startDate",
@@ -243,6 +235,76 @@ trainingPlansRouter.post(
         : ({ action } as const);
     return planBuilderController.resumeTrainingPlan(c, threadId, resume);
   },
+);
+
+const intakeTurnSchema = z.object({
+  threadId: z
+    .string()
+    .regex(/^plan-intake:[0-9a-f-]{36}$/)
+    .optional(),
+  message: z.string().min(1).max(2000),
+});
+
+const IntakeTurnResponseSchema = z.object({
+  threadId: z.string(),
+  reply: z.string(),
+  draft: IntakeDraftSchema,
+  ready: z.boolean(),
+  brief: z.string().optional(),
+});
+
+const IntakeResetResponseSchema = z.object({ success: z.literal(true) });
+
+trainingPlansRouter.post(
+  "/intake",
+  describeRoute({
+    description:
+      "One turn of the pre-plan intake chat. Omit threadId to start a new conversation; pass it back to continue. The interviewer fills the plan-builder draft conversationally; `ready: true` (with `brief`) means the intake is finalized and the draft can be submitted to POST .../generate.",
+    responses: {
+      200: {
+        description: "Intake turn result",
+        content: { "application/json": { schema: resolver(IntakeTurnResponseSchema) } },
+      },
+      404: {
+        description: "Unknown thread or not owned by the authenticated user",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      409: {
+        description: "A reply is already in progress for this conversation",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      429: {
+        description: "Daily intake quota reached",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  dailyQuota(PLAN_INTAKE_QUOTA, PLAN_INTAKE_DAILY_MAX),
+  validator("json", intakeTurnSchema),
+  async (c) => c.json(await intakeController.runIntakeTurn(c, c.req.valid("json"))),
+);
+
+const intakeThreadParamSchema = z.object({
+  threadId: z.string().regex(/^plan-intake:[0-9a-f-]{36}$/),
+});
+
+trainingPlansRouter.delete(
+  "/intake/:threadId",
+  describeRoute({
+    description: "Reset (delete) an intake conversation thread.",
+    responses: {
+      200: {
+        description: "Reset result",
+        content: { "application/json": { schema: resolver(IntakeResetResponseSchema) } },
+      },
+      404: {
+        description: "Unknown thread or not owned by the authenticated user",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("param", intakeThreadParamSchema),
+  async (c) => c.json(await intakeController.resetIntake(c, c.req.valid("param").threadId)),
 );
 
 const planIdParamSchema = z.object({
@@ -352,19 +414,13 @@ trainingPlansRouter.delete(
   },
 );
 
-const addWeekSchema = z.object({
-  weekIndex: z.number().int().nonnegative(),
-  startDate: z.string().date(),
-  phase: z.enum(planWeekPhaseEnum.enumValues).optional(),
-  targetDistanceMeters: z.number().int().positive().optional(),
-  targetLoad: z.number().int().positive().optional(),
-  notes: z.string().min(1).optional(),
-});
+const addWeekSchema = PlanWeekInputSchema.omit({ sessions: true });
 
 trainingPlansRouter.post(
   "/:id/weeks",
   describeRoute({
-    description: "Add a week to a training plan.",
+    description:
+      "Add a week to a training plan. The response may carry advisory `warnings` for the week's guard breaches — the write still applies.",
     responses: {
       201: {
         description: "Created week",
@@ -485,18 +541,14 @@ trainingPlansRouter.delete(
 
 const addSessionSchema = z.object({
   weekId: z.number().int().positive(),
-  date: z.string().date(),
-  sessionType: z.enum(trainingTypeEnum.enumValues),
-  title: z.string().min(1),
-  description: z.string().min(1).optional(),
-  structure: z.array(WorkoutStructureSetSchema).optional(),
-  sortOrder: z.number().int().optional(),
+  ...PlannedSessionInputSchema.shape,
 });
 
 trainingPlansRouter.post(
   "/:id/sessions",
   describeRoute({
-    description: "Add a planned session to a training plan week.",
+    description:
+      "Add a planned session to a training plan week. Target paces are stripped from any submitted structure. The response may carry advisory `warnings` for the affected week's guard breaches — the write still applies.",
     responses: {
       201: {
         description: "Created planned session",
@@ -548,7 +600,7 @@ trainingPlansRouter.patch(
   "/:id/sessions/:sessionId",
   describeRoute({
     description:
-      "Edit a planned session. Providing `weekId` moves it to another week of the same plan.",
+      "Edit a planned session. Providing `weekId` moves it to another week of the same plan. Target paces are stripped from any submitted structure. The response may carry advisory `warnings` for the affected week's guard breaches — the write still applies.",
     responses: {
       200: {
         description: "Updated planned session",

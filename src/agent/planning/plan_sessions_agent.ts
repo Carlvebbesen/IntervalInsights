@@ -6,7 +6,7 @@ import {
   type PlanMacroWeek,
 } from "./plan_builder_schemas";
 import type { AthleteContext } from "./plan_builder_state";
-import { constraintsBlock } from "./plan_macro_agent";
+import { constraintsBlock, intakeBriefBlock } from "./plan_macro_agent";
 
 function vocabularyBlock(context: AthleteContext): string {
   const v = context.workoutVocabulary;
@@ -14,7 +14,15 @@ function vocabularyBlock(context: AthleteContext): string {
   const structured = v.hasStructuredIntervalHistory
     ? "has structured-interval history"
     : "NO structured-interval history — introduce intervals gradually and keep sessions simple";
-  return `  - Session types the athlete has actually done: ${types}\n  - Interval experience: ${structured}`;
+  const repertoire = v.structures.length
+    ? `\n  - Proven interval repertoire (prefer these shapes, progressed gradually): ${v.structures
+        .map(
+          (s) =>
+            `${s.name} (done ${s.activityCount}x${s.lastDoneAt ? `, last ${s.lastDoneAt}` : ""})`,
+        )
+        .join("; ")}`
+    : "";
+  return `  - Session types the athlete has actually done: ${types}\n  - Interval experience: ${structured}${repertoire}`;
 }
 
 function healthBlock(context: AthleteContext): string {
@@ -47,10 +55,16 @@ export async function invokeGenerateSessionsAgent(
   weeks: PlanMacroWeek[],
   feedback: string[],
   constraintsText?: string | null,
+  priorQualitySessions: string[] = [],
+  intakeBriefText?: string | null,
   model: ChatOpenAI = getPlanBuilderModel(),
 ): Promise<GenerateSessionsOutput | null> {
   const feedbackBlock = feedback.length
     ? `\n  ### ATHLETE FEEDBACK ON PRIOR DRAFTS (apply all, most recent last)\n${feedback.map((f, i) => `  ${i + 1}. ${f}`).join("\n")}`
+    : "";
+
+  const priorBlock = priorQualitySessions.length
+    ? `\n  ### SESSIONS ALREADY PLANNED (earlier weeks — continue their interval progression)\n${priorQualitySessions.map((line) => `  - ${line}`).join("\n")}`
     : "";
 
   const prompt = `
@@ -63,7 +77,9 @@ ${healthBlock(context)}
 
   ### MACRO PLAN
 ${weeksBlock(weeks)}
+${priorBlock}
 ${constraintsBlock(constraintsText)}
+${intakeBriefBlock(intakeBriefText)}
 ${feedbackBlock}
 
   ### TASK
@@ -72,6 +88,24 @@ ${feedbackBlock}
   optional description, and an optional structure.
 
   ### RULES
+  - Repeat and progress a small rotation of interval shapes across the plan
+    (e.g. 4x1000m → 5x1000m → 6x1000m) instead of inventing a new shape each
+    week. Prefer shapes from the athlete's proven interval repertoire above, and
+    continue the progression of any SESSIONS ALREADY PLANNED in earlier weeks.
+  - THRESHOLD DOSING — quality sessions are threshold-first (controlled,
+    ~1-hour-race effort, never all-out). Dose the TOTAL work per session by
+    experience: an athlete with little or no structured history gets ~15–20
+    minutes of work at threshold; an established athlete goes past 30 minutes
+    (toward 35–40 as the plan progresses). Progress the dose (reps/duration)
+    before ever hinting at pace. Canonical threshold shapes: 45 s on / 15 s off
+    x 20–30 reps; (n) x 1000 m; (n) x 400 m with 15–25 reps; longer reps
+    (2–3 km) for advanced athletes.
+  - In build or peak weeks, when the week has at least 5 run days, a second
+    rep-interval session is allowed within the week's key sessions.
+  - Strides belong as a short finisher mentioned in an easy run's description
+    ("finish with 6 x 100 m relaxed strides"), NEVER as a standalone SPRINTS
+    session. Plan a standalone sprint or hill-sprint session only when the
+    athlete's goal or recent history clearly calls for it.
   - Match session complexity to the athlete's experience above. If they have NO
     structured-interval history, prefer simpler sessions (strides, short fartlek)
     and introduce rep workouts gradually rather than prescribing complex sets
@@ -79,11 +113,14 @@ ${feedbackBlock}
   - Keep intensity conservative around any ACTIVE injury/illness — avoid
     sessions likely to aggravate the noted body location. When there is an active
     injury, some easy volume may be delivered as low-impact cross-training
-    (elliptical / bike / pool) in place of an easy run; the plan applies this
+    (elliptical / spinning) in place of an easy run; the plan applies this
     substitution deterministically, so you may simply keep those as easy runs.
   - Cover each week's keySessions as structured quality sessions; fill the rest
     with EASY / LONG / RECOVERY runs to reach the weekly target. At most 7
     sessions per week.
+  - For an experienced athlete, never propose a run shorter than 5 km — prefer
+    fewer, meaningful sessions early in a comeback rather than 2–3 km filler
+    runs. Only a true beginner with no running history keeps short run-walks.
   - Structure: EASY, LONG and RECOVERY sessions get NO structure (null). Only
     interval-type sessions (intervals, tempo, hills, sprints, fartlek) get a
     structure with sets/steps carrying reps + work values.

@@ -12,19 +12,12 @@ import type {
   SuggestSessionResponseSchema,
   Weather,
 } from "../schemas/api_schemas";
-import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
 import type { IGlobalBindings } from "../types/IRouters";
 import { buildAthleteProfileBlock } from "./athlete_profile_service";
-import { fetchFitnessDayBlock } from "./fitness_service";
 import { applyHeatAdjustment, heatZoneForTrainingType } from "./heat_service";
-import { fetchTrainingSummary } from "./intervals_wellness_service";
-import { fetchPaceAnchor, fillPacesFromAnchor } from "./pace_anchor_service";
-import {
-  applyReadinessAdjustment,
-  getProposedPaceForStructure,
-  type ReadinessSignals,
-} from "./pace_service";
-import { generateCompleteIntervalSet, toISODate } from "./utils";
+import { fetchPaceAnchor } from "./pace_anchor_service";
+import { computeAdjustedPace, resolveReadiness } from "./prescription_pace_service";
+import { addDaysISO, toISODate } from "./utils";
 import { toWorkoutStructure } from "./workout_structure_format";
 
 type Db = IGlobalBindings["db"];
@@ -263,36 +256,12 @@ async function buildTrainingHistorySummary(db: Db, userId: string): Promise<stri
   return lines.join("\n");
 }
 
-async function resolveReadiness(db: Db, userId: string, date: string): Promise<ReadinessSignals> {
-  const [day, summary] = await Promise.all([
-    fetchFitnessDayBlock(db, userId, date).catch(() => null),
-    fetchTrainingSummary(db, userId).catch(() => null),
-  ]);
-
-  const ramp = summary && summary.status === "ok" ? summary.data.fitness.rampRate : null;
-  const summaryData = summary && summary.status === "ok" ? summary.data : null;
-  return {
-    tsb: day?.tsb ?? null,
-    ctl: day?.ctl ?? summaryData?.fitness.ctl ?? null,
-    atl: day?.atl ?? summaryData?.fitness.atl ?? null,
-    ramp: ramp ?? null,
-    hrvStatus: day?.hrvStatus ?? null,
-    sleepScore: day?.sleepScore ?? summaryData?.sleep.sleepScore ?? null,
-  };
-}
-
 function writeCache(key: string, value: SuggestSessionResponse): void {
   const nowMs = Date.now();
   for (const [staleKey, entry] of cache) {
     if (nowMs - entry.at >= CACHE_TTL_MS) cache.delete(staleKey);
   }
   cache.set(key, { at: nowMs, value });
-}
-
-function shiftDateISO(dateISO: string, days: number): string {
-  const d = new Date(`${dateISO}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return toISODate(d);
 }
 
 /** Drop the pace fields from a stored plan structure to get the pace-agnostic input shape. */
@@ -310,25 +279,6 @@ function structureToWorkoutSets(structure: WorkoutStructureSet[]): WorkoutSet[] 
   }));
 }
 
-/** Lay the history paces (same expanded shape) onto the skeleton; shape mismatches pass through. */
-function mergeHistoryPaces(
-  skeleton: ExpandedIntervalSet[],
-  history: ExpandedIntervalSet[],
-): ExpandedIntervalSet[] {
-  if (history.length !== skeleton.length) return skeleton;
-  return skeleton.map((set, i) => {
-    const h = history[i];
-    if (!h || h.steps.length !== set.steps.length) return set;
-    return {
-      ...set,
-      steps: set.steps.map((step, j) => ({
-        ...step,
-        target_pace: h.steps[j]?.target_pace ?? step.target_pace,
-      })),
-    };
-  });
-}
-
 interface ResolvedRequestMode {
   mode: ResponseMode;
   due: planRepo.DuePlannedSession | null;
@@ -339,11 +289,25 @@ async function resolveRequestMode(
   userId: string,
   requested: RequestMode | undefined,
   date: string,
+  role: SuggestSessionRole,
+  hasExplicitStructure: boolean,
 ): Promise<ResolvedRequestMode> {
   if (requested === "signature" || requested === "ai") return { mode: requested, due: null };
 
-  const tomorrow = shiftDateISO(date, 1);
-  const due = await planRepo.findDuePlannedSession(db, userId, date, tomorrow);
+  // An explicit structureId or inline structure is a signature-shaped request:
+  // only an explicit mode "plan" may override it. Auto used to hijack it onto a
+  // due planned session — and 422 when that session was an unstructured easy run.
+  if (requested == null && hasExplicitStructure) return { mode: "signature", due: null };
+
+  // This endpoint is deliberately free for all users, but training plans are a
+  // premium feature in whole — so the plan-reading branch (which returns planId,
+  // plannedSessionId, title, description and the full structure) must carry the
+  // same gate the /training-plans routers do. A downgraded user simply has no
+  // session due: explicit mode "plan" 404s exactly as it would with no plan, and
+  // auto falls through to the free signature path.
+  const canReadPlan = role === "premium" || role === "admin";
+  const tomorrow = addDaysISO(date, 1);
+  const due = canReadPlan ? await planRepo.findDuePlannedSession(db, userId, date, tomorrow) : null;
 
   if (requested === "plan") {
     if (!due) {
@@ -351,8 +315,11 @@ async function resolveRequestMode(
     }
     return { mode: "plan", due };
   }
-  // auto: plan when a session is due, otherwise the legacy signature path.
-  return { mode: due ? "plan" : "signature", due };
+  // auto: plan when a due session can actually seed a suggestion; an
+  // unstructured due session (e.g. a plain easy run) falls back to the
+  // signature path instead of 422-ing (the 422 stays for explicit mode "plan").
+  if (due && (due.session.structure ?? []).length > 0) return { mode: "plan", due };
+  return { mode: "signature", due: null };
 }
 
 async function buildPlanSuggestion(
@@ -374,28 +341,18 @@ async function buildPlanSuggestion(
   const sets = structureToWorkoutSets(structure);
   const sessionType = session.sessionType as TrainingType;
 
-  const readiness = await resolveReadiness(db, userId, date);
-  const skeleton: ExpandedIntervalSet[] = generateCompleteIntervalSet(sets);
-  const historyPaced = await getProposedPaceForStructure(db, userId, sets);
-  const merged = mergeHistoryPaces(skeleton, historyPaced);
+  const [readiness, anchor] = await Promise.all([
+    resolveReadiness(db, userId, date),
+    fetchPaceAnchor(db, userId).catch(() => null),
+  ]);
+  const { paces: finalPaces, advisory: combinedAdvisory } = await computeAdjustedPace(db, userId, {
+    sets,
+    sessionType,
+    readiness,
+    weather,
+    anchor,
+  });
 
-  const anchor = await fetchPaceAnchor(db, userId).catch(() => null);
-  const filled =
-    anchor && anchor.status === "ok"
-      ? fillPacesFromAnchor(merged, anchor.data.paces, sessionType)
-      : merged;
-
-  const { paces: readinessPaces, advisory } = applyReadinessAdjustment(filled, readiness);
-
-  let finalPaces = readinessPaces;
-  let heatAdvisory = "";
-  if (weather) {
-    const heat = applyHeatAdjustment(finalPaces, weather, heatZoneForTrainingType(sessionType));
-    finalPaces = heat.paces;
-    heatAdvisory = heat.advisory;
-  }
-
-  const combinedAdvisory = [advisory, heatAdvisory].filter(Boolean).join(" ");
   const notes: string | null = session.description || combinedAdvisory || null;
 
   const proposedTraining: ProposedTraining = {
@@ -423,9 +380,12 @@ async function buildPlanSuggestion(
   };
 }
 
+export type SuggestSessionRole = "guest" | "premium" | "admin";
+
 export async function suggestSession(
   db: Db,
   userId: string,
+  role: SuggestSessionRole,
   input: {
     structureId?: number;
     structure?: WorkoutSet[];
@@ -440,7 +400,14 @@ export async function suggestSession(
   const date = input.date ?? toISODate(now);
   const recentlySuggested = input.recentlySuggested ?? [];
 
-  const resolved = await resolveRequestMode(db, userId, input.mode, date);
+  const resolved = await resolveRequestMode(
+    db,
+    userId,
+    input.mode,
+    date,
+    role,
+    input.structureId != null || (input.structure?.length ?? 0) > 0,
+  );
   const log = logger.child({
     route: "suggest-session",
     date,
@@ -512,9 +479,19 @@ export async function suggestSession(
     return hit.value;
   }
 
-  const readiness = await resolveReadiness(db, userId, date);
-  const basePaces = await getProposedPaceForStructure(db, userId, baseStructure);
-  const { paces, advisory } = applyReadinessAdjustment(basePaces, readiness);
+  // Readiness and the anchor are resolved once and rebound into both
+  // prescriptions — the post-LLM reshape must not repeat the anchor fetch
+  // (a potential outbound best-effort-curve call).
+  const [readiness, anchor] = await Promise.all([
+    resolveReadiness(db, userId, date),
+    fetchPaceAnchor(db, userId).catch(() => null),
+  ]);
+  const { paces, advisory } = await computeAdjustedPace(db, userId, {
+    sets: baseStructure,
+    sessionType: null,
+    readiness,
+    anchor,
+  });
   const [historySummary, athleteProfile] = await Promise.all([
     agentMode === "recommended"
       ? buildTrainingHistorySummary(db, userId)
@@ -543,8 +520,14 @@ export async function suggestSession(
     finalSets = suggestion.structure;
     title = suggestion.title;
     trainingType = suggestion.trainingType ?? null;
-    const reshapedBase = await getProposedPaceForStructure(db, userId, finalSets);
-    finalPaces = applyReadinessAdjustment(reshapedBase, readiness).paces;
+    finalPaces = (
+      await computeAdjustedPace(db, userId, {
+        sets: finalSets,
+        sessionType: trainingType,
+        readiness,
+        anchor,
+      })
+    ).paces;
   } else {
     log.warn("suggest-session agent returned null — using the athlete's own structure unchanged");
   }

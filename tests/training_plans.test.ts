@@ -118,7 +118,13 @@ describe("/api/v1/training-plans", () => {
     expect(created.weeks.length).toBe(2);
     expect(created.weeks[0].sessions.length).toBe(2);
     expect(created.weeks[1].sessions.length).toBe(1);
-    expect(created.weeks[0].sessions[1].structure).toEqual(workoutStructure);
+    // the write path normalizes every pace field to an explicit null (D8)
+    expect(created.weeks[0].sessions[1].structure).toEqual(
+      workoutStructure.map((set) => ({
+        ...set,
+        steps: set.steps.map((step) => ({ ...step, target_pace: null, target_paces: null })),
+      })),
+    );
 
     const detailRes = await withIdentity(identityA(), () =>
       app.fetch(new Request(`http://test/api/v1/training-plans/${created.id}`)),
@@ -379,5 +385,213 @@ describe("/api/v1/training-plans", () => {
       app.fetch(new Request(`http://test/api/v1/training-plans/${created.id}`)),
     );
     expect(getRes.status).toBe(404);
+  });
+});
+
+describe("/api/v1/training-plans plan-write guards", () => {
+  const pacedStructure = [
+    {
+      set_reps: 1,
+      set_recovery: 0,
+      steps: [
+        {
+          reps: 5,
+          work_type: "DISTANCE" as const,
+          work_value: 1000,
+          recovery_type: "TIME" as const,
+          recovery_value: 90,
+          target_pace: 240,
+          target_paces: [235, 245],
+        },
+      ],
+    },
+  ];
+
+  it("strips submitted target paces on the REST create path", async () => {
+    const created = await withIdentity(identityA(), async () => {
+      const res = await app.fetch(
+        new Request("http://test/api/v1/training-plans", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Paced Block",
+            startDate: "2026-04-06",
+            endDate: "2026-04-12",
+            weeks: [
+              {
+                weekIndex: 0,
+                startDate: "2026-04-06",
+                phase: "build",
+                sessions: [
+                  {
+                    date: "2026-04-08",
+                    sessionType: "LONG_INTERVALS",
+                    title: "5x1000m",
+                    structure: pacedStructure,
+                  },
+                ],
+              },
+            ],
+          }),
+        }),
+      );
+      expect(res.status).toBe(201);
+      return res.json();
+    });
+
+    const step = created.weeks[0].sessions[0].structure[0].steps[0];
+    expect(step.target_pace).toBeNull();
+    expect(step.target_paces).toBeNull();
+    expect(step.work_value).toBe(1000);
+
+    // and the stripping is persisted, not just scrubbed on the way out
+    const detail = await withIdentity(identityA(), async () => {
+      const res = await app.fetch(
+        new Request(`http://test/api/v1/training-plans/${created.id}`),
+      );
+      expect(res.status).toBe(200);
+      return res.json();
+    });
+    expect(detail.weeks[0].sessions[0].structure[0].steps[0].target_pace).toBeNull();
+  });
+
+  it("strips submitted target paces on the REST add-session path", async () => {
+    const created = await createPlanWithChildren(identityA());
+
+    const session = await withIdentity(identityA(), async () => {
+      const res = await app.fetch(
+        new Request(`http://test/api/v1/training-plans/${created.id}/sessions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            weekId: created.weeks[0].id,
+            date: "2026-01-09",
+            sessionType: "LONG_INTERVALS",
+            title: "5x1000m",
+            structure: pacedStructure,
+          }),
+        }),
+      );
+      expect(res.status).toBe(201);
+      return res.json();
+    });
+
+    expect(session.structure[0].steps[0].target_pace).toBeNull();
+    expect(session.structure[0].steps[0].target_paces).toBeNull();
+  });
+
+  it("warns on an over-ramped week without rejecting the write", async () => {
+    const created = await withIdentity(identityA(), async () => {
+      const res = await app.fetch(
+        new Request("http://test/api/v1/training-plans", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Over-ramped Block",
+            startDate: "2026-05-04",
+            endDate: "2026-05-17",
+            weeks: [
+              {
+                weekIndex: 0,
+                startDate: "2026-05-04",
+                phase: "base",
+                sessions: [
+                  {
+                    date: "2026-05-06",
+                    sessionType: "EASY",
+                    title: "Easy Run",
+                    description: "~20.0 km",
+                  },
+                ],
+              },
+              {
+                weekIndex: 1,
+                startDate: "2026-05-11",
+                phase: "base",
+                sessions: [
+                  {
+                    date: "2026-05-13",
+                    sessionType: "EASY",
+                    title: "Big Week",
+                    description: "~60.0 km",
+                  },
+                ],
+              },
+            ],
+          }),
+        }),
+      );
+      expect(res.status).toBe(201);
+      return res.json();
+    });
+
+    expect(created.weeks.length).toBe(2);
+    const ramp = created.warnings?.find(
+      (w: { code: string }) => w.code === "weekly_ramp_exceeded",
+    );
+    expect(ramp).toBeDefined();
+    expect(ramp.weekIndex).toBe(1);
+    expect(ramp.observed).toBe(60_000);
+    expect(ramp.limit).toBe(22_000);
+
+    // the over-ramped week is still persisted — warnings never reject
+    const detail = await withIdentity(identityA(), async () => {
+      const res = await app.fetch(
+        new Request(`http://test/api/v1/training-plans/${created.id}`),
+      );
+      expect(res.status).toBe(200);
+      return res.json();
+    });
+    expect(detail.weeks[1].sessions[0].title).toBe("Big Week");
+  });
+
+  it("reports no ramp warning for a sanely progressed plan", async () => {
+    const created = await withIdentity(identityA(), async () => {
+      const res = await app.fetch(
+        new Request("http://test/api/v1/training-plans", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Sane Block",
+            startDate: "2026-06-01",
+            endDate: "2026-06-14",
+            weeks: [
+              {
+                weekIndex: 0,
+                startDate: "2026-06-01",
+                phase: "base",
+                sessions: [
+                  {
+                    date: "2026-06-03",
+                    sessionType: "EASY",
+                    title: "Easy Run",
+                    description: "~40.0 km",
+                  },
+                ],
+              },
+              {
+                weekIndex: 1,
+                startDate: "2026-06-08",
+                phase: "base",
+                sessions: [
+                  {
+                    date: "2026-06-10",
+                    sessionType: "EASY",
+                    title: "Easy Run",
+                    description: "~43.0 km",
+                  },
+                ],
+              },
+            ],
+          }),
+        }),
+      );
+      expect(res.status).toBe(201);
+      return res.json();
+    });
+
+    expect(
+      created.warnings?.some((w: { code: string }) => w.code === "weekly_ramp_exceeded"),
+    ).toBeFalsy();
   });
 });

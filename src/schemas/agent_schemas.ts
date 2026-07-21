@@ -213,9 +213,13 @@ export const SuggestSessionRequestSchema = z
     weather: WeatherSchema.optional().describe(
       "Optional device weather snapshot; when present, target paces are also heat-adjusted by session type.",
     ),
+    // "recommended" is the pre-rename wire value for "ai" — installed app
+    // builds still send it, so the backend must accept it whichever deploys first.
     mode: z
-      .enum(["plan", "signature", "ai"])
-      .optional()
+      .preprocess(
+        (v) => (v === "recommended" ? "ai" : v),
+        z.enum(["plan", "signature", "ai"]).optional(),
+      )
       .describe(
         "Absent = auto: a planned session due today/tomorrow in an active plan is used as the default suggestion, otherwise 'signature'. 'plan' forces the due planned session (404 if none). 'signature' keeps the picked structure's shape (only modest readiness tweaks). 'ai' lets the coach recommend the best-fitting session for today, free to reshape it.",
       ),

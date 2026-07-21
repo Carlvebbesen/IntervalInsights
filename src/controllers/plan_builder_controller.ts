@@ -1,25 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { Command } from "@langchain/langgraph";
 import type { Context } from "hono";
-import { type SSEStreamingApi, streamSSE } from "hono/streaming";
-import {
-  buildPlanBuilderGraph,
-  resetPlanBuilderThread,
-} from "../agent/planning/plan_builder_graph";
+import { streamSSE } from "hono/streaming";
+import { buildPlanBuilderGraph } from "../agent/planning/plan_builder_graph";
 import type { PlanReviewResume } from "../agent/planning/plan_builder_schemas";
-import type { PlanBuilderInput } from "../agent/planning/plan_builder_state";
+import { collectNotices, type PlanBuilderInput } from "../agent/planning/plan_builder_state";
 import { AppError } from "../error";
 import type { Logger } from "../logger";
 import type { TGlobalEnv } from "../types/IRouters";
-import { startSseHeartbeat } from "./sse_heartbeat";
+import { clearTurnActive, isTurnActive, markTurnActive } from "./active_turns";
+import { buildSafeWrite, startSseHeartbeat } from "./sse_heartbeat";
 
 type Db = TGlobalEnv["Bindings"]["db"];
 type PlanBuilderGraph = Awaited<ReturnType<typeof buildPlanBuilderGraph>>;
 type PlanBuilderRunInput = Parameters<PlanBuilderGraph["stream"]>[0];
-
-// Shared across generate + resume: a second concurrent stream for the same
-// thread gets an SSE error event instead of racing the checkpointer.
-const activeThreads = new Set<string>();
 
 function threadConfig(threadId: string, db: Db) {
   return { configurable: { thread_id: threadId, db } };
@@ -41,26 +35,19 @@ async function emitTerminalEvent(
     await safeWrite("interrupt", JSON.stringify({ ...(interrupt.value as object), threadId }));
     return;
   }
-  await safeWrite("done", JSON.stringify({ planId: state.values.persistedPlanId, threadId }));
-}
-
-function buildSafeWrite(stream: SSEStreamingApi, abort: AbortController) {
-  let clientGone = false;
-  // Serialize every write onto one chain so the concurrent heartbeat can never
-  // interleave a `ping` frame into the middle of another SSE event.
-  let chain: Promise<void> = Promise.resolve();
-  return (event: string, data: string) => {
-    chain = chain.then(async () => {
-      if (clientGone) return;
-      try {
-        await stream.writeSSE({ event, data });
-      } catch {
-        clientGone = true;
-        abort.abort();
-      }
-    });
-    return chain;
-  };
+  // The terminal event must carry the notices too. The sessions gate converts a
+  // 4th `adjust` into `accept` plus a `review_rounds_exhausted` notice and then
+  // runs straight to persistPlan → END, so `done` is the only frame left to
+  // deliver it on — without this, REST callers get a success for feedback that
+  // was silently discarded.
+  await safeWrite(
+    "done",
+    JSON.stringify({
+      planId: state.values.persistedPlanId,
+      threadId,
+      notices: collectNotices(state.values),
+    }),
+  );
 }
 
 async function runStream(
@@ -121,9 +108,16 @@ async function runStream(
   }
 }
 
-export function generateTrainingPlan(c: Context<TGlobalEnv>, input: PlanBuilderInput): Response {
+// A second concurrent stream for the same thread gets an SSE error event
+// instead of racing the checkpointer.
+function streamPlanBuilderRun(
+  c: Context<TGlobalEnv>,
+  graph: PlanBuilderGraph,
+  runInput: PlanBuilderRunInput,
+  threadId: string,
+  { emitStarted = false }: { emitStarted?: boolean } = {},
+): Response {
   const db = c.env.db;
-  const userId = c.get("userId");
   const log = c.var.logger;
 
   (c.env as { timeout?: (req: Request, seconds: number) => void }).timeout?.(c.req.raw, 0);
@@ -133,37 +127,36 @@ export function generateTrainingPlan(c: Context<TGlobalEnv>, input: PlanBuilderI
     stream.onAbort(() => abort.abort());
     const safeWrite = buildSafeWrite(stream, abort);
 
-    const threadId = `plan-builder:${randomUUID()}`;
-    if (activeThreads.has(threadId)) {
+    if (isTurnActive(threadId)) {
       await safeWrite(
         "error",
         JSON.stringify({ error: "A plan-builder step is already in progress for this thread." }),
       );
       return;
     }
-    activeThreads.add(threadId);
+    markTurnActive(threadId);
 
     try {
-      await resetPlanBuilderThread(threadId);
-      await safeWrite("started", JSON.stringify({ threadId }));
+      if (emitStarted) await safeWrite("started", JSON.stringify({ threadId }));
 
-      const graph = await buildPlanBuilderGraph();
-      const ok = await runStream(
-        graph,
-        { userId, input },
-        threadId,
-        db,
-        abort.signal,
-        safeWrite,
-        log,
-      );
+      const ok = await runStream(graph, runInput, threadId, db, abort.signal, safeWrite, log);
       if (!ok) return;
 
       await emitTerminalEvent(graph, threadId, db, safeWrite);
     } finally {
-      activeThreads.delete(threadId);
+      clearTurnActive(threadId);
     }
   });
+}
+
+export async function generateTrainingPlan(
+  c: Context<TGlobalEnv>,
+  input: PlanBuilderInput,
+): Promise<Response> {
+  const userId = c.get("userId");
+  const graph = await buildPlanBuilderGraph();
+  const threadId = `plan-builder:${randomUUID()}`;
+  return streamPlanBuilderRun(c, graph, { userId, input }, threadId, { emitStarted: true });
 }
 
 export async function resumeTrainingPlan(
@@ -173,7 +166,6 @@ export async function resumeTrainingPlan(
 ): Promise<Response> {
   const db = c.env.db;
   const userId = c.get("userId");
-  const log = c.var.logger;
 
   const graph = await buildPlanBuilderGraph();
   const state = await graph.getState(threadConfig(threadId, db));
@@ -195,37 +187,5 @@ export async function resumeTrainingPlan(
     throw new AppError(409, "No pending plan-builder step for this thread");
   }
 
-  (c.env as { timeout?: (req: Request, seconds: number) => void }).timeout?.(c.req.raw, 0);
-
-  return streamSSE(c, async (stream) => {
-    const abort = new AbortController();
-    stream.onAbort(() => abort.abort());
-    const safeWrite = buildSafeWrite(stream, abort);
-
-    if (activeThreads.has(threadId)) {
-      await safeWrite(
-        "error",
-        JSON.stringify({ error: "A plan-builder step is already in progress for this thread." }),
-      );
-      return;
-    }
-    activeThreads.add(threadId);
-
-    try {
-      const ok = await runStream(
-        graph,
-        new Command({ resume }),
-        threadId,
-        db,
-        abort.signal,
-        safeWrite,
-        log,
-      );
-      if (!ok) return;
-
-      await emitTerminalEvent(graph, threadId, db, safeWrite);
-    } finally {
-      activeThreads.delete(threadId);
-    }
-  });
+  return streamPlanBuilderRun(c, graph, new Command({ resume }), threadId);
 }

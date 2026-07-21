@@ -6,7 +6,6 @@ import {
   plannedSessionStatusEnum,
   planWeekPhaseEnum,
   raceEventStatusEnum,
-  racePriorityEnum,
   trainingPlanStatusEnum,
   trainingTypeEnum,
 } from "../../../schema/enums";
@@ -14,7 +13,17 @@ import {
   PlanRevisionChangeSchema,
   WorkoutStructureSetSchema,
 } from "../../../schemas/agent_schemas";
-import { defineTool } from "../tool_types";
+import {
+  CreateRaceEventInputSchema,
+  UpdateRaceEventInputSchema,
+} from "../../../schemas/race_event_schemas";
+import {
+  DUPLICATE_WEEK_INDEX_MESSAGE,
+  duplicateWeekIndexPositions,
+  PlannedSessionInputSchema,
+  PlanWeekInputSchema,
+} from "../../../schemas/training_plan_schemas";
+import { type CoachTool, defineTool } from "../tool_types";
 
 const listTrainingPlans = defineTool({
   name: "list_training_plans",
@@ -56,14 +65,7 @@ const createRaceEvent = defineTool({
     "Create a race event the user is training for: name, date, distance, and optionally a target time and priority (A/B/C, default B).",
   keywords: ["race", "create race", "new race", "goal race", "target race"],
   requires: "db",
-  params: z.object({
-    name: z.string().min(1),
-    date: z.string().date(),
-    distanceMeters: z.number().int().positive(),
-    targetTimeSeconds: z.number().int().positive().optional(),
-    priority: z.enum(racePriorityEnum.enumValues).optional(),
-    status: z.enum(raceEventStatusEnum.enumValues).optional(),
-  }),
+  params: CreateRaceEventInputSchema,
   handler: (ctx, args) => raceEventController.createRaceEvent(ctx.db, ctx.userId, args),
 });
 
@@ -74,12 +76,7 @@ const updateRaceEvent = defineTool({
   requires: "db",
   params: z.object({
     raceEventId: z.number().int().positive(),
-    name: z.string().min(1).optional(),
-    date: z.string().date().optional(),
-    distanceMeters: z.number().int().positive().optional(),
-    targetTimeSeconds: z.number().int().positive().nullable().optional(),
-    priority: z.enum(racePriorityEnum.enumValues).optional(),
-    status: z.enum(raceEventStatusEnum.enumValues).optional(),
+    ...UpdateRaceEventInputSchema.shape,
   }),
   handler: (ctx, args) => {
     const { raceEventId, ...patch } = args;
@@ -96,40 +93,17 @@ const deleteRaceEvent = defineTool({
   handler: (ctx, args) => raceEventController.deleteRaceEvent(ctx.db, ctx.userId, args.raceEventId),
 });
 
-const plannedSessionInputSchema = z.object({
-  date: z.string().date(),
-  sessionType: z.enum(trainingTypeEnum.enumValues),
-  title: z.string().min(1),
-  description: z.string().min(1).optional(),
-  structure: z.array(WorkoutStructureSetSchema).optional(),
-  sortOrder: z.number().int().optional(),
-});
-
-const planWeekInputSchema = z.object({
-  weekIndex: z.number().int().nonnegative(),
-  startDate: z.string().date(),
-  phase: z.enum(planWeekPhaseEnum.enumValues).optional(),
-  targetDistanceMeters: z.number().int().positive().optional(),
-  targetLoad: z.number().int().positive().optional(),
-  notes: z.string().min(1).optional(),
-  sessions: z.array(plannedSessionInputSchema).optional(),
-});
-
-function assertNoDuplicateWeekIndex(weeks: z.infer<typeof planWeekInputSchema>[] | undefined) {
+function assertNoDuplicateWeekIndex(weeks: z.infer<typeof PlanWeekInputSchema>[] | undefined) {
   if (!weeks) return;
-  const seen = new Set<number>();
-  for (const week of weeks) {
-    if (seen.has(week.weekIndex)) {
-      throw new AppError(400, "Duplicate weekIndex values are not allowed within a plan");
-    }
-    seen.add(week.weekIndex);
+  if (duplicateWeekIndexPositions(weeks).length > 0) {
+    throw new AppError(400, DUPLICATE_WEEK_INDEX_MESSAGE);
   }
 }
 
 const createTrainingPlan = defineTool({
   name: "create_training_plan",
   description:
-    "Create a training plan, optionally with nested weeks and planned sessions (including workout structure) in a single call. A week's weekIndex must be unique within the plan. Pass constraintsText to record the athlete's fixed scheduling/logistics preferences (e.g. a recurring Saturday club long run, no running Fridays).",
+    "Create a training plan, optionally with nested weeks and planned sessions (including workout structure) in a single call. A week's weekIndex must be unique within the plan. Pass constraintsText to record the athlete's fixed scheduling/logistics preferences (e.g. a recurring Saturday club long run, no running Fridays). Never include target paces — the plan stores intent, and any paces you send are stripped. The response may include a `warnings` array flagging weeks that breach the athlete's safe ramp, long-run spike, quality-session, run-day or weekly-volume limits; the plan is still saved. Report any warnings to the athlete in plain language — never hide them. They are advisory, not errors: a deliberately big week, and the rebuild that follows a planned recovery week, can both be correct. Do not propose changes to a flagged week unless the athlete asks.",
   keywords: ["training plan", "create plan", "new plan", "training block", "plan a race"],
   requires: "db",
   params: z.object({
@@ -140,7 +114,7 @@ const createTrainingPlan = defineTool({
     goalText: z.string().min(1).optional(),
     constraintsText: z.string().min(1).optional(),
     status: z.enum(trainingPlanStatusEnum.enumValues).optional(),
-    weeks: z.array(planWeekInputSchema).optional(),
+    weeks: z.array(PlanWeekInputSchema).optional(),
   }),
   handler: (ctx, args) => {
     assertNoDuplicateWeekIndex(args.weeks);
@@ -187,12 +161,7 @@ const addPlanWeek = defineTool({
   requires: "db",
   params: z.object({
     planId: z.number().int().positive(),
-    weekIndex: z.number().int().nonnegative(),
-    startDate: z.string().date(),
-    phase: z.enum(planWeekPhaseEnum.enumValues).optional(),
-    targetDistanceMeters: z.number().int().positive().optional(),
-    targetLoad: z.number().int().positive().optional(),
-    notes: z.string().min(1).optional(),
+    ...PlanWeekInputSchema.omit({ sessions: true }).shape,
   }),
   handler: (ctx, args) => {
     const { planId, ...input } = args;
@@ -237,18 +206,14 @@ const deletePlanWeek = defineTool({
 
 const addPlannedSession = defineTool({
   name: "add_planned_session",
-  description: "Add a planned session to an existing week of a training plan.",
+  description:
+    "Add a planned session to an existing week of a training plan. Never include target paces — the plan stores intent, and any paces you send are stripped. The response may include a `warnings` array if the session pushes its week past the athlete's safe ramp, long-run spike, quality-session, run-day or weekly-volume limits; the session is still saved. Surface any warnings to the athlete — never hide them. They are advisory, not errors; do not propose an adjustment unless the athlete asks.",
   keywords: ["planned session", "add session", "schedule workout", "training plan"],
   requires: "db",
   params: z.object({
     planId: z.number().int().positive(),
     weekId: z.number().int().positive(),
-    date: z.string().date(),
-    sessionType: z.enum(trainingTypeEnum.enumValues),
-    title: z.string().min(1),
-    description: z.string().min(1).optional(),
-    structure: z.array(WorkoutStructureSetSchema).optional(),
-    sortOrder: z.number().int().optional(),
+    ...PlannedSessionInputSchema.shape,
   }),
   handler: (ctx, args) => {
     const { planId, ...input } = args;
@@ -259,7 +224,7 @@ const addPlannedSession = defineTool({
 const updatePlannedSession = defineTool({
   name: "update_planned_session",
   description:
-    "Edit a planned session. Providing weekId moves it to another week of the same plan.",
+    "Edit a planned session. Providing weekId moves it to another week of the same plan. Never include target paces — the plan stores intent, and any paces you send are stripped. The response may include a `warnings` array if the edit pushes the affected week past the athlete's safe ramp, long-run spike, quality-session, run-day or weekly-volume limits; the edit is still saved. Surface any warnings to the athlete — never hide them. They are advisory, not errors; do not propose an adjustment unless the athlete asks.",
   keywords: ["planned session", "update session", "edit session", "move session", "training plan"],
   requires: "db",
   params: z.object({
@@ -330,7 +295,7 @@ const unlinkPlannedSession = defineTool({
 const applyPlanRevision = defineTool({
   name: "apply_plan_revision",
   description:
-    "Apply a set of previously-proposed changes to a training plan: move/update/drop a session, add a session, or update a week's targets. Every change is validated (plan ownership, every sessionId/weekId belongs to this plan) and applied atomically — an invalid reference rejects the whole batch, nothing partially applies. The revision (with optional rationale) is recorded in the plan's history. Per policy, ALWAYS call create_plan_revision FIRST to show the athlete the proposal, and only call this tool after the athlete has explicitly confirmed they want it applied — never apply a revision silently.",
+    "Apply a set of previously-proposed changes to a training plan: move/update/drop a session, add a session, or update a week's targets. Every change is validated (plan ownership, every sessionId/weekId belongs to this plan) and applied atomically — an invalid reference rejects the whole batch, nothing partially applies. The revision (with optional rationale) is recorded in the plan's history. Per policy, ALWAYS call create_plan_revision FIRST to show the athlete the proposal, and only call this tool after the athlete has explicitly confirmed they want it applied — never apply a revision silently. Never include target paces — the plan stores intent, and any paces you send are stripped. The response may include a `warnings` array flagging weeks the revision leaves past the athlete's safe ramp, long-run spike, quality-session, run-day or weekly-volume limits; the revision is still applied. Report any warnings back to the athlete — never hide them. They are advisory, not errors; do not propose a further adjustment unless the athlete asks.",
   keywords: [
     "training plan",
     "apply revision",
@@ -356,7 +321,11 @@ const applyPlanRevision = defineTool({
     ),
 });
 
-export const trainingPlanTools = [
+// The whole training-plan feature is premium-only, matching the REST gate on
+// `training_plans_router` / `race_events_router` — these tools reach the very
+// same controllers. Stamped on the array rather than per tool so a tool added
+// here can't silently arrive ungated.
+export const trainingPlanTools: CoachTool[] = [
   listTrainingPlans,
   getTrainingPlan,
   listRaceEvents,
@@ -375,4 +344,4 @@ export const trainingPlanTools = [
   linkPlannedSession,
   unlinkPlannedSession,
   applyPlanRevision,
-];
+].map((tool) => ({ ...tool, premium: true }));

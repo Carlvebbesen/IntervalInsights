@@ -1,8 +1,13 @@
 import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 import { logger } from "../../../logger";
 import { invokeWithRateLimitRetry } from "../../model";
-import { assembleWeekSessions, MAX_CROSS_TRAINING_PER_WEEK, resolveDaysPerWeek } from "../guards";
-import type { GeneratedWeekSessions } from "../plan_builder_schemas";
+import {
+  assembleWeekSessionsWithNotices,
+  assertPlanHasSessions,
+  MAX_CROSS_TRAINING_PER_WEEK,
+  resolveDaysPerWeek,
+} from "../guards";
+import type { GeneratedWeekSessions, PlanNotice } from "../plan_builder_schemas";
 import {
   type AthleteContext,
   DEFAULT_INTENSITY_AGGRESSIVENESS,
@@ -10,15 +15,34 @@ import {
 } from "../plan_builder_state";
 import { invokeGenerateSessionsAgent, SESSION_BATCH_WEEKS } from "../plan_sessions_agent";
 
-/** Observed average run days/week from the athlete's recent weeks (null when no history). */
-function observedRunDaysPerWeek(ctx: AthleteContext): number | null {
-  const weeks = ctx.recentWeeks;
-  if (weeks.length === 0) return null;
-  const total = weeks.reduce(
-    (n, w) => n + Object.values(w.typeCounts).reduce((a, b) => a + b, 0),
-    0,
-  );
-  return total / weeks.length;
+/**
+ * Cross-training sessions/week: the larger of the injury-derived count and what
+ * the athlete explicitly asked for (wizard input or review feedback), capped at
+ * MAX_CROSS_TRAINING_PER_WEEK. `injuryDriven` marks an active injury behind the
+ * count, so the substituted sessions carry injury wording only when it is true.
+ */
+export function resolveCrossTrainingCount(
+  activeEventCount: number,
+  requested: number | null | undefined,
+): { count: number; injuryDriven: boolean } {
+  const injuryDerived = Math.min(MAX_CROSS_TRAINING_PER_WEEK, Math.max(0, activeEventCount));
+  return {
+    count: Math.min(MAX_CROSS_TRAINING_PER_WEEK, Math.max(injuryDerived, requested ?? 0)),
+    injuryDriven: injuryDerived > 0,
+  };
+}
+
+/**
+ * Observed average run days/week from the athlete's recent weeks (null when no
+ * week has a run). Zero-run weeks (vacation, injury) are gaps, not routine —
+ * averaging them in resolved a 5-day runner with two weeks off to ~3 days.
+ */
+export function observedRunDaysPerWeek(ctx: AthleteContext): number | null {
+  const active = ctx.recentWeeks
+    .map((w) => Object.values(w.typeCounts).reduce((a, b) => a + b, 0))
+    .filter((runs) => runs > 0);
+  if (active.length === 0) return null;
+  return active.reduce((a, b) => a + b, 0) / active.length;
 }
 
 export async function generateSessions(
@@ -33,29 +57,53 @@ export async function generateSessions(
 
   const totalWeeks = macro.weeks.length;
   const sessionsByWeek: GeneratedWeekSessions[] = [];
+  const notices: PlanNotice[] = [];
 
+  const crossTraining = resolveCrossTrainingCount(
+    ctx.activeHealthEvents.length,
+    state.input.crossTrainingPerWeek,
+  );
   const guardParams = {
     intensityAggressiveness:
       state.input.intensityAggressiveness ?? DEFAULT_INTENSITY_AGGRESSIVENESS,
     daysPerWeek: resolveDaysPerWeek(state.input.daysPerWeek, observedRunDaysPerWeek(ctx)),
     preferredLongRunDay: state.input.preferredLongRunDay ?? null,
-    crossTrainingCount:
-      ctx.activeHealthEvents.length === 0
-        ? 0
-        : Math.min(MAX_CROSS_TRAINING_PER_WEEK, ctx.activeHealthEvents.length),
+    crossTrainingCount: crossTraining.count,
+    crossTrainingInjuryDriven: crossTraining.injuryDriven,
+    raceDistanceMeters: ctx.race?.distanceMeters ?? null,
+    provenWeeklyMeters: ctx.baselineVolume?.provenWeeklyMeters ?? null,
   };
 
   for (let i = 0; i < totalWeeks; i += SESSION_BATCH_WEEKS) {
     const batch = macro.weeks.slice(i, i + SESSION_BATCH_WEEKS);
+    // Batches are independent LLM calls; without this the model invents a fresh
+    // interval shape every batch instead of progressing one small rotation.
+    const priorQualitySessions = sessionsByWeek
+      .map((w) => ({
+        weekIndex: w.weekIndex,
+        titles: w.sessions.filter((s) => s.structure && s.structure.length > 0).map((s) => s.title),
+      }))
+      .filter((w) => w.titles.length > 0)
+      .map((w) => `Week ${w.weekIndex}: ${w.titles.join("; ")}`);
     const raw = await invokeWithRateLimitRetry(() =>
-      invokeGenerateSessionsAgent(ctx, batch, state.sessionsFeedback, state.input.constraintsText),
+      invokeGenerateSessionsAgent(
+        ctx,
+        batch,
+        state.sessionsFeedback,
+        state.input.constraintsText,
+        priorQualitySessions,
+        state.input.intakeBriefText,
+      ),
     );
     for (const week of batch) {
       const llmWeek = raw?.weeks.find((w) => w.weekIndex === week.weekIndex);
-      sessionsByWeek.push({
-        weekIndex: week.weekIndex,
-        sessions: assembleWeekSessions(week, llmWeek?.sessions ?? [], guardParams),
-      });
+      const assembled = assembleWeekSessionsWithNotices(week, llmWeek?.sessions ?? [], guardParams);
+      sessionsByWeek.push({ weekIndex: week.weekIndex, sessions: assembled.sessions });
+      // One notice per distinct reason, from the first week it bit: a 20-week
+      // plan hitting the same cap every week must not send 20 SSE notices.
+      for (const notice of assembled.notices) {
+        if (!notices.some((n) => n.code === notice.code)) notices.push(notice);
+      }
     }
     config?.writer?.({
       phase: "sessions_progress",
@@ -64,7 +112,12 @@ export async function generateSessions(
     });
   }
 
+  assertPlanHasSessions(macro.weeks, sessionsByWeek);
+
   const total = sessionsByWeek.reduce((n, w) => n + w.sessions.length, 0);
-  log.info({ weeks: sessionsByWeek.length, sessions: total }, "generated sessions");
-  return { sessionsByWeek, action: null };
+  log.info(
+    { weeks: sessionsByWeek.length, sessions: total, guardNotices: notices.length },
+    "generated sessions",
+  );
+  return { sessionsByWeek, action: null, guardNotices: notices };
 }

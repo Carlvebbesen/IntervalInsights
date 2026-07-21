@@ -20,7 +20,7 @@ suggestSessionRouter.post(
   dailyQuota(SUGGEST_SESSION_QUOTA, SUGGEST_SESSION_DAILY_MAX),
   describeRoute({
     description:
-      "Suggest a structured interval session for a day, with readiness-adjusted target paces (from the athlete's own history) and a human-readable readiness advisory. Non-streaming, free for all users. Cached briefly per (user, structure, day).",
+      "Suggest a structured interval session for a day, with readiness-adjusted target paces (from the athlete's own history) and a human-readable readiness advisory. Non-streaming, free for all users. The plan-backed branch (mode 'plan', or 'auto' when a planned session is due) is premium-only, since training plans are a premium feature; for a non-premium user it behaves as though no session is due. Cached briefly per (user, structure, day).",
     responses: {
       200: {
         description: "Suggested session with readiness-adjusted paces and advisory.",
@@ -50,6 +50,7 @@ suggestSessionRouter.post(
     const result = await suggestSessionController.suggestSession(
       c.env.db,
       c.get("userId"),
+      c.get("role"),
       { structureId, structure, date, weather, mode, recentlySuggested },
       c.var.logger,
     );

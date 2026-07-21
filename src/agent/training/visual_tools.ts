@@ -8,7 +8,14 @@ import { getWithDetailForUser } from "../../repositories/training_plan_repositor
 import { trainingTypeEnum } from "../../schema/enums";
 import { type PlanRevisionChange, PlanRevisionChangeSchema } from "../../schemas/agent_schemas";
 import type { CoachArtifact } from "../../schemas/api_schemas";
+import {
+  computeAdjustedPace,
+  resolveReadiness,
+  toWeatherInput,
+} from "../../services/prescription_pace_service";
+import { toISODate } from "../../services/utils";
 import { toWorkoutStructure } from "../../services/workout_structure_format";
+import type { ExpandedIntervalSet } from "../../types/ExpandedIntervalSet";
 import { workoutSet } from "../initial_analysis_agent";
 import { stripPaces } from "../planning/guards";
 import type { CoachCtx } from "./tool_types";
@@ -47,16 +54,29 @@ export const createTrainingTool = tool(
     const ctx = getCtx(config);
     const includePaces = input.includePaces ?? true;
 
-    const paced = includePaces
-      ? await getProposedPace(
-          ctx.db,
-          ctx.userId,
-          ctx.stravaAccessToken,
-          input.sets,
-          input.activityId,
-          ctx.logger,
-        )
-      : null;
+    // activityId means "annotate what was actually run" — readiness/heat easing
+    // would be meaningless there, so only the prescription path is adjusted.
+    let paced: ExpandedIntervalSet[] | null = null;
+    let advisory = "";
+    if (includePaces && input.activityId != null) {
+      paced = await getProposedPace(
+        ctx.db,
+        ctx.userId,
+        ctx.stravaAccessToken,
+        input.sets,
+        input.activityId,
+        ctx.logger,
+      );
+    } else if (includePaces) {
+      const adjusted = await computeAdjustedPace(ctx.db, ctx.userId, {
+        sets: input.sets,
+        sessionType: input.trainingType ?? null,
+        readiness: await resolveReadiness(ctx.db, ctx.userId, toISODate(new Date(ctx.userTime))),
+        weather: toWeatherInput(ctx.weather),
+      });
+      paced = adjusted.paces;
+      advisory = adjusted.advisory;
+    }
     const structure = toWorkoutStructure(input.sets, paced);
 
     const artifact: CoachArtifact = {
@@ -64,7 +84,7 @@ export const createTrainingTool = tool(
       id: crypto.randomUUID(),
       title: input.title,
       trainingType: input.trainingType ?? null,
-      notes: input.notes ?? null,
+      notes: input.notes || advisory || null,
       structure,
     };
 
@@ -77,7 +97,8 @@ export const createTrainingTool = tool(
       title: input.title,
       hasPaces: paces.length > 0,
       paces,
-      note: "Workout card shown to the athlete. Reference the structure (and paces, if any) in your reply.",
+      advisory: advisory || undefined,
+      note: "Workout card shown to the athlete. Reference the structure (and paces, if any) in your reply. If an advisory is present, explain in your own words why the paces were eased.",
     });
   },
   {

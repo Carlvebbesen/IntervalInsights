@@ -2,10 +2,12 @@ import { describe, expect, it } from "bun:test";
 import {
   anchorWeekOne,
   applyTaper,
+  assembleWeekSessionsWithNotices,
   capLongestRunSpike,
   capMaxWeekly,
-  clampVolumeRamp,
   clampWeeklyRamp,
+  CROSS_TRAINING_INJURY_DESCRIPTION,
+  CROSS_TRAINING_REQUEST_DESCRIPTION,
   CROSS_TRAINING_TITLE,
   DEFAULT_BASELINE_WEEKLY_METERS,
   DEFAULT_DAYS_PER_WEEK,
@@ -15,12 +17,14 @@ import {
   enforceQualityCount,
   estimateStructureDistanceMeters,
   expectedWeekStarts,
+  isCrossTrainingSession,
   isHardSession,
+  LONG_RUN_MAX_FILL_SHARE,
   longRunOffset,
   type MacroShapingParams,
   placeLongRun,
   qualityCap,
-  repairMacro,
+  shapeMacro,
   repairSessionDate,
   resolveDaysPerWeek,
   spaceHardSessions,
@@ -29,8 +33,12 @@ import {
   taperWeekCount,
   VOLUME_RAMP,
 } from "../src/agent/planning/guards";
+import {
+  observedRunDaysPerWeek,
+  resolveCrossTrainingCount,
+} from "../src/agent/planning/nodes/generate_sessions";
 import type { GeneratedSession, PlanMacro, PlanMacroWeek } from "../src/agent/planning/plan_builder_schemas";
-import type { PlanBuilderInput } from "../src/agent/planning/plan_builder_state";
+import type { AthleteContext, PlanBuilderInput } from "../src/agent/planning/plan_builder_state";
 import type { WorkoutStructureSet } from "../src/schemas/agent_schemas";
 
 describe("expectedWeekStarts (Monday alignment)", () => {
@@ -49,16 +57,6 @@ describe("expectedWeekStarts (Monday alignment)", () => {
 
   it("is inclusive of the week containing endDate", () => {
     expect(expectedWeekStarts("2026-01-05", "2026-01-12")).toEqual(["2026-01-05", "2026-01-12"]);
-  });
-});
-
-describe("clampVolumeRamp", () => {
-  it("clamps week-over-week growth to +20%", () => {
-    expect(clampVolumeRamp([10000, 30000, 20000, 40000])).toEqual([10000, 12000, 14400, 17280]);
-  });
-
-  it("lets recovery drops through untouched", () => {
-    expect(clampVolumeRamp([10000, 12000, 8000, 9000])).toEqual([10000, 12000, 8000, 9000]);
   });
 });
 
@@ -131,13 +129,37 @@ describe("estimateStructureDistanceMeters", () => {
   });
 });
 
-describe("anchorWeekOne", () => {
-  it("forces week 1 to the real baseline, never the LLM's goal week", () => {
-    expect(anchorWeekOne([30000, 34000, 36000], 42000)).toEqual([42000, 34000, 36000]);
+describe("anchorWeekOne (pure ceiling)", () => {
+  it("caps an over-baseline week 1 down to the real baseline, never the LLM's goal week", () => {
+    expect(anchorWeekOne([60000, 34000, 36000], 42000)).toEqual([42000, 34000, 36000]);
   });
 
-  it("falls back to the conservative floor when there is no history", () => {
+  // Raising was the beginner-persona bug: a requested ~5 km first week was
+  // inflated to the 20 km no-data default, un-fixable by feedback.
+  it("preserves a plausible week 1 below the baseline (both default and real)", () => {
+    expect(anchorWeekOne([5000, 8000], null)).toEqual([5000, 8000]);
+    expect(anchorWeekOne([5000, 8000], 40000)).toEqual([5000, 8000]);
+  });
+
+  it("caps at the conservative default when there is no history", () => {
     expect(anchorWeekOne([30000], null)).toEqual([DEFAULT_BASELINE_WEEKLY_METERS]);
+  });
+
+  // The 20 km ceiling is for NO data, not for little data — applying it to a
+  // real low-volume athlete anchors them above what they actually run.
+  it("keeps a small real baseline instead of inflating it to the default", () => {
+    expect(anchorWeekOne([30000], 2500)).toEqual([2500]);
+    expect(anchorWeekOne([30000], 4000)).toEqual([4000]);
+  });
+
+  it("still uses the default ceiling for a zero or non-finite baseline", () => {
+    expect(anchorWeekOne([30000], 0)).toEqual([DEFAULT_BASELINE_WEEKLY_METERS]);
+    expect(anchorWeekOne([30000], Number.NaN)).toEqual([DEFAULT_BASELINE_WEEKLY_METERS]);
+  });
+
+  it("floors a missing/garbage week 1 to the usable baseline", () => {
+    expect(anchorWeekOne([0, 8000], 40000)).toEqual([40000, 8000]);
+    expect(anchorWeekOne([500], null)).toEqual([DEFAULT_BASELINE_WEEKLY_METERS]);
   });
 
   it("no-ops on an empty plan", () => {
@@ -163,9 +185,6 @@ describe("clampWeeklyRamp (per-axis ceilings)", () => {
     ]);
   });
 
-  it("legacy clampVolumeRamp still holds the flat +20% contract", () => {
-    expect(clampVolumeRamp([10000, 30000, 20000, 40000])).toEqual([10000, 12000, 14400, 17280]);
-  });
 });
 
 describe("capLongestRunSpike", () => {
@@ -248,7 +267,7 @@ describe("applyTaper (staged tail volumes + phases)", () => {
   });
 });
 
-describe("repairMacro (orchestrated volume shaping)", () => {
+describe("shapeMacro (orchestrated volume shaping)", () => {
   const rawMacro = (targets: number[]): PlanMacro => ({
     name: "P",
     rationale: "r",
@@ -264,6 +283,8 @@ describe("repairMacro (orchestrated volume shaping)", () => {
   const params = (over: Partial<MacroShapingParams> = {}): MacroShapingParams => ({
     baselineWeeklyMeters: 30000,
     longestRunMeters: null,
+    provenWeeklyMeters: null,
+    provenLongestRunMeters: null,
     volumeAggressiveness: "steady",
     maxWeeklyVolumeMeters: null,
     raceDistanceMeters: null,
@@ -272,9 +293,11 @@ describe("repairMacro (orchestrated volume shaping)", () => {
 
   const timeframeInput: PlanBuilderInput = { startDate: "2026-01-05", endDate: "2026-01-25" };
 
-  it("anchors week 1 to the real baseline and steady-clamps the ramp", () => {
-    const macro = repairMacro(rawMacro([60000, 70000, 80000]), timeframeInput, params());
-    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([30000, 33000, 36300]);
+  // Quantized shape: the smooth steady ramp (30 → 33 → 36.3) becomes a plateau
+  // and one visible 5 km step, taken once the underlying trajectory reaches it.
+  it("anchors week 1 to the real baseline and quantizes the steady ramp to plateau-then-step", () => {
+    const macro = shapeMacro(rawMacro([60000, 70000, 80000]), timeframeInput, params()).macro;
+    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([30000, 30000, 35000]);
     expect(macro.weeks.map((w) => w.startDate)).toEqual([
       "2026-01-05",
       "2026-01-12",
@@ -283,12 +306,15 @@ describe("repairMacro (orchestrated volume shaping)", () => {
   });
 
   it("applies maxWeeklyVolumeMeters as a final hard cap", () => {
-    const macro = repairMacro(
+    const macro = shapeMacro(
       rawMacro([60000, 70000, 80000]),
       timeframeInput,
-      params({ maxWeeklyVolumeMeters: 32000 }),
-    );
-    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([30000, 32000, 32000]);
+      params({ baselineWeeklyMeters: 40000, maxWeeklyVolumeMeters: 43000 }),
+    ).macro;
+    // Without the 43 km ceiling the third week steps to 45 km; with it the step
+    // has no grid point under the cap, so the plan holds at 40 km.
+    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([40000, 40000, 40000]);
+    for (const w of macro.weeks) expect(w.targetDistanceMeters).toBeLessThanOrEqual(43000);
   });
 
   it("race-anchored: shapes a marathon taper onto the tail", () => {
@@ -297,11 +323,11 @@ describe("repairMacro (orchestrated volume shaping)", () => {
       endDate: "2026-02-15",
       raceEventId: 5,
     };
-    const macro = repairMacro(
+    const macro = shapeMacro(
       rawMacro([40000, 40000, 40000, 40000, 40000, 40000]),
       raceInput,
       params({ baselineWeeklyMeters: 40000, raceDistanceMeters: 42195 }),
-    );
+    ).macro;
     expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([
       40000, 40000, 40000, 32000, 24000, 16000,
     ]);
@@ -510,9 +536,16 @@ describe("substituteCrossTraining", () => {
     sess("2026-01-08", "EASY"),
     sess("2026-01-10", "RECOVERY"),
   ];
+  const llmCross = (date: string): GeneratedSession => ({
+    date,
+    sessionType: "OTHER",
+    title: "Elliptical cross-train",
+    description: "Low-impact aerobic work.",
+    structure: null,
+  });
 
   it("converts up to count easy/recovery runs to OTHER cross-training", () => {
-    const out = substituteCrossTraining(injuryWeek(), 2);
+    const out = substituteCrossTraining(injuryWeek(), 2, true);
     const cross = out.filter((s) => s.sessionType === "OTHER");
     expect(cross).toHaveLength(2);
     expect(cross.every((s) => s.structure === null && s.title === CROSS_TRAINING_TITLE)).toBe(true);
@@ -522,12 +555,395 @@ describe("substituteCrossTraining", () => {
 
   it("caps substitutions at 2 per week", () => {
     const week = ["2026-01-05", "2026-01-06", "2026-01-08", "2026-01-10"].map((d) => sess(d, "EASY"));
-    expect(substituteCrossTraining(week, 5).filter((s) => s.sessionType === "OTHER")).toHaveLength(2);
+    expect(substituteCrossTraining(week, 5, true).filter((s) => s.sessionType === "OTHER")).toHaveLength(2);
   });
 
   it("no-ops with count 0 or fewer than 2 easy runs to spare", () => {
-    expect(substituteCrossTraining(injuryWeek(), 0)).toEqual(injuryWeek());
+    expect(substituteCrossTraining(injuryWeek(), 0, false)).toEqual(injuryWeek());
     const oneEasy = [sess("2026-01-05", "LONG"), sess("2026-01-08", "EASY")];
-    expect(substituteCrossTraining(oneEasy, 2)).toEqual(oneEasy);
+    expect(substituteCrossTraining(oneEasy, 2, true)).toEqual(oneEasy);
+  });
+
+  it("counts an LLM-emitted cross session against the total (1 requested + 1 emitted → exactly 1)", () => {
+    const week = [
+      llmCross("2026-01-05"),
+      sess("2026-01-06", "LONG"),
+      sess("2026-01-08", "EASY"),
+      sess("2026-01-10", "EASY"),
+    ];
+    const out = substituteCrossTraining(week, 1, false);
+    expect(out.filter(isCrossTrainingSession)).toHaveLength(1);
+    expect(out.filter((s) => s.sessionType === "EASY")).toHaveLength(2);
+  });
+
+  it("demotes excess LLM-emitted cross sessions to easy runs, keeping day counts", () => {
+    const week = [llmCross("2026-01-05"), llmCross("2026-01-07"), sess("2026-01-09", "EASY")];
+    const out = substituteCrossTraining(week, 1, false);
+    expect(out).toHaveLength(3);
+    expect(out.filter(isCrossTrainingSession)).toHaveLength(1);
+    expect(out[1].sessionType).toBe("EASY");
+    expect(out[1].title).toBe("Easy run");
+  });
+
+  it("uses injury wording only for an injury-driven count, neutral wording for a request", () => {
+    const injured = substituteCrossTraining(injuryWeek(), 1, true);
+    expect(injured.find((s) => s.sessionType === "OTHER")?.description).toBe(
+      CROSS_TRAINING_INJURY_DESCRIPTION,
+    );
+    const requested = substituteCrossTraining(injuryWeek(), 1, false);
+    expect(requested.find((s) => s.sessionType === "OTHER")?.description).toBe(
+      CROSS_TRAINING_REQUEST_DESCRIPTION,
+    );
+    expect(CROSS_TRAINING_REQUEST_DESCRIPTION).not.toContain("injury");
+  });
+});
+
+describe("observedRunDaysPerWeek", () => {
+  const ctx = (runCounts: number[]): AthleteContext => ({
+    athleteName: null,
+    maxHeartRate: null,
+    intervalsConnected: false,
+    race: null,
+    recentWeeks: runCounts.map((runs, i) => ({
+      weekStart: `2026-01-${String(i + 1).padStart(2, "0")}`,
+      totalDistanceMeters: runs * 8000,
+      typeCounts: runs > 0 ? { EASY: runs } : {},
+    })),
+    fitness: null,
+    raceAbility: null,
+    baselineVolume: null,
+    activeHealthEvents: [],
+    workoutVocabulary: { types: [], hasStructuredIntervalHistory: false, structures: [] },
+  });
+
+  it("averages only weeks with at least one run (vacation zeros are gaps, not routine)", () => {
+    expect(observedRunDaysPerWeek(ctx([5, 4, 4, 5, 3, 4, 0, 0]))).toBeCloseTo(25 / 6);
+  });
+
+  it("returns null when no week has a run, or with no history at all", () => {
+    expect(observedRunDaysPerWeek(ctx([0, 0, 0]))).toBeNull();
+    expect(observedRunDaysPerWeek(ctx([]))).toBeNull();
+  });
+});
+
+describe("resolveCrossTrainingCount", () => {
+  it("honours an athlete request with no injury (not injury-driven)", () => {
+    expect(resolveCrossTrainingCount(0, 1)).toEqual({ count: 1, injuryDriven: false });
+    expect(resolveCrossTrainingCount(0, 2)).toEqual({ count: 2, injuryDriven: false });
+  });
+
+  it("takes the max of the injury-derived count and the request, flagging the injury", () => {
+    expect(resolveCrossTrainingCount(2, 1)).toEqual({ count: 2, injuryDriven: true });
+    expect(resolveCrossTrainingCount(1, 2)).toEqual({ count: 2, injuryDriven: true });
+  });
+
+  it("stays capped at MAX_CROSS_TRAINING_PER_WEEK and zero without either signal", () => {
+    expect(resolveCrossTrainingCount(3, 5)).toEqual({ count: 2, injuryDriven: true });
+    expect(resolveCrossTrainingCount(0, null)).toEqual({ count: 0, injuryDriven: false });
+    expect(resolveCrossTrainingCount(0, undefined)).toEqual({ count: 0, injuryDriven: false });
+  });
+});
+
+describe("assembleWeekSessionsWithNotices (weighted volume fill + long-run share cap)", () => {
+  const week = (targetDistanceMeters: number): PlanMacroWeek => ({
+    weekIndex: 3,
+    startDate: "2026-01-05",
+    phase: "build",
+    targetDistanceMeters,
+    notes: null,
+    keySessions: [],
+  });
+  const params = {
+    intensityAggressiveness: "balanced" as const,
+    daysPerWeek: 5,
+    preferredLongRunDay: null,
+    crossTrainingCount: 0,
+    crossTrainingInjuryDriven: false,
+    raceDistanceMeters: null,
+    provenWeeklyMeters: null,
+  };
+
+  it("clamps a lone long fill run to the share cap and reports it (the 71 km bug shape)", () => {
+    const raw = [
+      sess("2026-01-05", "TEMPO", true),
+      sess("2026-01-07", "LONG_INTERVALS", true),
+      sess("2026-01-11", "LONG"),
+    ];
+    const { sessions, notices } = assembleWeekSessionsWithNotices(week(77250), raw, params);
+    const long = sessions.find((s) => s.sessionType === "LONG");
+    expect(long?.description).toBe("~30.9 km");
+    const notice = notices.find((n) => n.code === "long_run_share_capped");
+    expect(notice?.kind).toBe("clamped");
+    expect(notice?.limit).toBe(Math.round(77250 * LONG_RUN_MAX_FILL_SHARE));
+    expect(notice?.observed).toBeGreaterThan(30900);
+    expect(notice?.weekIndex).toBe(3);
+  });
+
+  // The marathoner bug shape: 6 run days on 100 km used to even-split into six
+  // identical ~16.7 km runs — a "long run" no longer than the easies.
+  it("weights the long run so it clearly exceeds the easies (6-fill 100 km week)", () => {
+    const raw = [
+      sess("2026-01-05", "EASY"),
+      sess("2026-01-06", "EASY"),
+      sess("2026-01-07", "EASY"),
+      sess("2026-01-08", "EASY"),
+      sess("2026-01-09", "EASY"),
+      sess("2026-01-11", "LONG"),
+    ];
+    const { sessions, notices } = assembleWeekSessionsWithNotices(week(100_000), raw, {
+      ...params,
+      daysPerWeek: 6,
+    });
+    expect(sessions.find((s) => s.sessionType === "LONG")?.description).toBe("~33.3 km");
+    for (const s of sessions.filter((x) => x.sessionType === "EASY")) {
+      expect(s.description).toBe("~13.3 km");
+    }
+    expect(notices).toHaveLength(0);
+  });
+
+  // A recovery jog must be the week's shortest run — at weight 1 the fill
+  // handed one ~11.6 km while its own description said "30–40 min".
+  it("weights RECOVERY fill runs below easies (long > easy > recovery)", () => {
+    const raw = [
+      sess("2026-01-06", "EASY"),
+      sess("2026-01-08", "RECOVERY"),
+      sess("2026-01-11", "LONG"),
+    ];
+    const { sessions } = assembleWeekSessionsWithNotices(week(30_000), raw, params);
+    expect(sessions.find((s) => s.sessionType === "LONG")?.description).toBe("~12.0 km");
+    expect(sessions.find((s) => s.sessionType === "EASY")?.description).toBe("~11.3 km");
+    expect(sessions.find((s) => s.sessionType === "RECOVERY")?.description).toBe("~6.8 km");
+  });
+
+  // The 19.9 km "shakeout" bug shape: an EASY fill run must never out-distance
+  // the (capped) long run; the excess is dropped, not reassigned.
+  it("caps every non-long fill run at the long run's distance (2-fill 33.4 km week)", () => {
+    const raw = [sess("2026-01-06", "EASY"), sess("2026-01-11", "LONG")];
+    const { sessions, notices } = assembleWeekSessionsWithNotices(week(33_400), raw, params);
+    expect(sessions.find((s) => s.sessionType === "LONG")?.description).toBe("~13.4 km");
+    expect(sessions.find((s) => s.sessionType === "EASY")?.description).toBe("~13.4 km");
+    expect(notices.some((n) => n.code === "long_run_share_capped")).toBe(true);
+    const capped = notices.find((n) => n.code === "fill_run_capped");
+    expect(capped?.kind).toBe("clamped");
+    expect(capped?.observed).toBe(20_040);
+    expect(capped?.limit).toBe(13_360);
+  });
+
+  it("scales down to a beginner week: long run modestly larger than the easies", () => {
+    const raw = [
+      sess("2026-01-06", "EASY"),
+      sess("2026-01-08", "EASY"),
+      sess("2026-01-11", "LONG"),
+    ];
+    const { sessions, notices } = assembleWeekSessionsWithNotices(week(6_000), raw, params);
+    expect(sessions.find((s) => s.sessionType === "LONG")?.description).toBe("~2.4 km");
+    for (const s of sessions.filter((x) => x.sessionType === "EASY")) {
+      expect(s.description).toBe("~1.8 km");
+    }
+    expect(notices.some((n) => n.code === "fill_run_capped")).toBe(false);
+  });
+
+  it("share-caps a 3-fill week whose weighted long share crosses 40%", () => {
+    const raw = [
+      sess("2026-01-06", "EASY"),
+      sess("2026-01-08", "EASY"),
+      sess("2026-01-11", "LONG"),
+    ];
+    const { sessions, notices } = assembleWeekSessionsWithNotices(week(60_000), raw, params);
+    expect(sessions.find((s) => s.sessionType === "LONG")?.description).toBe("~24.0 km");
+    for (const s of sessions.filter((x) => x.sessionType === "EASY")) {
+      expect(s.description).toBe("~18.0 km");
+    }
+    expect(notices.some((n) => n.code === "long_run_share_capped")).toBe(true);
+  });
+
+  it("leaves a single-session week untouched", () => {
+    const raw = [sess("2026-01-11", "LONG")];
+    const { sessions, notices } = assembleWeekSessionsWithNotices(week(50000), raw, params);
+    expect(sessions[0].description).toBe("~50.0 km");
+    expect(notices.some((n) => n.code === "long_run_share_capped")).toBe(false);
+  });
+});
+
+describe("assembleWeekSessionsWithNotices (RACE sessions pinned at race distance)", () => {
+  const raceWeek = (targetDistanceMeters: number): PlanMacroWeek => ({
+    weekIndex: 12,
+    startDate: "2026-01-05",
+    phase: "race",
+    targetDistanceMeters,
+    notes: null,
+    keySessions: [],
+  });
+  const params = {
+    intensityAggressiveness: "balanced" as const,
+    daysPerWeek: 5,
+    preferredLongRunDay: null,
+    crossTrainingCount: 0,
+    crossTrainingInjuryDriven: false,
+    raceDistanceMeters: 42_195,
+    provenWeeklyMeters: null,
+  };
+
+  it("hints the race distance on the RACE session and fills only the remainder", () => {
+    const raw = [
+      sess("2026-01-06", "EASY"),
+      sess("2026-01-08", "EASY"),
+      sess("2026-01-11", "RACE"),
+    ];
+    const { sessions } = assembleWeekSessionsWithNotices(raceWeek(50_000), raw, params);
+    expect(sessions.find((s) => s.sessionType === "RACE")?.description).toBe("~42.2 km");
+    for (const s of sessions.filter((x) => x.sessionType === "EASY")) {
+      expect(s.description).toBe("~3.9 km");
+    }
+  });
+
+  it("floors the fill budget at 0 when the race exceeds the week target", () => {
+    const raw = [sess("2026-01-06", "EASY"), sess("2026-01-11", "RACE")];
+    const { sessions } = assembleWeekSessionsWithNotices(raceWeek(30_000), raw, params);
+    expect(sessions.find((s) => s.sessionType === "RACE")?.description).toBe("~42.2 km");
+    expect(sessions.find((s) => s.sessionType === "EASY")?.description).toBe("~0.0 km");
+  });
+
+  it("appends no hint to a RACE session when the race distance is unknown", () => {
+    const raw = [
+      sess("2026-01-06", "EASY"),
+      sess("2026-01-08", "EASY"),
+      sess("2026-01-11", "RACE"),
+    ];
+    const { sessions } = assembleWeekSessionsWithNotices(raceWeek(20_000), raw, {
+      ...params,
+      raceDistanceMeters: null,
+    });
+    expect(sessions.find((s) => s.sessionType === "RACE")?.description).toBeNull();
+    for (const s of sessions.filter((x) => x.sessionType === "EASY")) {
+      expect(s.description).toBe("~10.0 km");
+    }
+  });
+});
+
+describe("shapeMacro (deterministic recovery-week notes)", () => {
+  const macroOf = (rows: [number, string | null][]): PlanMacro => ({
+    name: "P",
+    rationale: "r",
+    weeks: rows.map(([targetDistanceMeters, notes], i) => ({
+      weekIndex: i + 1,
+      startDate: "ignored",
+      phase: "build" as const,
+      targetDistanceMeters,
+      notes,
+      keySessions: [],
+    })),
+  });
+  const params: MacroShapingParams = {
+    baselineWeeklyMeters: 30000,
+    longestRunMeters: null,
+    provenWeeklyMeters: null,
+    provenLongestRunMeters: null,
+    volumeAggressiveness: "steady",
+    maxWeeklyVolumeMeters: null,
+    raceDistanceMeters: null,
+  };
+
+  // The Kim shape: the guard-made down week carried no note while the RISING
+  // week after it carried the LLM's "Recovery week (~-20%)". Volumes are the
+  // quantized (2 km grid) plateau-and-step shape; the down week dips off its
+  // quantized neighbour.
+  it("labels the guard-made cutback week and scrubs the LLM's recovery note from a rising week", () => {
+    const macro = shapeMacro(
+      macroOf([
+        [14600, null],
+        [16000, null],
+        [17600, "Focus on form"],
+        [19300, null],
+        [20300, "Recovery week (~-20%)"],
+        [20300, "Steady effort"],
+      ]),
+      { startDate: "2026-01-05", endDate: "2026-02-15" },
+      params,
+    ).macro;
+    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([
+      14000, 16000, 16000, 12000, 18000, 20000,
+    ]);
+    expect(macro.weeks[3].notes).toBe("Recovery week (−25%).");
+    expect(macro.weeks[4].notes).toBeNull();
+    expect(macro.weeks[2].notes).toBe("Focus on form");
+    expect(macro.weeks[5].notes).toBe("Steady effort");
+  });
+
+  it("replaces a correct LLM cutback note with the deterministic one, without duplication", () => {
+    const macro = shapeMacro(
+      macroOf([
+        [20000, null],
+        [14000, "Cutback week (~-30%)"],
+        [15400, "Rebuild"],
+      ]),
+      { startDate: "2026-01-05", endDate: "2026-01-25" },
+      params,
+    ).macro;
+    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([20000, 14000, 16000]);
+    expect(macro.weeks[1].notes).toBe("Recovery week (−30%).");
+    expect(macro.weeks[2].notes).toBe("Rebuild");
+  });
+
+  it("taper and race weeks keep their own notes", () => {
+    const macro = shapeMacro(
+      macroOf([
+        [40000, null],
+        [40000, null],
+        [40000, null],
+        [32000, "Taper: ~-20% volume"],
+        [24000, "Taper: ~-40% volume"],
+        [16000, "Race week"],
+      ]),
+      { startDate: "2026-01-05", endDate: "2026-02-15", raceEventId: 5 },
+      { ...params, baselineWeeklyMeters: 40000, raceDistanceMeters: 42195 },
+    ).macro;
+    expect(macro.weeks.map((w) => w.phase)).toEqual([
+      "build",
+      "build",
+      "build",
+      "taper",
+      "taper",
+      "race",
+    ]);
+    expect(macro.weeks[3].notes).toBe("Taper: ~-20% volume");
+    expect(macro.weeks[4].notes).toBe("Taper: ~-40% volume");
+    expect(macro.weeks[5].notes).toBe("Race week");
+  });
+});
+
+describe("shapeMacro (invalidated week notes)", () => {
+  it("drops the LLM's note on a week reshaped >15%, keeps notes within 15%", () => {
+    const raw: PlanMacro = {
+      name: "P",
+      rationale: "r",
+      weeks: [60000, 31000, 34000].map((targetDistanceMeters, i) => ({
+        weekIndex: i + 1,
+        startDate: "ignored",
+        phase: "build" as const,
+        targetDistanceMeters,
+        notes: `note ${i + 1}`,
+        keySessions: [],
+      })),
+    };
+    const macro = shapeMacro(
+      raw,
+      { startDate: "2026-01-05", endDate: "2026-01-25" },
+      {
+        baselineWeeklyMeters: 30000,
+        longestRunMeters: null,
+        provenWeeklyMeters: null,
+        provenLongestRunMeters: null,
+        volumeAggressiveness: "steady",
+        maxWeeklyVolumeMeters: null,
+        raceDistanceMeters: null,
+      },
+    ).macro;
+    // Quantization plateaus all three weeks at 30 km: weeks 2–3 moved <15% so
+    // their notes survive; week 1 was halved from 60 km and loses its note.
+    expect(macro.weeks.map((w) => w.targetDistanceMeters)).toEqual([30000, 30000, 30000]);
+    expect(macro.weeks[0].notes).toBeNull();
+    expect(macro.weeks[1].notes).toBe("note 2");
+    expect(macro.weeks[2].notes).toBe("note 3");
   });
 });

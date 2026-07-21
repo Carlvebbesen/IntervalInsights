@@ -1,7 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import * as feedbackIntent from "../src/agent/planning/feedback_intent";
 import * as macroAgent from "../src/agent/planning/plan_macro_agent";
 import type { GenerateSessionsOutput, PlanMacro } from "../src/agent/planning/plan_builder_schemas";
 import * as sessionsAgent from "../src/agent/planning/plan_sessions_agent";
+import { MAX_REVIEW_ROUNDS } from "../src/agent/planning/plan_builder_schemas";
 import {
   __peekQuota,
   __resetQuotaStore,
@@ -61,6 +63,9 @@ beforeAll(async () => {
   spies.push(
     spyOn(sessionsAgent, "invokeGenerateSessionsAgent").mockResolvedValue(sessionsOutput()),
   );
+  // Third LLM seam: the review gates map free-text feedback onto planner
+  // inputs. Neutral here — feedback causality has its own suite.
+  spies.push(spyOn(feedbackIntent, "extractPlanInputPatch").mockResolvedValue({}));
 });
 
 afterAll(async () => {
@@ -232,6 +237,61 @@ describe("POST /api/v1/training-plans/generate + /generate/resume", () => {
     expect(detailRes.status).toBe(200);
     const detail = (await detailRes.json()) as { status: string };
     expect(detail.status).toBe("active");
+  });
+
+  // The sessions gate coerces a 4th `adjust` into `accept` and emits a
+  // `review_rounds_exhausted` notice — then runs straight to persistPlan → END.
+  // `done` used to carry only {planId, threadId}, so the notice was never
+  // delivered and REST callers got a plain success for feedback that was
+  // silently discarded: the exact silent-refusal bug notices exist to kill.
+  it("delivers the round-exhaustion notice on the terminal done event", async () => {
+    const { threadId } = await startWizard(identityA(), {
+      name: "exhaustion plan",
+      startDate: "2026-01-05",
+      endDate: "2026-01-18",
+      goalText: "sub-20 5k",
+    });
+
+    const acceptMacro = await resumeWizard(identityA(), threadId, { action: "accept" });
+    const macroReader = acceptMacro.body?.getReader();
+    if (!macroReader) throw new Error("expected a streaming body");
+    await readUntilTerminal(macroReader);
+    await macroReader.cancel();
+
+    // Burn every sessions-gate revision round.
+    for (let i = 0; i < MAX_REVIEW_ROUNDS; i++) {
+      const res = await resumeWizard(identityA(), threadId, {
+        action: "adjust",
+        feedback: `sessions round ${i}`,
+      });
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("expected a streaming body");
+      const { terminal } = await readUntilTerminal(reader);
+      await reader.cancel();
+      expect(terminal.event).toBe("interrupt");
+    }
+
+    // One adjust too many: accepted by REST, so it must say the feedback was dropped.
+    const overRes = await resumeWizard(identityA(), threadId, {
+      action: "adjust",
+      feedback: "please make week 2 easier",
+    });
+    expect(overRes.status).toBe(200);
+    const overReader = overRes.body?.getReader();
+    if (!overReader) throw new Error("expected a streaming body");
+    const { terminal: doneFrame } = await readUntilTerminal(overReader);
+    await overReader.cancel();
+
+    expect(doneFrame.event).toBe("done");
+    const done = JSON.parse(doneFrame.data) as {
+      planId: number;
+      notices?: { code: string; kind: string; message: string }[];
+    };
+    expect(done.planId).toBeGreaterThan(0);
+    const exhausted = done.notices?.find((n) => n.code === "review_rounds_exhausted");
+    expect(exhausted).toBeDefined();
+    expect(exhausted?.kind).toBe("clamped");
+    expect(exhausted?.message).toContain(String(MAX_REVIEW_ROUNDS));
   });
 
   it("surfaces generateSessions batch progress as status events and keeps the stream alive with pings", async () => {

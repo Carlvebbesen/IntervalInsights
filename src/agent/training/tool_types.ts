@@ -21,6 +21,13 @@ export interface CoachTool {
   keywords: string[];
   requires: ToolRequirement;
   llmBacked?: boolean;
+  /**
+   * Tool belongs to a premium-only feature. The coach-chat surface is already
+   * behind `requireRole("premium","admin")` at its router, so this only bites
+   * on MCP, which authenticates with its own OAuth token and would otherwise
+   * hand a free user the same controllers the gated REST routes protect.
+   */
+  premium?: boolean;
   params: z.ZodObject<z.ZodRawShape>;
   handler: (ctx: CoachCtx, args: Record<string, unknown>) => Promise<unknown>;
 }
@@ -31,6 +38,7 @@ export function defineTool<S extends z.ZodRawShape>(spec: {
   keywords: string[];
   requires: ToolRequirement;
   llmBacked?: boolean;
+  premium?: boolean;
   params: z.ZodObject<S>;
   handler: (ctx: CoachCtx, args: z.infer<z.ZodObject<S>>) => Promise<unknown>;
 }): CoachTool {

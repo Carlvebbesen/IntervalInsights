@@ -199,8 +199,30 @@ export function isTimeBased(sportType: string): boolean {
   return TIME_BASED_SPORT_TYPES.includes(sportType);
 }
 
-export function toISODate(date: Date): string {
-  return date.toISOString().split("T")[0];
+export function toISODate(date: Date | string): string {
+  return (typeof date === "string" ? new Date(date) : date).toISOString().split("T")[0];
+}
+
+export function parseISODateUTC(dateStr: string): Date {
+  const [y, m, day] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, day));
+}
+
+export function addDaysISO(dateStr: string, days: number): string {
+  const d = parseISODateUTC(dateStr);
+  d.setUTCDate(d.getUTCDate() + days);
+  return toISODate(d);
+}
+
+export function daysBetweenISO(a: string, b: string): number {
+  return Math.abs((parseISODateUTC(b).getTime() - parseISODateUTC(a).getTime()) / 86_400_000);
+}
+
+/** Monday-aligned start (YYYY-MM-DD) of the week containing the given date. */
+export function mondayOfISO(dateStr: string): string {
+  const d = parseISODateUTC(dateStr);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return toISODate(d);
 }
 
 export const generateCompleteIntervalSet = (sets: z.infer<typeof workoutSet>[]) => {

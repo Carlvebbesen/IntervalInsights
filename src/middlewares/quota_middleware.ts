@@ -7,11 +7,15 @@ export const SUGGEST_SESSION_QUOTA = "suggest-session";
 export const PARSE_INTERVALS_QUOTA = "parse-intervals";
 export const ANALYSIS_START_QUOTA = "analysis-start";
 export const PLAN_BUILDER_QUOTA = "plan-builder";
+export const PLAN_INTAKE_QUOTA = "plan-intake";
 
 export const SUGGEST_SESSION_DAILY_MAX = 100;
 export const PARSE_INTERVALS_DAILY_MAX = 100;
 export const ANALYSIS_START_DAILY_MAX = 1000;
 export const PLAN_BUILDER_DAILY_MAX = 40;
+// Generous: intake turns are cheap mini-model calls; the cap is a circuit
+// breaker against scripted spend, not something a real chat should hit.
+export const PLAN_INTAKE_DAILY_MAX = 300;
 
 interface QuotaEntry {
   day: string;
