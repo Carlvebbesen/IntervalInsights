@@ -11,13 +11,14 @@ import { logger } from "../../logger";
 import {
   activities,
   activityEvents,
+  eventNotes,
   events,
   gears,
   intervalSegments,
   intervalStructures,
   users,
 } from "../../schema";
-import { setReviewUserId } from "../review_account";
+import { REVIEW_STRAVA_ID, setReviewUserId } from "../review_account";
 import { buildDemoCorpus } from "./corpus";
 
 // Cheap, safe on every boot: resolve the review user, promote it (provider
@@ -35,7 +36,12 @@ export async function prepareReviewAccount(): Promise<string | null> {
 
   await db
     .update(users)
-    .set({ stravaId: "0", role: "premium", maxHeartRate: 190, processHeartRate: true })
+    .set({
+      stravaId: REVIEW_STRAVA_ID,
+      role: "premium",
+      maxHeartRate: 190,
+      processHeartRate: true,
+    })
     .where(eq(users.id, user.id));
   setReviewUserId(user.id);
   return user.id;
@@ -108,6 +114,18 @@ export async function reseedReviewAccountData(userId: string): Promise<void> {
         .insert(events)
         .values({ ...e.event, userId })
         .returning({ id: events.id });
+      await tx.insert(eventNotes).values(
+        e.notes.map((n) => ({
+          eventId: row.id,
+          userId,
+          note: n.note,
+          source: n.source,
+          occurredAt: n.occurredAt,
+          trend: n.trend ?? null,
+          severity: n.severity ?? null,
+          isAnchor: n.isAnchor ?? false,
+        })),
+      );
       const links = e.activityDemoKeys
         .map((k) => demoKeyToActivityId.get(k))
         .filter((id): id is number => id != null)

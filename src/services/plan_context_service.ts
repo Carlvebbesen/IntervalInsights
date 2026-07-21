@@ -12,6 +12,7 @@ import {
 } from "../agent/planning/plan_builder_state";
 import { logger } from "../logger";
 import * as dashboardRepo from "../repositories/dashboard_repository";
+import * as noteRepo from "../repositories/event_note_repository";
 import * as eventRepo from "../repositories/event_repository";
 import * as raceEventRepo from "../repositories/race_event_repository";
 import * as planRepo from "../repositories/training_plan_repository";
@@ -116,7 +117,11 @@ export async function loadPlanGuardContext(
   const loadActiveInjuries = async (): Promise<PlanGuardContext["activeInjuries"]> => {
     try {
       const rows = await eventRepo.listForUser(db, userId, { status: "active" });
-      return mapActiveHealthEvents(rows);
+      const anchors = await noteRepo.anchorNotesFor(
+        db,
+        rows.map((r) => r.id),
+      );
+      return mapActiveHealthEvents(rows, anchors);
     } catch (err) {
       log.warn({ err }, "active health events failed — degrading to empty");
       return [];
