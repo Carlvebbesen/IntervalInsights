@@ -37,6 +37,38 @@ export interface Outlier {
   relError: number;
 }
 
+/** The raw shape `compare_training_load` selects out of `activities`. */
+export interface ActivityLoadRow {
+  id: number;
+  userId: string;
+  startDateLocal: Date;
+  sportType: string;
+  source: string | null;
+  ours: number | null;
+  icu: number | null;
+}
+
+/**
+ * DB rows → comparison rows, dropping users the caller excludes. The store-review
+ * demo account is excluded there: its corpus is seeded with ours == icu, so its
+ * rows are a zero-error block that flatters every statistic in the gate.
+ */
+export function toComparisonRows(
+  rows: ActivityLoadRow[],
+  isExcluded: (userId: string) => boolean,
+): ComparisonRow[] {
+  return rows
+    .filter((r) => !isExcluded(r.userId))
+    .map((r) => ({
+      activityId: r.id,
+      date: r.startDateLocal.toISOString().slice(0, 10),
+      sportType: r.sportType,
+      source: r.source,
+      ours: r.ours as number,
+      icu: r.icu as number,
+    }));
+}
+
 export function sportGroupOf(sportType: string): SportGroup {
   return (RUNNING_SPORT_TYPES as readonly string[]).includes(sportType) ? "running" : "other";
 }
