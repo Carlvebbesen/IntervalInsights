@@ -11,8 +11,9 @@ bun run build        # Compile to single binary (./server)
 
 bun run db:generate  # Generate Drizzle migrations from schema changes
 bun run db:migrate   # Run pending migrations
-bun run scripts:status  # Show applied/pending state: Drizzle migrations + run-once scripts (exits 1 if pending)
-bun run scripts:run     # Run all pending run-once scripts (see scripts/README.md)
+bun run scripts:status       # Migrations + run-once + manually-run scripts, with run history (exits 1 if pending)
+bun run scripts:status:once  # Just the deploy gate: migrations + run-once scripts
+bun run scripts:run          # Run all pending run-once scripts (see scripts/README.md)
 bun run db:push      # Push schema directly (dev only)
 bun run db:studio    # Open Drizzle Studio UI
 ```
