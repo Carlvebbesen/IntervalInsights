@@ -42,6 +42,12 @@ export const EventListResponseSchema = z
   })
   .openapi({ ref: "EventListResponse" });
 
+export const ActivityEventListResponseSchema = z
+  .object({
+    events: z.array(ActivityEventSchema),
+  })
+  .openapi({ ref: "ActivityEventListResponse" });
+
 export const LinkedActivitySchema = z
   .object({
     id: z.number(),

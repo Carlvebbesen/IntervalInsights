@@ -1,4 +1,4 @@
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, sql } from "drizzle-orm";
 import {
   activities,
   activityEvents,
@@ -34,22 +34,51 @@ export type ActivityEventDao = Pick<
   "id" | "eventType" | "bodyLocation" | "startTime" | "lastOccurrence" | "status" | "resolvedAt"
 > & { anchorNote: SelectEventNote | null };
 
+const activityEventColumns = {
+  id: events.id,
+  eventType: events.eventType,
+  bodyLocation: events.bodyLocation,
+  startTime: events.startTime,
+  lastOccurrence: events.lastOccurrence,
+  status: events.status,
+  resolvedAt: events.resolvedAt,
+  anchorNote: eventNotes,
+};
+
 export function listForActivity(db: Db, activityId: number): Promise<ActivityEventDao[]> {
   return db
-    .select({
-      id: events.id,
-      eventType: events.eventType,
-      bodyLocation: events.bodyLocation,
-      startTime: events.startTime,
-      lastOccurrence: events.lastOccurrence,
-      status: events.status,
-      resolvedAt: events.resolvedAt,
-      anchorNote: eventNotes,
-    })
+    .select(activityEventColumns)
     .from(activityEvents)
     .innerJoin(events, eq(events.id, activityEvents.eventId))
     .leftJoin(eventNotes, and(eq(eventNotes.eventId, events.id), eq(eventNotes.isAnchor, true)))
     .where(eq(activityEvents.activityId, activityId));
+}
+
+/** Link an existing event to an activity. Idempotent through the composite PK,
+ * and `lastOccurrence` only ever moves forward (detection's recurrence
+ * semantics) — but a manual link writes no note. */
+export async function linkToActivity(
+  db: Db,
+  eventId: number,
+  activityId: number,
+  activityStart: Date,
+): Promise<ActivityEventDao> {
+  return db.transaction(async (tx) => {
+    await tx.insert(activityEvents).values({ activityId, eventId }).onConflictDoNothing();
+    await tx
+      .update(events)
+      .set({
+        updatedAt: new Date(),
+        lastOccurrence: sql`GREATEST(${events.lastOccurrence}, ${activityStart})`,
+      })
+      .where(eq(events.id, eventId));
+    const [row] = await tx
+      .select(activityEventColumns)
+      .from(events)
+      .leftJoin(eventNotes, and(eq(eventNotes.eventId, events.id), eq(eventNotes.isAnchor, true)))
+      .where(eq(events.id, eventId));
+    return row;
+  });
 }
 
 export async function listForUser(

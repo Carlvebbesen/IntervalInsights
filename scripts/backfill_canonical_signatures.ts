@@ -3,13 +3,14 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import type { InsertIntervalSegment } from "../src/schema";
 import * as schema from "../src/schema";
-import { activities, intervalSegments, intervalStructures } from "../src/schema";
+import { activities, gearSignatureDefaults, intervalSegments, intervalStructures } from "../src/schema";
 import {
   generateIntervalSignature,
   generateStructureName,
   mapSegmentsToComponents,
 } from "../src/services/interval_structure_service";
 import { runScript } from "./_harness";
+import { type GearDefaultRow, planGearDefaultMoves } from "./_sigcanon_core";
 
 // Recomputes canonical signatures for every activity that is linked to an
 // interval structure, re-points it at the find-or-create canonical structure,
@@ -34,6 +35,7 @@ const db = drizzle({ client: pool, schema });
 
 type Plan = {
   activityId: number;
+  userId: string;
   oldStructureId: number;
   newSignature: string;
   newName: string;
@@ -54,7 +56,7 @@ async function main() {
   for (const s of structures) if (s.signature) sigToId.set(s.signature, s.id);
 
   const linkedActivities = await db
-    .select({ id: activities.id, structureId: activities.intervalStructureId })
+    .select({ id: activities.id, userId: activities.userId, structureId: activities.intervalStructureId })
     .from(activities)
     .where(isNotNull(activities.intervalStructureId))
     .orderBy(asc(activities.id));
@@ -93,6 +95,7 @@ async function main() {
     }
     plans.push({
       activityId: a.id,
+      userId: a.userId,
       oldStructureId: a.structureId,
       newSignature,
       newName: generateStructureName(components),
@@ -122,9 +125,33 @@ async function main() {
       console.log(`      → ${dest} [${sig}] "${canonicalNameBySig.get(sig)}" ×${n}${marker}`);
     }
   }
+  // Gear defaults reference interval_structures too (ON DELETE no action), so they must
+  // follow the merge — both to keep the pin meaningful and so the orphan delete below
+  // has nothing left pointing at it.
+  const gearDefaults: GearDefaultRow[] = await db
+    .select({
+      userId: gearSignatureDefaults.userId,
+      intervalStructureId: gearSignatureDefaults.intervalStructureId,
+      createdAt: gearSignatureDefaults.createdAt,
+    })
+    .from(gearSignatureDefaults);
+  const gearPlan = planGearDefaultMoves(plans, gearDefaults);
+
+  if (gearDefaults.length > 0) {
+    console.log(`\n[sigcanon] === gear defaults (${gearDefaults.length}) ===`);
+    for (const m of gearPlan.moves) {
+      const dest = sigToId.has(m.targetSignature) ? `existing #${sigToId.get(m.targetSignature)}` : "NEW";
+      const verb = m.action === "repoint" ? "→" : "✗ drop (superseded by a newer pin on)";
+      console.log(`  user ${m.userId.slice(0, 8)} #${m.fromStructureId} ${verb} ${dest} [${m.targetSignature}]`);
+    }
+    for (const s of gearPlan.stranded) {
+      console.log(`  user ${s.userId.slice(0, 8)} #${s.intervalStructureId} — left alone (no activity of theirs there)`);
+    }
+  }
+
   console.log(
     `\n[sigcanon] structures before=${structures.length} newToCreate=${sigsNeedingCreate.length} ` +
-      `emptyShapeActivities=${emptyShape}`,
+      `emptyShapeActivities=${emptyShape} gearDefaults=${gearDefaults.length}`,
   );
 
   if (DRY_RUN) {
@@ -139,6 +166,9 @@ async function main() {
   await db.execute(
     sql`CREATE TABLE IF NOT EXISTS activities_structure_backup_sigcanon AS
         SELECT id, interval_structure_id FROM activities WHERE interval_structure_id IS NOT NULL`,
+  );
+  await db.execute(
+    sql`CREATE TABLE IF NOT EXISTS gear_signature_defaults_backup_sigcanon AS TABLE gear_signature_defaults`,
   );
 
   // Create missing canonical structures, filling sigToId.
@@ -188,12 +218,53 @@ async function main() {
     renamed += 1;
   }
 
-  // Delete orphans (no activity references them).
+  // Move the gear pins with their structure. (userId, structureId) is the primary key,
+  // so track which slots are taken — drops run first to free theirs, and a repoint onto
+  // an occupied slot yields to the sitting tenant rather than raising a PK violation.
+  const occupied = new Set(gearDefaults.map((d) => `${d.userId}:${d.intervalStructureId}`));
+  const deleteDefault = async (userId: string, structureId: number) => {
+    await db
+      .delete(gearSignatureDefaults)
+      .where(
+        sql`${gearSignatureDefaults.userId} = ${userId} AND ${gearSignatureDefaults.intervalStructureId} = ${structureId}`,
+      );
+    occupied.delete(`${userId}:${structureId}`);
+  };
+
+  let gearRepointed = 0;
+  let gearDropped = 0;
+  for (const m of gearPlan.moves.filter((m) => m.action === "drop")) {
+    await deleteDefault(m.userId, m.fromStructureId);
+    gearDropped += 1;
+  }
+  for (const m of gearPlan.moves.filter((m) => m.action === "repoint")) {
+    const targetId = sigToId.get(m.targetSignature);
+    if (targetId == null || targetId === m.fromStructureId) continue;
+    if (occupied.has(`${m.userId}:${targetId}`)) {
+      await deleteDefault(m.userId, m.fromStructureId);
+      gearDropped += 1;
+      continue;
+    }
+    await db
+      .update(gearSignatureDefaults)
+      .set({ intervalStructureId: targetId })
+      .where(
+        sql`${gearSignatureDefaults.userId} = ${m.userId} AND ${gearSignatureDefaults.intervalStructureId} = ${m.fromStructureId}`,
+      );
+    occupied.delete(`${m.userId}:${m.fromStructureId}`);
+    occupied.add(`${m.userId}:${targetId}`);
+    gearRepointed += 1;
+  }
+
+  // Delete orphans (nothing references them). Gear defaults are checked as well as
+  // activities: the FK is ON DELETE no action, so a stranded pin would abort the whole
+  // delete — and this script has no transaction to roll back to.
   const deleted = await db.execute(sql`
     DELETE FROM interval_structures
     WHERE id NOT IN (
       SELECT DISTINCT interval_structure_id FROM activities WHERE interval_structure_id IS NOT NULL
     )
+    AND id NOT IN (SELECT DISTINCT interval_structure_id FROM gear_signature_defaults)
     RETURNING id`);
   const deletedCount = Array.isArray(deleted) ? deleted.length : (deleted.rowCount ?? 0);
 
@@ -202,7 +273,8 @@ async function main() {
     .from(intervalStructures);
   console.log(
     `[sigcanon] applied. repointed=${repointed} created=${sigsNeedingCreate.length} ` +
-      `renamed=${renamed} orphansDeleted=${deletedCount} structuresAfter=${after}`,
+      `renamed=${renamed} gearDefaultsRepointed=${gearRepointed} gearDefaultsDropped=${gearDropped} ` +
+      `orphansDeleted=${deletedCount} structuresAfter=${after}`,
   );
 }
 

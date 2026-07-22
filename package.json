@@ -15,6 +15,7 @@
     "seed:review": "bun run scripts/seed_review_account.ts",
     "scripts:run": "bun run scripts/run_pending.ts",
     "scripts:status": "bun run scripts/status.ts",
+    "scripts:status:once": "bun run scripts/status.ts --once",
     "brain:sync": "rm -rf knowledge/brain && mkdir -p knowledge && cp -R ../interval-brain/brain knowledge/brain && rm -rf knowledge/brain/_templates && rm -f knowledge/brain/log.md"
   },
   "dependencies": {

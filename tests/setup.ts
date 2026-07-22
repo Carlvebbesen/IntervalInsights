@@ -95,9 +95,11 @@ mock.module("../src/services/intervals_wellness_service.ts", () => ({
 export const analysisServiceMock = {
   triggerAnalysisByStravaId: async (..._args: unknown[]) => {},
   autoCompleteAnalysis: async (..._args: unknown[]) => {},
+  claimForAnalysis: async (..._args: unknown[]) => true,
   reset() {
     this.triggerAnalysisByStravaId = async (..._args: unknown[]) => {};
     this.autoCompleteAnalysis = async (..._args: unknown[]) => {};
+    this.claimForAnalysis = async (..._args: unknown[]) => true;
   },
 };
 
@@ -118,6 +120,8 @@ mock.module("../src/services/analysis_service.ts", () => {
     ResumeValidationError,
     NoPendingInterruptError,
     startAnalysis: async () => {},
+    claimForAnalysis: (...args: unknown[]) => analysisServiceMock.claimForAnalysis(...args),
+    runClaimedAnalysis: async () => {},
     resumeAnalysis: async () => {},
     autoCompleteAnalysis: (...args: unknown[]) =>
       analysisServiceMock.autoCompleteAnalysis(...args),

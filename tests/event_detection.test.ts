@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, mock } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { eventNotes } from "../src/schema";
 import { closePool, createTestUser, deleteTestUser, getDb, getPool } from "./helpers/db";
-import { insertActivity, insertEvent } from "./helpers/fixtures";
+import { insertActivity, insertEvent, linkEventToActivity } from "./helpers/fixtures";
 
 // Mutable holder so each test can drive the "LLM" output.
 let mockDetection: unknown = { events: [] };
@@ -105,5 +105,45 @@ describe("detectAndPersistEvents note timeline", () => {
     const appended = notes.find((n) => !n.isAnchor);
     expect(appended?.source).toBe("ai");
     expect(appended?.note).toBe("Fortsatt vondt i venstre kne etter dagens langtur");
+  });
+
+  it("skips an event the user manually linked to this activity — no second link, no note", async () => {
+    const existing = await insertEvent(user.id, {
+      eventType: "INJURY",
+      bodyLocation: "right calf",
+      description: "Stram høyre legg",
+    });
+    const activity = await insertActivity(user.id, { title: "Threshold" });
+    await linkEventToActivity(activity.id, existing.id);
+
+    mockDetection = {
+      events: [
+        {
+          linkedEventId: existing.id,
+          eventType: "INJURY",
+          bodyLocation: "right calf",
+          description: "Stram høyre legg",
+          updateText: "Fortsatt stram legg",
+          markResolved: false,
+          attributes: [],
+        },
+      ],
+    };
+
+    await detectAndPersistEvents(db as never, {
+      activityId: activity.id,
+      userId: user.id,
+      title: "Threshold",
+      description: "",
+      notes: "fortsatt stram legg",
+      activityStartDateLocal: new Date(),
+    });
+
+    const { rows } = await getPool().query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM activity_events WHERE event_id = $1",
+      [existing.id],
+    );
+    expect(rows[0].n).toBe(1);
+    expect((await notesFor(existing.id)).length).toBe(1);
   });
 });

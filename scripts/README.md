@@ -29,13 +29,28 @@ runScript({ name: "my_script", once: false, db, pool }, main);
 ### Checking what's pending on the current DB
 
 ```bash
-bun run scripts:status     # == bun run scripts/status.ts
+bun run scripts:status        # migrations + run-once + manually-run scripts
+bun run scripts:status:once   # just the deploy gate: migrations + run-once
 ```
 
-Read-only status against `DATABASE_URL`: lists every Drizzle migration
-(journal vs `drizzle.__drizzle_migrations`) and every run-once script
-(registry vs `script_runs`) with applied/pending state. Exits 1 when anything
-is pending, so it can gate other commands.
+Read-only status against `DATABASE_URL` (the only variable either form needs):
+every Drizzle migration (journal vs `drizzle.__drizzle_migrations`), every
+run-once script (registry vs `script_runs`), and — unless `--once` is passed —
+every manually-run script with its last run and run count. Manually-run scripts
+have no pending state, but the harness records them all the same, and they are
+otherwise invisible: `scripts:status:once` is the deploy gate, `scripts:status`
+answers "what has actually been run in this database".
+
+Both exit 1 when a migration or a run-once script is pending, so either can gate
+another command. A `completed` run only means the body did not throw — a script
+that skipped every candidate still records `completed`, so treat the run-once
+ticks as "has run", not "was effective".
+
+The report is built from the source, not a hand-kept list: every script wrapped
+in `runScript(...)` is discovered (`_discover.ts`) and diffed against
+`_registry.ts`. A `once: true` script missing from the registry is reported as
+drift and exits 1 — without that check it would silently never run and never
+appear as pending.
 
 ### Running all pending run-once scripts
 

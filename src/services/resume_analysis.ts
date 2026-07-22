@@ -223,13 +223,21 @@ export const resumeAnalysis = async (
  * bypasses it for non-interval drafts (TEMPO included — it gets no per-segment
  * breakdown, so there is nothing structural to review). `draftType` MUST be the
  * reconciled draft type, never the possibly-stale `activities.trainingType`.
+ *
+ * `intervals_only` additionally keeps any draft the agent found a structure in,
+ * whatever it classified the session as. The training type alone is too blunt a
+ * proxy for "has nothing to review": a structured session on a non-run sport
+ * routinely drafts as RECOVERY/EASY, and auto-completing it takes away the only
+ * chance to correct the classification.
  */
 export function computeShouldAutoResume(
   mode: AnalysisReviewMode,
   draftType: TrainingType | null,
+  hasStructure = false,
 ): boolean {
   if (draftType == null) return false;
-  return mode === "none" || (mode === "intervals_only" && !needCompleteAnalysis(draftType));
+  if (mode === "none") return true;
+  return mode === "intervals_only" && !needCompleteAnalysis(draftType) && !hasStructure;
 }
 
 type AutoResumeActivity = {
@@ -351,7 +359,8 @@ export async function maybeAutoResumeAnalysis(
   if (!settings) return;
 
   const draftType = activity.draftAnalysisResult?.training_type ?? null;
-  if (!computeShouldAutoResume(settings.analysisReviewMode, draftType)) return;
+  const hasStructure = (activity.draftAnalysisResult?.structure?.length ?? 0) > 0;
+  if (!computeShouldAutoResume(settings.analysisReviewMode, draftType, hasStructure)) return;
 
   try {
     await autoCompleteAnalysis(db, stravaAccessToken, activityId, userId, activity, log);
