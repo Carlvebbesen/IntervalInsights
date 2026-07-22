@@ -1,3 +1,4 @@
+import { sleep } from "bun";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { logger } from "../src/logger";
 import { activities } from "../src/schema";
@@ -19,16 +20,23 @@ export interface BackfillCounts {
 
 export interface BackfillUserOptions {
   dryRun: boolean;
+  /** Also revisit already-computed rows — needed after a load-formula change. */
+  recompute?: boolean;
+  /** Pause after every processed activity; the loop makes one Strava call each. */
+  delayMs?: number;
   onProgress?: (processed: number, total: number) => void;
   onResult?: (activityId: number, result: { load: number; source: string }) => void;
   progressEvery?: number;
   computeFn?: typeof computeAndStoreActivityLoadWithThresholds;
+  sleepFn?: (ms: number) => Promise<void>;
 }
 
 /**
- * Backfill one user's null-load activities oldest-first. Already-computed rows
- * are excluded at the query level (idempotent/resumable); a per-activity error
- * is counted and skipped, never aborting the run.
+ * Backfill one user's activities oldest-first. By default only null-load rows
+ * are selected (idempotent/resumable); `recompute` widens that to every row so a
+ * changed formula can be re-applied. A per-activity error is counted and
+ * skipped, never aborting the run. The never-wipe invariant lives in the compute
+ * step: a null result leaves any existing load untouched, in either mode.
  */
 export async function backfillUserLoads(
   db: Db,
@@ -39,11 +47,17 @@ export async function backfillUserLoads(
 ): Promise<void> {
   const compute = opts.computeFn ?? computeAndStoreActivityLoadWithThresholds;
   const progressEvery = opts.progressEvery ?? 50;
+  const delayMs = opts.delayMs ?? 0;
+  const pause = opts.sleepFn ?? sleep;
 
   const pending = await db
     .select({ id: activities.id, startDateLocal: activities.startDateLocal })
     .from(activities)
-    .where(and(eq(activities.userId, userId), isNull(activities.trainingLoad)))
+    .where(
+      opts.recompute
+        ? eq(activities.userId, userId)
+        : and(eq(activities.userId, userId), isNull(activities.trainingLoad)),
+    )
     .orderBy(asc(activities.startDateLocal));
 
   let processed = 0;
@@ -61,6 +75,9 @@ export async function backfillUserLoads(
     }
     processed += 1;
     if (processed % progressEvery === 0) opts.onProgress?.(processed, pending.length);
+    // Unconditional: an early-exit path that skips the throttle lets a run of
+    // failures burn the Strava rate budget at full speed (see backfill_hr_stats).
+    if (delayMs > 0) await pause(delayMs);
   }
   opts.onProgress?.(processed, pending.length);
 }

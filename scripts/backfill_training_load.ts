@@ -8,12 +8,17 @@ import { runScript } from "./_harness";
 
 // Historical load backfill: for every activity with a null `training_load`,
 // resolve thresholds as-of the activity's `start_date_local` and self-compute
-// the load. Loop invariants (idempotency, error-continue, dry-run) live in
-// `_backfill_training_load_core.ts` and are covered by tests there.
+// the load. Loop invariants (idempotency, error-continue, dry-run, throttle)
+// live in `_backfill_training_load_core.ts` and are covered by tests there.
 // DRY_RUN=1 computes and logs but writes nothing. USER_ID limits to one user.
+// RECOMPUTE=1 also revisits rows that already have a load — for re-applying a
+// changed load formula. DELAY_MS throttles the per-activity Strava stream fetch,
+// which shares its rate budget with live webhook ingest.
 
 const DRY_RUN = process.env.DRY_RUN === "1";
 const ONLY_USER_ID = process.env.USER_ID ?? null;
+const RECOMPUTE = process.env.RECOMPUTE === "1";
+const DELAY_MS = Number(process.env.DELAY_MS ?? 0);
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required");
@@ -24,7 +29,9 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const db = drizzle({ client: pool, schema });
 
 async function main(): Promise<Record<string, unknown>> {
-  console.log(`[backfill_training_load] dryRun=${DRY_RUN} onlyUserId=${ONLY_USER_ID ?? "<all>"}`);
+  console.log(
+    `[backfill_training_load] dryRun=${DRY_RUN} onlyUserId=${ONLY_USER_ID ?? "<all>"} recompute=${RECOMPUTE} delayMs=${DELAY_MS}`,
+  );
 
   const userRows = ONLY_USER_ID
     ? [{ id: ONLY_USER_ID }]
@@ -37,6 +44,8 @@ async function main(): Promise<Record<string, unknown>> {
     const resolver = await buildHistoricalThresholdResolver(db, user.id);
     await backfillUserLoads(db, user.id, resolver, counts, {
       dryRun: DRY_RUN,
+      recompute: RECOMPUTE,
+      delayMs: DELAY_MS,
       onProgress: (processed, total) =>
         console.log(
           `[backfill_training_load] user=${user.id} progress=${processed}/${total} success=${counts.success} skipped=${counts.skipped} failed=${counts.failed}`,
@@ -53,10 +62,16 @@ async function main(): Promise<Record<string, unknown>> {
   console.log(
     `[backfill_training_load] done. users=${userRows.length} success=${counts.success} skipped=${counts.skipped} failed=${counts.failed}`,
   );
-  return { ...counts, users: userRows.length, dryRun: DRY_RUN };
+  return { ...counts, users: userRows.length, dryRun: DRY_RUN, recompute: RECOMPUTE };
 }
 
 runScript(
-  { name: "backfill_training_load", once: false, db, pool, meta: { dryRun: DRY_RUN } },
+  {
+    name: "backfill_training_load",
+    once: false,
+    db,
+    pool,
+    meta: { dryRun: DRY_RUN, recompute: RECOMPUTE, delayMs: DELAY_MS },
+  },
   () => main(),
 );
