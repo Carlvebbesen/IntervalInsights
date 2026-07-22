@@ -4,6 +4,8 @@ import { z } from "zod";
 import * as eventController from "../controllers/event_controller";
 import { eventStatusEnum, eventTypeEnum, noteTrendEnum } from "../schema";
 import {
+  ActivityEventListResponseSchema,
+  ActivityEventSchema,
   DeleteEventNoteResponseSchema,
   DeleteEventResponseSchema,
   ErrorSchema,
@@ -19,17 +21,26 @@ const eventsRouter = new Hono<TGlobalEnv>();
 const listQuerySchema = z.object({
   status: z.enum(eventStatusEnum.enumValues).optional(),
   eventType: z.enum(eventTypeEnum.enumValues).optional(),
+  activityId: z.coerce.number().int().positive().optional(),
 });
 
 eventsRouter.get(
   "/",
   describeRoute({
     description:
-      "List every event for the authenticated user, newest occurrence first. Each item carries its anchor note (canonical summary) and latest note. Optional filters: `status` (active/resolved), `eventType`.",
+      "List every event for the authenticated user, newest occurrence first. Each item carries its anchor note (canonical summary) and latest note. Optional filters: `status` (active/resolved), `eventType`. With `activityId` the response is instead the events linked to that activity (anchor note only, no `latestNote`/timestamps) and the `status`/`eventType` filters are ignored.",
     responses: {
       200: {
-        description: "All events for the user",
-        content: { "application/json": { schema: resolver(EventListResponseSchema) } },
+        description: "All events for the user, or the events linked to `activityId`",
+        content: {
+          "application/json": {
+            schema: resolver(z.union([EventListResponseSchema, ActivityEventListResponseSchema])),
+          },
+        },
+      },
+      404: {
+        description: "Activity not found or unauthorized",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
       },
       500: {
         description: "Internal server error",
@@ -39,11 +50,11 @@ eventsRouter.get(
   }),
   validator("query", listQuerySchema),
   async (c) => {
-    const events = await eventController.listEvents(
-      c.env.db,
-      c.get("userId"),
-      c.req.valid("query"),
-    );
+    const { activityId, ...filters } = c.req.valid("query");
+    const events =
+      activityId !== undefined
+        ? await eventController.listEventsForActivity(c.env.db, c.get("userId"), activityId)
+        : await eventController.listEvents(c.env.db, c.get("userId"), filters);
     return c.json({ events });
   },
 );
@@ -117,6 +128,45 @@ eventsRouter.post(
       c.req.valid("json"),
     );
     return c.json(created, 201);
+  },
+);
+
+const linkEventSchema = z.object({
+  activityId: z.number().int().positive(),
+});
+
+eventsRouter.post(
+  "/:id/link",
+  describeRoute({
+    description:
+      "Link an existing event to an activity. Idempotent: re-linking returns 200 with the same body. Bumps the event's `lastOccurrence` when the activity starts later than the current value, and never appends a note (a manual link is not a detected recurrence).",
+    responses: {
+      200: {
+        description: "The linked event",
+        content: { "application/json": { schema: resolver(ActivityEventSchema) } },
+      },
+      404: {
+        description: "Event or activity not found or unauthorized",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("param", eventIdParamSchema),
+  validator("json", linkEventSchema),
+  async (c) => {
+    const { id } = c.req.valid("param");
+    const { activityId } = c.req.valid("json");
+    const linked = await eventController.linkEventToActivity(
+      c.env.db,
+      c.get("userId"),
+      id,
+      activityId,
+    );
+    return c.json(linked);
   },
 );
 

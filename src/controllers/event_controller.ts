@@ -70,6 +70,39 @@ export async function listActivityEvents(db: Db, activityId: number): Promise<Ac
   return rows.map(toActivityEventDto);
 }
 
+/** Same message whether the event or the activity is the missing/foreign one —
+ * the response must not tell a caller which id it does not own. */
+const LINK_NOT_FOUND = "Event or activity not found or unauthorized";
+
+export async function listEventsForActivity(
+  db: Db,
+  userId: string,
+  activityId: number,
+): Promise<ActivityEventDto[]> {
+  const activityStart = await activityRepo.getStartDateLocalForUser(db, userId, activityId);
+  if (!activityStart) {
+    throw new AppError(404, LINK_NOT_FOUND);
+  }
+  return listActivityEvents(db, activityId);
+}
+
+export async function linkEventToActivity(
+  db: Db,
+  userId: string,
+  eventId: number,
+  activityId: number,
+): Promise<ActivityEventDto> {
+  const [event, activityStart] = await Promise.all([
+    eventRepo.getForUser(db, userId, eventId),
+    activityRepo.getStartDateLocalForUser(db, userId, activityId),
+  ]);
+  if (!event || !activityStart) {
+    throw new AppError(404, LINK_NOT_FOUND);
+  }
+  const linked = await eventRepo.linkToActivity(db, eventId, activityId, activityStart);
+  return toActivityEventDto(linked);
+}
+
 export interface CreateEventInput {
   activityId?: number;
   eventType: EventType;

@@ -55,6 +55,26 @@ describe("/api/agents", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.success).toBe(true);
+      expect(body.analysisStatus).toBe("ongoing_init");
+    }));
+
+  it("POST /start-analysis reports the blocking status when the claim is declined", () =>
+    withIdentity(identity(), async () => {
+      analysisServiceMock.claimForAnalysis = async () => false;
+      try {
+        const res = await app.fetch(
+          new Request("http://test/api/v1/agents/start-analysis", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ activityId, stravaActivityId }),
+          }),
+        );
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body.analysisStatus).toBe("pending");
+      } finally {
+        analysisServiceMock.reset();
+      }
     }));
 
   it("POST /resume-analysis succeeds with valid payload", () =>

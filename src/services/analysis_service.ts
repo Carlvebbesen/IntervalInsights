@@ -24,21 +24,24 @@ export {
   resumeAnalysis,
 } from "./resume_analysis";
 
-export const startAnalysis = async (
+/**
+ * Atomic claim: flip to ongoing_init only if no other starter got there first.
+ * A read-then-invoke check leaves a window where two starters (webhook + manual
+ * + requeue) both pass, then each resetAnalysisThread deletes the other's
+ * checkpoints mid-run. `force` is the user-driven re-analyze path (details
+ * view): it may re-run a completed/paused activity, but never one whose graph is
+ * actively running.
+ *
+ * Exported so a caller that runs the graph in the background (the manual
+ * start endpoint) can await the claim decision and report the resulting status
+ * synchronously — a declined claim publishes no progress event, so a client
+ * that assumed `ongoing_init` would otherwise never be corrected.
+ */
+export const claimForAnalysis = async (
   db: IGlobalBindings["db"],
-  stravaAccessToken: string,
   activityId: number,
-  stravaActivityId: number | null | undefined,
-  userId: string,
-  force = false,
-): Promise<void> => {
-  const log = logger.child({ fn: "startAnalysis", activityId, force });
-  // Atomic claim: flip to ongoing_init only if no other starter got there first.
-  // A read-then-invoke check leaves a window where two starters (webhook +
-  // manual + requeue) both pass, then each resetAnalysisThread deletes the
-  // other's checkpoints mid-run. `force` is the user-driven re-analyze path
-  // (details view): it may re-run a completed/paused activity, but never one
-  // whose graph is actively running.
+  force: boolean,
+): Promise<boolean> => {
   const blockedStatuses: AnalysisStatus[] = force
     ? [...ACTIVE_RUN_STATUSES]
     : [...SKIP_START_STATUSES];
@@ -55,11 +58,18 @@ export const startAnalysis = async (
       ),
     )
     .returning({ id: activities.id });
-  if (claimed.length === 0) {
-    log.info("skipping — another run already claimed or completed this activity");
-    return;
-  }
+  return claimed.length > 0;
+};
 
+/** The graph run itself. Callers MUST have won [claimForAnalysis] first. */
+export const runClaimedAnalysis = async (
+  db: IGlobalBindings["db"],
+  stravaAccessToken: string,
+  activityId: number,
+  stravaActivityId: number | null | undefined,
+  userId: string,
+): Promise<void> => {
+  const log = logger.child({ fn: "runClaimedAnalysis", activityId });
   const userCtx = await getUserContext(db, userId);
   if (!userCtx) {
     log.error({ userId }, "user not found — releasing claim");
@@ -107,13 +117,30 @@ export const startAnalysis = async (
       data: { id: activityId, analysisStatus: toDoneStatus(final?.analysisStatus, "initial") },
     });
   } catch (err) {
-    log.error({ err }, "Error in startAnalysis");
+    log.error({ err }, "Error in runClaimedAnalysis");
     await markErrorIfStatusIn(db, activityId, ["pending", "ongoing_init"], log);
     await progressService.publish(userId, {
       type: "done",
       data: { id: activityId, analysisStatus: "error" },
     });
   }
+};
+
+export const startAnalysis = async (
+  db: IGlobalBindings["db"],
+  stravaAccessToken: string,
+  activityId: number,
+  stravaActivityId: number | null | undefined,
+  userId: string,
+  force = false,
+): Promise<void> => {
+  if (!(await claimForAnalysis(db, activityId, force))) {
+    logger
+      .child({ fn: "startAnalysis", activityId, force })
+      .info("skipping — another run already claimed or completed this activity");
+    return;
+  }
+  await runClaimedAnalysis(db, stravaAccessToken, activityId, stravaActivityId, userId);
 };
 
 export const triggerAnalysisByStravaId = async (
