@@ -40,7 +40,7 @@ export const UpdateUserSettingsSchema = z
 export const UserSchema = z
   .object({
     id: z.string(),
-    email: z.string().nullable(),
+    email: z.string(),
     name: z.string().nullable(),
     image: z.string().nullable(),
     stravaId: z.string().nullable(),
@@ -63,3 +63,25 @@ export const DeleteAccountResponseSchema = z
     message: z.string(),
   })
   .openapi({ ref: "DeleteAccountResponse" });
+
+export const McpConnectionSchema = z
+  .object({
+    clientId: z.string(),
+    name: z.string().nullable(),
+    uri: z.string().nullable(),
+    scopes: z.array(z.string()),
+    connectedAt: z.string(),
+  })
+  .openapi({ ref: "McpConnection" });
+
+export const McpConnectionListSchema = z
+  .object({
+    data: z.array(McpConnectionSchema),
+  })
+  .openapi({ ref: "McpConnectionList" });
+
+export const RevokeConnectionResponseSchema = z
+  .object({
+    success: z.boolean(),
+  })
+  .openapi({ ref: "RevokeConnectionResponse" });

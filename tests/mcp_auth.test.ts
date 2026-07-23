@@ -76,6 +76,22 @@ async function seedOpaqueToken(opts: {
   return token;
 }
 
+async function seedConsent(userId: string, clientId: string): Promise<void> {
+  await getPool().query(
+    `INSERT INTO oauth_consents (client_id, user_id, scopes) VALUES ($1, $2, $3)`,
+    [clientId, userId, ["profile", "email"]],
+  );
+}
+
+// A JWT is only honoured while the user still has a live consent for its client
+// (see jwtGrantValid). Every JWT happy path therefore needs both a client and a
+// consent seeded.
+async function grantJwtClient(userId: string, opts?: { disabled?: boolean }): Promise<string> {
+  const clientId = await seedClient(opts);
+  await seedConsent(userId, clientId);
+  return clientId;
+}
+
 async function signAccessToken(payload: Record<string, unknown>): Promise<string> {
   const { token } = await auth.api.signJWT({
     body: { payload: { iss: AUTH_ISSUER, aud: MCP_RESOURCE_URL, ...payload } },
@@ -95,6 +111,7 @@ afterAll(async () => {
   const pool = getPool();
   for (const clientId of createdClientIds) {
     await pool.query(`DELETE FROM oauth_access_tokens WHERE client_id = $1`, [clientId]);
+    await pool.query(`DELETE FROM oauth_consents WHERE client_id = $1`, [clientId]);
     await pool.query(`DELETE FROM oauth_clients WHERE client_id = $1`, [clientId]);
   }
   for (const userId of createdUserIds) {
@@ -121,7 +138,7 @@ describe("mcpAuth", () => {
 
   it("accepts a JWT access token and resolves the user and scopes", async () => {
     const userId = await seedUser();
-    const clientId = await seedClient();
+    const clientId = await grantJwtClient(userId);
     const token = await signAccessToken({
       sub: userId,
       azp: clientId,
@@ -137,7 +154,7 @@ describe("mcpAuth", () => {
 
   it("401s a JWT issued for a different audience", async () => {
     const userId = await seedUser();
-    const clientId = await seedClient();
+    const clientId = await grantJwtClient(userId);
     const token = await signAccessToken({
       sub: userId,
       azp: clientId,
@@ -188,8 +205,22 @@ describe("mcpAuth", () => {
 
   it("401s a JWT access token whose client has been disabled", async () => {
     const userId = await seedUser();
-    const clientId = await seedClient({ disabled: true });
+    const clientId = await grantJwtClient(userId, { disabled: true });
     const token = await signAccessToken({ sub: userId, azp: clientId, scope: "profile" });
+
+    expect((await post(token)).status).toBe(401);
+  });
+
+  it("401s a JWT once the user revokes the client's consent", async () => {
+    const userId = await seedUser();
+    const clientId = await grantJwtClient(userId);
+    const token = await signAccessToken({ sub: userId, azp: clientId, scope: "profile" });
+    expect((await post(token)).status).toBe(200);
+
+    await getPool().query(`DELETE FROM oauth_consents WHERE user_id = $1 AND client_id = $2`, [
+      userId,
+      clientId,
+    ]);
 
     expect((await post(token)).status).toBe(401);
   });
@@ -203,7 +234,7 @@ describe("mcpAuth", () => {
 
   it("401s a JWT minted by a different issuer", async () => {
     const userId = await seedUser();
-    const clientId = await seedClient();
+    const clientId = await grantJwtClient(userId);
     const token = await signAccessToken({
       sub: userId,
       azp: clientId,
@@ -217,7 +248,7 @@ describe("mcpAuth", () => {
   // SET NULL — so the grant outlives the ban and this check is the only gate.
   it("403s a banned user still holding a valid grant", async () => {
     const userId = await seedUser();
-    const clientId = await seedClient();
+    const clientId = await grantJwtClient(userId);
     const opaque = await seedOpaqueToken({ userId, clientId });
     const jwt = await signAccessToken({ sub: userId, azp: clientId, scope: "profile" });
     expect((await post(opaque)).status).toBe(200);
@@ -233,7 +264,7 @@ describe("mcpAuth", () => {
 describe("mcpRouter discovery", () => {
   it("rejects GET /mcp with 405 even when authenticated (stateless server)", async () => {
     const userId = await seedUser();
-    const clientId = await seedClient();
+    const clientId = await grantJwtClient(userId);
     const token = await signAccessToken({ sub: userId, azp: clientId, scope: "profile" });
 
     const res = await routerFetch(

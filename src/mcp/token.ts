@@ -3,7 +3,7 @@ import { createLocalJWKSet, type JSONWebKeySet, type JWTPayload, jwtVerify } fro
 import { auth } from "../auth";
 import { db } from "../db";
 import { logger } from "../logger";
-import { oauthAccessTokens, oauthClients, sessions } from "../schema";
+import { oauthAccessTokens, oauthClients, oauthConsents, sessions } from "../schema";
 import { AUTH_ISSUER, hashOAuthToken, MCP_RESOURCE_URL } from "../services/oauth_server_tokens";
 
 export type McpTokenClaims = {
@@ -26,14 +26,26 @@ async function getKeySet(force: boolean): Promise<ReturnType<typeof createLocalJ
   return keySet;
 }
 
-async function clientIsUsable(clientId: unknown): Promise<boolean> {
+/**
+ * A JWT verifies against the JWKS without touching the DB, so revocation has to
+ * be enforced here: the client must still exist and be enabled, and the user
+ * must still have a live consent for it. Deleting the consent row (a user
+ * disconnecting the client) therefore kills outstanding JWTs on the next call,
+ * not only when they expire. The opaque path is already revocation-safe because
+ * its token row is deleted directly.
+ */
+async function jwtGrantValid(userId: string, clientId: unknown): Promise<boolean> {
   if (typeof clientId !== "string") return false;
-  const [client] = await db
+  const [row] = await db
     .select({ disabled: oauthClients.disabled })
     .from(oauthClients)
+    .innerJoin(
+      oauthConsents,
+      and(eq(oauthConsents.clientId, oauthClients.clientId), eq(oauthConsents.userId, userId)),
+    )
     .where(eq(oauthClients.clientId, clientId))
     .limit(1);
-  return !!client && !client.disabled;
+  return !!row && !row.disabled;
 }
 
 async function verifyJwtAccessToken(token: string): Promise<JWTPayload | null> {
@@ -99,7 +111,7 @@ export async function verifyMcpAccessToken(token: string): Promise<McpTokenClaim
     const payload = await verifyJwtAccessToken(token);
     if (payload) {
       if (typeof payload.sub !== "string") return null;
-      if (!(await clientIsUsable(payload.azp))) return null;
+      if (!(await jwtGrantValid(payload.sub, payload.azp))) return null;
       const scope = typeof payload.scope === "string" ? payload.scope : "";
       return { userId: payload.sub, scopes: scope.split(" ").filter(Boolean) };
     }

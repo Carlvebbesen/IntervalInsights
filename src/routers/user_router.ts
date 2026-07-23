@@ -1,10 +1,13 @@
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
+import * as connectionController from "../controllers/connection_controller";
 import * as userController from "../controllers/user_controller";
 import {
   DeleteAccountResponseSchema,
   ErrorSchema,
+  McpConnectionListSchema,
+  RevokeConnectionResponseSchema,
   UpdateUserSettingsSchema,
   UserSchema,
   UserSettingsSchema,
@@ -145,6 +148,49 @@ userRouter.delete(
   async (c) => {
     const result = await userController.deleteAccount(c.env.db, c.get("userId"));
     return c.json(result);
+  },
+);
+
+userRouter.get(
+  "/connections",
+  describeRoute({
+    description:
+      "List the OAuth/MCP clients (e.g. Claude, ChatGPT) the authenticated user has connected.",
+    responses: {
+      200: {
+        description: "Connected clients",
+        content: { "application/json": { schema: resolver(McpConnectionListSchema) } },
+      },
+    },
+  }),
+  async (c) => {
+    const data = await connectionController.listConnections(c.env.db, c.get("userId"));
+    return c.json({ data });
+  },
+);
+
+userRouter.delete(
+  "/connections/:clientId",
+  describeRoute({
+    description:
+      "Disconnect an OAuth/MCP client: revokes its consent and deletes every token issued to it " +
+      "for the authenticated user. Any outstanding access token stops working on its next call.",
+    responses: {
+      200: {
+        description: "Connection revoked",
+        content: { "application/json": { schema: resolver(RevokeConnectionResponseSchema) } },
+      },
+      404: {
+        description: "No such connection for this user",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  validator("param", z.object({ clientId: z.string().min(1) })),
+  async (c) => {
+    const { clientId } = c.req.valid("param");
+    await connectionController.revokeConnection(c.env.db, c.get("userId"), clientId);
+    return c.json({ success: true });
   },
 );
 

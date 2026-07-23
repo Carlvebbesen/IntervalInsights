@@ -1,6 +1,6 @@
 # Terms of Service
 
-Last updated: May 08, 2026
+Last updated: July 23, 2026
 
 These Terms of Service ("**Terms**") govern Your access to and use of the *Interval Insights* application and related services (the "**Service**"). Please read them carefully. By creating an Account, connecting Your Strava account, or otherwise using the Service, You agree to these Terms. If You do not agree, do not use the Service.
 
@@ -42,7 +42,7 @@ If You access the Service on behalf of another person or entity, You represent t
 
 ## Account
 
-To use the Service, You must create an Account via Our authentication provider, Clerk, and connect Your Strava account. You are responsible for:
+To use the Service, You must create an Account by signing in with Your email address, and connect Your Strava account. You are responsible for:
 
 - Providing accurate registration information;
 - Maintaining the confidentiality of Your Account credentials;
@@ -97,10 +97,6 @@ AI Outputs in the Service are produced by OpenAI's GPT-4o-mini model accessed vi
 ### intervals.icu (optional)
 
 If You opt in to the *intervals.icu* integration, You must have Your own intervals.icu account and provide credentials authorizing the Service to communicate with that account. By connecting Your intervals.icu account You also accept intervals.icu's terms and privacy policy. intervals.icu is operated by a third party; **the Service is not affiliated with, endorsed by, or sponsored by intervals.icu**. The intervals.icu integration requires the *Heart-rate processing* toggle to be ON. Disconnecting the integration in the Service does not, on its own, delete data already stored in Your intervals.icu account.
-
-### Clerk (authentication)
-
-Authentication is provided by Clerk. Use of the Service includes use of Clerk's authentication flow and is subject to Clerk's terms.
 
 ## Health and Training Disclaimer — Not Medical Advice
 
@@ -232,7 +228,7 @@ This obligation does not apply to the extent the claim arises from Our gross neg
 
 ## Force Majeure
 
-We are not liable for any failure or delay in performance under these Terms caused by events beyond Our reasonable control, including acts of God, natural disasters, war, terrorism, civil unrest, governmental action, labour disputes, internet or telecommunications outages, and failures or service interruptions of Strava, OpenAI, Clerk, Railway, intervals.icu, or other Third-Party Services or upstream providers.
+We are not liable for any failure or delay in performance under these Terms caused by events beyond Our reasonable control, including acts of God, natural disasters, war, terrorism, civil unrest, governmental action, labour disputes, internet or telecommunications outages, and failures or service interruptions of Strava, OpenAI, Railway, intervals.icu, or other Third-Party Services or upstream providers.
 
 ## Governing Law and Disputes
 
