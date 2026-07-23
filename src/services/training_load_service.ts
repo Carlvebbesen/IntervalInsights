@@ -3,8 +3,9 @@ import { RUNNING_SPORT_TYPES } from "../schema/enums";
 /**
  * Pure per-activity training-load math. No DB, no I/O — the caller resolves
  * thresholds (see `threshold_service`) and maps raw streams into `LoadStreams`.
- * All loads normalise to "1 hour at threshold = 100" and integrate over moving
- * time only. Formulas: `knowledge/resources/recipes/training-metrics-formulas.md`.
+ * All loads normalise to "1 hour at threshold = 100". Pace and power integrate
+ * over moving time; HRSS integrates over all recorded time (see `hrss`).
+ * Formulas: `knowledge/resources/recipes/training-metrics-formulas.md`.
  */
 
 export interface LoadStreams {
@@ -78,7 +79,7 @@ export function gradeFactor(grade: number): number {
   return cost / 3.6;
 }
 
-interface MovingSample {
+interface Sample {
   i: number;
   dtSec: number;
 }
@@ -92,20 +93,24 @@ function isMoving(streams: LoadStreams, i: number): boolean {
 }
 
 /**
- * Per-sample moving intervals: dt from the time stream (capped at 30 s to
- * ignore recording gaps), excluding stopped samples.
+ * Every per-sample interval: dt from the time stream, capped at 30 s so a
+ * recording gap contributes at most one capped step.
  */
-function movingSamples(streams: LoadStreams): MovingSample[] {
+function allSamples(streams: LoadStreams): Sample[] {
   const t = streams.time;
-  const out: MovingSample[] = [];
+  const out: Sample[] = [];
   for (let i = 1; i < t.length; i++) {
     let dt = t[i] - t[i - 1];
     if (!(dt > 0)) continue;
     if (dt > DT_CAP_S) dt = DT_CAP_S;
-    if (!isMoving(streams, i)) continue;
     out.push({ i, dtSec: dt });
   }
   return out;
+}
+
+/** `allSamples` minus stopped samples. */
+function movingSamples(streams: LoadStreams): Sample[] {
+  return allSamples(streams).filter(({ i }) => isMoving(streams, i));
 }
 
 function movingSeconds(streams: LoadStreams): number {
@@ -172,6 +177,12 @@ export function paceLoad(streams: LoadStreams, thresholdPaceMps: number, useGrad
  * dt_min·HRr·0.64·e^(F·HRr), F = 1.92 male / 1.67 female (male default).
  * HRSS = 100·TRIMP / TRIMP_1h@LTHR, denominator the closed form
  * 60·HRr_lthr·0.64·e^(F·HRr_lthr).
+ *
+ * Integrates every sample with a heart rate, stopped ones included: HR stays
+ * elevated between padel points or resting on a climb, and that is real load.
+ * The denominator is a threshold-derived per-hour constant that does not shrink
+ * with dropped samples, so gating on movement here only ever under-counts —
+ * stop-start sports came out up to 95% low against intervals.icu.
  */
 export function hrss(streams: LoadStreams, params: HrssParams): number {
   const { lthr, restingHr, maxHr } = params;
@@ -183,7 +194,7 @@ export function hrss(streams: LoadStreams, params: HrssParams): number {
   if (!(denom > 0)) return 0;
 
   let trimp = 0;
-  for (const { i, dtSec } of movingSamples(streams)) {
+  for (const { i, dtSec } of allSamples(streams)) {
     const hr = streams.heartrate?.[i];
     if (hr == null) continue;
     const hrr = (hr - restingHr) / (maxHr - restingHr);
