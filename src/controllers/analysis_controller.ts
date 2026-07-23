@@ -5,10 +5,15 @@ import { invokeParseIntervalsAgent } from "../agent/parse_intervals_agent";
 import { runInBackground } from "../background";
 import { AppError } from "../error";
 import type { Logger } from "../logger";
+import {
+  ANALYSIS_START_DAILY_MAX,
+  ANALYSIS_START_QUOTA,
+  tryConsumeQuota,
+} from "../middlewares/quota_middleware";
 import { recordAnalysisRun, recordTrainingTypeChange } from "../otel";
 import * as activityRepo from "../repositories/activity_repository";
 import type { AnalysisStatus, TrainingType } from "../schema";
-import type { PendingActivitySchema } from "../schemas/api_schemas";
+import type { AutoCompleteAllResponseSchema, PendingActivitySchema } from "../schemas/api_schemas";
 import {
   autoCompleteAnalysis,
   claimForAnalysis,
@@ -190,6 +195,65 @@ export async function autoCompleteActivity(
   }
   recordAnalysisRun({ phase: "resume", trigger: "auto" });
   return { success: true };
+}
+
+/**
+ * Batch quick-complete: every `initial` activity, sequentially (each resume
+ * drives a LangGraph invoke). Deliberately no indoor/trainingType filtering —
+ * the app's per-row indoor-interval lock is exactly what this bulk action
+ * overrides. Consumes the shared daily analysis quota per activity with no
+ * bypass; overflow and per-activity failures become `skipped` entries, never
+ * a batch failure.
+ */
+export async function autoCompleteAllActivities(
+  db: Db,
+  accessToken: string | undefined,
+  userId: string,
+  logger: Logger,
+): Promise<z.infer<typeof AutoCompleteAllResponseSchema>> {
+  if (!accessToken) {
+    throw new AppError(400, "Access token missing");
+  }
+  const rows = await activityRepo.listPending(db, userId, ["initial"]);
+  rows.sort((a, b) => a.id - b.id);
+
+  const completed: number[] = [];
+  const skipped: z.infer<typeof AutoCompleteAllResponseSchema>["skipped"] = [];
+  let quotaExhausted = false;
+  for (const row of rows) {
+    if (
+      quotaExhausted ||
+      !tryConsumeQuota(ANALYSIS_START_QUOTA, ANALYSIS_START_DAILY_MAX, userId, logger)
+    ) {
+      quotaExhausted = true;
+      skipped.push({ activityId: row.id, reason: "quota_exhausted" });
+      continue;
+    }
+    try {
+      await autoCompleteAnalysis(db, accessToken, row.id, userId, row, logger);
+      recordAnalysisRun({ phase: "resume", trigger: "auto" });
+      completed.push(row.id);
+    } catch (err) {
+      // NoPendingInterruptError is a subclass of ResumeValidationError — check it first.
+      if (err instanceof NoPendingInterruptError) {
+        logger.info(
+          { activityId: row.id },
+          "auto-complete-all no-op — user resume already claimed the interrupt",
+        );
+        completed.push(row.id);
+      } else if (err instanceof ResumeValidationError) {
+        logger.info(
+          { activityId: row.id, err: err.message },
+          "auto-complete-all validation failed",
+        );
+        skipped.push({ activityId: row.id, reason: "no_structure" });
+      } else {
+        logger.warn({ err, activityId: row.id }, "auto-complete-all activity failed");
+        skipped.push({ activityId: row.id, reason: "error" });
+      }
+    }
+  }
+  return { completed, skipped };
 }
 
 export async function getProposedPace(

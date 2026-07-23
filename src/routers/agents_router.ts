@@ -12,6 +12,7 @@ import {
 import { softStravaMiddleware, stravaMiddleware } from "../middlewares/strava_middleware";
 import { analysisStatusEnum, trainingTypeEnum } from "../schema/enums";
 import {
+  AutoCompleteAllResponseSchema,
   EditedSegmentSchema,
   ErrorSchema,
   ExpandedIntervalSetSchema,
@@ -176,6 +177,39 @@ agentsRouter.post(
       c.get("stravaAccessToken"),
       c.get("userId"),
       activityId,
+      c.var.logger,
+    );
+    return c.json(result, 200);
+  },
+);
+
+agentsRouter.post(
+  "/auto-complete-all",
+  stravaMiddleware,
+  describeRoute({
+    description:
+      "Quick-complete every activity paused at `initial` in one batch (sequentially, oldest first). Overrides the app's per-row indoor-interval lock by design. Consumes the shared daily analysis quota per activity; quota overflow and per-activity failures are reported as `skipped` with a reason, never as a batch failure. No request body required.",
+    responses: {
+      200: {
+        description:
+          "Batch result: `completed` activity ids (a raced concurrent resume counts as completed) and `skipped` entries with a reason (`no_structure` = structureless interval draft needing manual review, `quota_exhausted` = daily analysis quota ran out, `error` = the resume failed).",
+        content: { "application/json": { schema: resolver(AutoCompleteAllResponseSchema) } },
+      },
+      400: {
+        description: "Bad request",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+      500: {
+        description: "Internal server error",
+        content: { "application/json": { schema: resolver(ErrorSchema) } },
+      },
+    },
+  }),
+  async (c) => {
+    const result = await analysisController.autoCompleteAllActivities(
+      c.env.db,
+      c.get("stravaAccessToken"),
+      c.get("userId"),
       c.var.logger,
     );
     return c.json(result, 200);

@@ -174,6 +174,18 @@ export const ProposedPaceResponseSchema = z
   .array(ExpandedIntervalSetSchema)
   .openapi({ ref: "ProposedPaceResponse" });
 
+export const AutoCompleteAllResponseSchema = z
+  .object({
+    completed: z.array(z.number()),
+    skipped: z.array(
+      z.object({
+        activityId: z.number(),
+        reason: z.enum(["no_structure", "quota_exhausted", "error"]),
+      }),
+    ),
+  })
+  .openapi({ ref: "AutoCompleteAllResponse" });
+
 export const WorkoutInputStepSchema = z
   .object({
     reps: z.number(),
