@@ -7,6 +7,7 @@ import { activities, users } from "../src/schema";
 import { isReviewUser, setReviewUserId } from "../src/services/review_account";
 import {
   type ComparisonRow,
+  summarizeBySportType,
   summarizeComparison,
   toComparisonRows,
   worstOutliers,
@@ -120,6 +121,34 @@ async function main(): Promise<Record<string, unknown>> {
     );
   }
 
+  const bySport = summarizeBySportType(rows);
+  const scols: [string, number][] = [
+    ["sportType", 16],
+    ["source", 8],
+    ["count", 6],
+    ["medAbsErr", 10],
+    ["p90AbsErr", 10],
+    ["medAbsRel", 10],
+    ["p90AbsRel", 10],
+    ["meanSgnRel", 11],
+  ];
+  console.log("\n=== per sport type (sportType x source), by volume ===");
+  console.log(scols.map(([h, w]) => pad(h, w)).join("  "));
+  for (const s of bySport) {
+    console.log(
+      [
+        pad(s.sportType, scols[0][1]),
+        pad(s.source, scols[1][1]),
+        pad(s.count, scols[2][1]),
+        pad(fmt(s.medianAbsError), scols[3][1]),
+        pad(fmt(s.p90AbsError), scols[4][1]),
+        pad(fmt(s.medianAbsRelError), scols[5][1]),
+        pad(fmt(s.p90AbsRelError), scols[6][1]),
+        pad(fmt(s.meanSignedRelError), scols[7][1]),
+      ].join("  "),
+    );
+  }
+
   const outliers = worstOutliers(rows, OUTLIER_COUNT);
   const ocols: [string, number][] = [
     ["activityId", 12],
@@ -148,7 +177,7 @@ async function main(): Promise<Record<string, unknown>> {
     );
   }
 
-  return { comparedActivities: rows.length, groups: summaries };
+  return { comparedActivities: rows.length, groups: summaries, sportTypes: bySport };
 }
 
 runScript({ name: "compare_training_load", once: false, db, pool }, () => main());
