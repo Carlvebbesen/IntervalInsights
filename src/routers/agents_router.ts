@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
+import { runInBackground } from "../background";
 import * as analysisController from "../controllers/analysis_controller";
 import {
   ANALYSIS_START_DAILY_MAX,
@@ -188,11 +189,11 @@ agentsRouter.post(
   stravaMiddleware,
   describeRoute({
     description:
-      "Quick-complete every activity paused at `initial` in one batch (sequentially, oldest first). Overrides the app's per-row indoor-interval lock by design. Consumes the shared daily analysis quota per activity; quota overflow and per-activity failures are reported as `skipped` with a reason, never as a batch failure. No request body required.",
+      'Quick-complete every activity paused at `initial`, fire-and-forget: responds 202 immediately with the number of targeted activities, then runs the batch detached (sequentially, oldest first). Progress arrives on the SSE progress channel as `sync` events (`kind: "complete_all"`, phase `started` then `completed`). Overrides the app\'s per-row indoor-interval lock by design. Consumes the shared daily analysis quota per activity; quota overflow and per-activity failures are skipped (logged server-side), never batch-fatal. No request body required.',
     responses: {
-      200: {
+      202: {
         description:
-          "Batch result: `completed` activity ids (a raced concurrent resume counts as completed) and `skipped` entries with a reason (`no_structure` = structureless interval draft needing manual review, `quota_exhausted` = daily analysis quota ran out, `error` = the resume failed).",
+          "Batch accepted. `targeted` is the number of `initial` activities the detached run will process (0 means nothing to do and no run is started).",
         content: { "application/json": { schema: resolver(AutoCompleteAllResponseSchema) } },
       },
       400: {
@@ -206,13 +207,18 @@ agentsRouter.post(
     },
   }),
   async (c) => {
-    const result = await analysisController.autoCompleteAllActivities(
+    const userId = c.get("userId");
+    const { targeted, run } = await analysisController.autoCompleteAllActivities(
       c.env.db,
       c.get("stravaAccessToken"),
-      c.get("userId"),
-      c.var.logger,
+      userId,
     );
-    return c.json(result, 200);
+    if (targeted > 0) {
+      runInBackground("agents.auto_complete_all", run, {
+        attributes: { "user.id": userId, "batch.targeted": targeted },
+      });
+    }
+    return c.json({ targeted }, 202);
   },
 );
 

@@ -4,7 +4,7 @@ import type { workoutSet } from "../agent/initial_analysis_agent";
 import { invokeParseIntervalsAgent } from "../agent/parse_intervals_agent";
 import { runInBackground } from "../background";
 import { AppError } from "../error";
-import type { Logger } from "../logger";
+import { type Logger, logger as rootLogger } from "../logger";
 import {
   ANALYSIS_START_DAILY_MAX,
   ANALYSIS_START_QUOTA,
@@ -13,7 +13,7 @@ import {
 import { recordAnalysisRun, recordTrainingTypeChange } from "../otel";
 import * as activityRepo from "../repositories/activity_repository";
 import type { AnalysisStatus, TrainingType } from "../schema";
-import type { AutoCompleteAllResponseSchema, PendingActivitySchema } from "../schemas/api_schemas";
+import type { PendingActivitySchema } from "../schemas/api_schemas";
 import {
   autoCompleteAnalysis,
   claimForAnalysis,
@@ -25,6 +25,7 @@ import {
 import { createGearSuggester } from "../services/gear_suggestion_service";
 import { formatStructureSummary } from "../services/interval_structure_service";
 import { getProposedPaceForStructure, getProposedPaceFromLaps } from "../services/pace_service";
+import { publishSync } from "../services/progress_service";
 import { requeueStaleActivities } from "../services/requeue_service";
 import { stravaApiService } from "../services/strava_api_service";
 import type { ExpandedIntervalSet } from "../types/ExpandedIntervalSet";
@@ -201,59 +202,92 @@ export async function autoCompleteActivity(
  * Batch quick-complete: every `initial` activity, sequentially (each resume
  * drives a LangGraph invoke). Deliberately no indoor/trainingType filtering —
  * the app's per-row indoor-interval lock is exactly what this bulk action
- * overrides. Consumes the shared daily analysis quota per activity with no
- * bypass; overflow and per-activity failures become `skipped` entries, never
- * a batch failure.
+ * overrides. The caller responds 202 with `targeted` and fires `run` detached;
+ * progress reaches the client as SSE `sync` events. Consumes the shared daily
+ * analysis quota per activity with no bypass; overflow and per-activity
+ * failures are skipped (with server-side logs), never batch-fatal.
  */
 export async function autoCompleteAllActivities(
   db: Db,
   accessToken: string | undefined,
   userId: string,
-  logger: Logger,
-): Promise<z.infer<typeof AutoCompleteAllResponseSchema>> {
+): Promise<{ targeted: number; run: () => Promise<void> }> {
   if (!accessToken) {
     throw new AppError(400, "Access token missing");
   }
   const rows = await activityRepo.listPending(db, userId, ["initial"]);
   rows.sort((a, b) => a.id - b.id);
+  return { targeted: rows.length, run: () => runAutoCompleteAll(db, accessToken, userId, rows) };
+}
+
+async function runAutoCompleteAll(
+  db: Db,
+  accessToken: string,
+  userId: string,
+  rows: Awaited<ReturnType<typeof activityRepo.listPending>>,
+): Promise<void> {
+  const log = rootLogger.child({ task: "auto_complete_all", userId });
+  await publishSync(userId, {
+    kind: "complete_all",
+    phase: "started",
+    title: "Complete all",
+    messageKey: "pending_complete_all_toast_started",
+    messageArgs: { count: String(rows.length) },
+  });
 
   const completed: number[] = [];
-  const skipped: z.infer<typeof AutoCompleteAllResponseSchema>["skipped"] = [];
+  const skipped: { activityId: number; reason: "no_structure" | "quota_exhausted" | "error" }[] =
+    [];
   let quotaExhausted = false;
   for (const row of rows) {
     if (
       quotaExhausted ||
-      !tryConsumeQuota(ANALYSIS_START_QUOTA, ANALYSIS_START_DAILY_MAX, userId, logger)
+      !tryConsumeQuota(ANALYSIS_START_QUOTA, ANALYSIS_START_DAILY_MAX, userId, log)
     ) {
       quotaExhausted = true;
       skipped.push({ activityId: row.id, reason: "quota_exhausted" });
       continue;
     }
     try {
-      await autoCompleteAnalysis(db, accessToken, row.id, userId, row, logger);
+      await autoCompleteAnalysis(db, accessToken, row.id, userId, row, log);
       recordAnalysisRun({ phase: "resume", trigger: "auto" });
       completed.push(row.id);
     } catch (err) {
       // NoPendingInterruptError is a subclass of ResumeValidationError — check it first.
       if (err instanceof NoPendingInterruptError) {
-        logger.info(
+        log.info(
           { activityId: row.id },
           "auto-complete-all no-op — user resume already claimed the interrupt",
         );
         completed.push(row.id);
       } else if (err instanceof ResumeValidationError) {
-        logger.info(
-          { activityId: row.id, err: err.message },
-          "auto-complete-all validation failed",
-        );
+        log.info({ activityId: row.id, err: err.message }, "auto-complete-all validation failed");
         skipped.push({ activityId: row.id, reason: "no_structure" });
       } else {
-        logger.warn({ err, activityId: row.id }, "auto-complete-all activity failed");
+        log.warn({ err, activityId: row.id }, "auto-complete-all activity failed");
         skipped.push({ activityId: row.id, reason: "error" });
       }
     }
   }
-  return { completed, skipped };
+
+  if (skipped.length > 0) {
+    log.warn({ completed, skipped }, "auto-complete-all finished with skips");
+  } else {
+    log.info({ completed }, "auto-complete-all finished");
+  }
+  await publishSync(userId, {
+    kind: "complete_all",
+    phase: "completed",
+    title: "Complete all",
+    messageKey:
+      skipped.length === 0
+        ? "pending_complete_all_toast_completed"
+        : "pending_complete_all_toast_completed_skipped",
+    messageArgs:
+      skipped.length === 0
+        ? { completed: String(completed.length) }
+        : { completed: String(completed.length), skipped: String(skipped.length) },
+  });
 }
 
 export async function getProposedPace(
