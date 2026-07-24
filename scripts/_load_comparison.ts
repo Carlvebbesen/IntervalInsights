@@ -26,6 +26,17 @@ export interface GroupSummary {
   meanSignedRelError: number;
 }
 
+export interface SportTypeSummary {
+  sportType: string;
+  source: string;
+  count: number;
+  medianAbsError: number;
+  p90AbsError: number;
+  medianAbsRelError: number;
+  p90AbsRelError: number;
+  meanSignedRelError: number;
+}
+
 export interface Outlier {
   activityId: number;
   date: string;
@@ -103,31 +114,46 @@ export function mean(values: number[]): number {
   return values.reduce((sum, v) => sum + v, 0) / values.length;
 }
 
-export function summarizeComparison(rows: ComparisonRow[]): GroupSummary[] {
+interface ErrorStats {
+  count: number;
+  medianAbsError: number;
+  p90AbsError: number;
+  medianAbsRelError: number;
+  p90AbsRelError: number;
+  meanSignedRelError: number;
+}
+
+function statsOf(bucket: ComparisonRow[]): ErrorStats {
+  const absErrors = bucket.map((r) => Math.abs(errorOf(r)));
+  const absRelErrors = bucket.map((r) => Math.abs(relErrorOf(r)));
+  const signedRelErrors = bucket.map((r) => relErrorOf(r));
+  return {
+    count: bucket.length,
+    medianAbsError: median(absErrors),
+    p90AbsError: percentile(absErrors, 90),
+    medianAbsRelError: median(absRelErrors),
+    p90AbsRelError: percentile(absRelErrors, 90),
+    meanSignedRelError: mean(signedRelErrors),
+  };
+}
+
+function bucketBy(rows: ComparisonRow[], keyOf: (r: ComparisonRow) => string): Map<string, ComparisonRow[]> {
   const groups = new Map<string, ComparisonRow[]>();
   for (const row of rows) {
-    const key = `${sportGroupOf(row.sportType)}|${row.source ?? "unknown"}`;
-    const bucket = groups.get(key);
+    const bucket = groups.get(keyOf(row));
     if (bucket) bucket.push(row);
-    else groups.set(key, [row]);
+    else groups.set(keyOf(row), [row]);
   }
+  return groups;
+}
+
+export function summarizeComparison(rows: ComparisonRow[]): GroupSummary[] {
+  const groups = bucketBy(rows, (r) => `${sportGroupOf(r.sportType)}|${r.source ?? "unknown"}`);
 
   const summaries: GroupSummary[] = [];
   for (const [key, bucket] of groups) {
     const [sportGroup, source] = key.split("|") as [SportGroup, string];
-    const absErrors = bucket.map((r) => Math.abs(errorOf(r)));
-    const absRelErrors = bucket.map((r) => Math.abs(relErrorOf(r)));
-    const signedRelErrors = bucket.map((r) => relErrorOf(r));
-    summaries.push({
-      sportGroup,
-      source,
-      count: bucket.length,
-      medianAbsError: median(absErrors),
-      p90AbsError: percentile(absErrors, 90),
-      medianAbsRelError: median(absRelErrors),
-      p90AbsRelError: percentile(absRelErrors, 90),
-      meanSignedRelError: mean(signedRelErrors),
-    });
+    summaries.push({ sportGroup, source, ...statsOf(bucket) });
   }
 
   summaries.sort((a, b) =>
@@ -140,6 +166,30 @@ export function summarizeComparison(rows: ComparisonRow[]): GroupSummary[] {
       : a.sportGroup < b.sportGroup
         ? -1
         : 1,
+  );
+  return summaries;
+}
+
+/**
+ * Same stats as `summarizeComparison` but keyed on the exact Strava `sportType`
+ * (× source), not the running/other lump — so NordicSki, Ride, Run etc. each get
+ * their own row. Sorted by count descending so the highest-volume sports lead.
+ * Ties broken by sportType then source for deterministic output.
+ */
+export function summarizeBySportType(rows: ComparisonRow[]): SportTypeSummary[] {
+  const groups = bucketBy(rows, (r) => `${r.sportType}|${r.source ?? "unknown"}`);
+
+  const summaries: SportTypeSummary[] = [];
+  for (const [key, bucket] of groups) {
+    const [sportType, source] = key.split("|") as [string, string];
+    summaries.push({ sportType, source, ...statsOf(bucket) });
+  }
+
+  summaries.sort(
+    (a, b) =>
+      b.count - a.count ||
+      a.sportType.localeCompare(b.sportType) ||
+      a.source.localeCompare(b.source),
   );
   return summaries;
 }
