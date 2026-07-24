@@ -16,12 +16,12 @@ import { runScript } from "./_harness";
  *
  * MUTATES the dev DB (unless DRY_RUN) and calls the Strava API. Run:
  *   DRY_RUN=1 bun run scripts/backfill_gears.ts          # report only, no writes
- *   ONLY_CLERK_ID=user_xxx bun run scripts/backfill_gears.ts   # scope to one user
+ *   ONLY_USER_EMAIL=a@b.c bun run scripts/backfill_gears.ts   # scope to one user
  *   LIMIT=5 DELAY_MS=2000 bun run scripts/backfill_gears.ts
  */
 
 const DRY_RUN = process.env.DRY_RUN === "1" || process.env.DRY_RUN === "true";
-const ONLY_CLERK_ID = process.env.ONLY_CLERK_ID; // NB: not `USER` (shell sets that)
+const ONLY_USER_EMAIL = process.env.ONLY_USER_EMAIL;
 const LIMIT = process.env.LIMIT ? Number(process.env.LIMIT) : undefined;
 const DELAY_MS = Number(process.env.DELAY_MS ?? 1500);
 
@@ -43,14 +43,14 @@ async function runWithRetry<T>(fn: () => Promise<T>): Promise<T> {
 
 async function main() {
   let users = await db
-    .select({ id: schema.users.id, clerkId: schema.users.clerkId })
+    .select({ id: schema.users.id, email: schema.users.email })
     .from(schema.users)
     .where(isNotNull(schema.users.stravaId));
-  if (ONLY_CLERK_ID) users = users.filter((u) => u.clerkId === ONLY_CLERK_ID);
+  if (ONLY_USER_EMAIL) users = users.filter((u) => u.email === ONLY_USER_EMAIL);
   if (LIMIT) users = users.slice(0, LIMIT);
 
   console.log(
-    `[backfill-gears] ${users.length} strava-linked user(s)${ONLY_CLERK_ID ? ` (scoped to ${ONLY_CLERK_ID})` : ""}${DRY_RUN ? " — DRY_RUN" : ""}`,
+    `[backfill-gears] ${users.length} strava-linked user(s)${ONLY_USER_EMAIL ? ` (scoped to ${ONLY_USER_EMAIL})` : ""}${DRY_RUN ? " — DRY_RUN" : ""}`,
   );
 
   let totalCreated = 0;

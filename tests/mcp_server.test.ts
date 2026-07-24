@@ -6,7 +6,7 @@ import { buildMcpServer, selectMcpTools } from "../src/mcp/server";
 import { closePool, createTestUser, deleteTestUser, getDb } from "./helpers/db";
 
 const db = getDb();
-let user: { id: string; clerkId: string };
+let user: { id: string };
 
 beforeAll(async () => {
   user = await createTestUser({ role: "premium" });
@@ -21,7 +21,6 @@ function ctxFor(overrides?: Partial<CoachCtx>): CoachCtx {
   return {
     db,
     userId: user.id,
-    clerkUserId: user.clerkId,
     stravaAccessToken: "test-token",
     intervalsConnected: false,
     userTime: new Date().toISOString(),
@@ -137,7 +136,7 @@ describe("read-only tool execution over MCP context", () => {
 });
 
 describe("plan week tools over MCP context", () => {
-  let other: { id: string; clerkId: string };
+  let other: { id: string };
 
   beforeAll(async () => {
     other = await createTestUser({ role: "premium" });
@@ -180,7 +179,7 @@ describe("plan week tools over MCP context", () => {
     expect((updated.data as { targetDistanceMeters: number }).targetDistanceMeters).toBe(40000);
 
     // Another user cannot touch this plan's weeks.
-    const foreignCtx = ctxFor({ userId: other.id, clerkUserId: other.clerkId });
+    const foreignCtx = ctxFor({ userId: other.id });
     const foreignAdd = await runTool(
       "add_plan_week",
       { planId, weekIndex: 1, startDate: "2026-04-13" },

@@ -1,7 +1,9 @@
+import { eq } from "drizzle-orm";
 import { auth } from "../auth";
 import { AppError } from "../error";
 import type { UserDao } from "../repositories/user_repository";
 import * as userRepo from "../repositories/user_repository";
+import { oauthAccessTokens, oauthRefreshTokens } from "../schema";
 import type { UserRole } from "../schema/enums";
 import type { AdminUserRow } from "../schemas/admin_schemas";
 import type { IGlobalBindings } from "../types/IRouters";
@@ -79,6 +81,11 @@ export async function setBanned(
 
   if (banned) {
     await auth.api.banUser({ headers, body: { userId: targetUserId, banReason: reason } });
+    // banUser revokes sessions, but MCP grants outlive a session (access-token
+    // rows have session_id ON DELETE SET NULL, and a JWT never touches a
+    // session). Drop the OAuth grants so the ban also cuts off any connector.
+    await db.delete(oauthAccessTokens).where(eq(oauthAccessTokens.userId, targetUserId));
+    await db.delete(oauthRefreshTokens).where(eq(oauthRefreshTokens.userId, targetUserId));
   } else {
     await auth.api.unbanUser({ headers, body: { userId: targetUserId } });
   }

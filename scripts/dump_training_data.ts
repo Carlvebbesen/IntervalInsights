@@ -102,7 +102,6 @@ async function main() {
   const userRows = await db
     .select({
       id: schema.users.id,
-      clerkId: schema.users.clerkId,
       email: schema.users.email,
       maxHeartRate: schema.userSettings.maxHeartRate,
       processHeartRate: schema.userSettings.processHeartRate,
@@ -289,7 +288,6 @@ async function main() {
       source,
       user: user
         ? {
-            clerkId: user.clerkId,
             maxHeartRate: user.maxHeartRate ?? null,
             processHeartRate: user.processHeartRate ?? null,
           }

@@ -1,13 +1,12 @@
 // Builds a Hono app that mirrors src/index.ts but with a stub auth layer.
 //
-// Goal: end-to-end-style endpoint tests without Clerk JWT validation. Every
-// `/api/*` request reads `userId`/`clerkUserId`/`role` from an
-// AsyncLocalStorage that the test sets up via `withIdentity()` before calling
-// app.fetch.
+// Goal: end-to-end-style endpoint tests without a real Better Auth session.
+// Every `/api/*` request reads `userId`/`role` from an AsyncLocalStorage that
+// the test sets up via `withIdentity()` before calling app.fetch.
 //
-// The real Strava/Intervals middlewares still run — they read tokens from
-// Clerk's private metadata, which the test setup mocks to always return valid
-// tokens. So routes protected by those middlewares just work.
+// The real Strava/Intervals middlewares still run — they read provider tokens
+// from the encrypted `oauth_provider_tokens` table, which tests/helpers/db.ts
+// seeds for every test user. So routes protected by those middlewares just work.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { eq } from "drizzle-orm";
@@ -44,7 +43,6 @@ import { registerWebPages } from "../../src/web/pages";
 
 export type TestIdentity = {
   userId: string;
-  clerkUserId: string;
   role: "guest" | "premium" | "admin";
 };
 
@@ -64,7 +62,6 @@ const testAuthGuard = createMiddleware<TGlobalEnv>(async (c, next) => {
     return c.json({ error: "Unauthorized (no test identity)" }, 401);
   }
   c.set("userId", identity.userId);
-  c.set("clerkUserId", identity.clerkUserId);
   c.set("role", identity.role);
   const dbUser = await c.env.db.query.users.findFirst({
     where: eq(schema.users.id, identity.userId),

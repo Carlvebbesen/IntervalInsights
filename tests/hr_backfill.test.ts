@@ -62,9 +62,8 @@ async function newUser(opts?: Parameters<typeof createTestUser>[0]) {
   return u;
 }
 
-const identity = (u: { id: string; clerkId: string }) => ({
+const identity = (u: { id: string; email: string }) => ({
   userId: u.id,
-  clerkUserId: u.clerkId,
   role: "premium" as const,
 });
 

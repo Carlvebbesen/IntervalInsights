@@ -1,13 +1,21 @@
 import { createAuthEndpoint } from "@better-auth/core/api";
+import { oauthProvider } from "@better-auth/oauth-provider";
 import { type BetterAuthPlugin, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { admin, bearer, emailOTP } from "better-auth/plugins";
+import { admin, bearer, emailOTP, jwt } from "better-auth/plugins";
 import { z } from "zod";
 import { config } from "./config";
 import { db } from "./db";
 import { logger } from "./logger";
 import * as schema from "./schema";
 import { sendSignInOtpEmail } from "./services/auth_email";
+import {
+  hashOAuthToken,
+  MCP_RESOURCE_URL,
+  MCP_SCOPES,
+  OAUTH_CONSENT_PAGE,
+  OAUTH_LOGIN_PAGE,
+} from "./services/oauth_server_tokens";
 import { isReviewAccountEmail } from "./services/review_account";
 
 const expoOriginBridge = {
@@ -76,7 +84,6 @@ export const auth = betterAuth({
         defaultValue: "guest",
         input: false,
       },
-      clerkId: { type: "string", required: false, input: false },
       stravaId: { type: "string", required: false, input: false },
       intervalsAthleteId: { type: "string", required: false, input: false },
       maxHeartRate: { type: "number", required: false, input: false },
@@ -105,11 +112,15 @@ export const auth = betterAuth({
     disableOriginCheck: false,
   },
   trustedOrigins: [new URL(config.APP_BASE_URL).origin, "intervalinsights://"],
+  disabledPaths: ["/token"],
   rateLimit: {
     customRules: {
       "/sign-in/email-otp": { window: 60, max: 30 },
       "/sign-up/email-otp": { window: 60, max: 30 },
       "/email-otp/send-verification-otp": { window: 60, max: 10 },
+      "/oauth2/register": { window: 60, max: 5 },
+      "/oauth2/authorize": { window: 60, max: 30 },
+      "/oauth2/token": { window: 60, max: 20 },
     },
   },
   databaseHooks: {
@@ -143,6 +154,24 @@ export const auth = betterAuth({
     }),
     bearer(),
     admin({ defaultRole: "guest", adminRoles: ["admin"] }),
+    jwt({ disableSettingJwtHeader: true }),
+    oauthProvider({
+      loginPage: OAUTH_LOGIN_PAGE,
+      consentPage: OAUTH_CONSENT_PAGE,
+      scopes: [...MCP_SCOPES],
+      validAudiences: [MCP_RESOURCE_URL],
+      allowDynamicClientRegistration: true,
+      allowUnauthenticatedClientRegistration: true,
+      storeClientSecret: "hashed",
+      storeTokens: { hash: hashOAuthToken },
+      silenceWarnings: { oauthAuthServerConfig: true },
+      schema: {
+        oauthClient: { modelName: "oauthClients" },
+        oauthRefreshToken: { modelName: "oauthRefreshTokens" },
+        oauthAccessToken: { modelName: "oauthAccessTokens" },
+        oauthConsent: { modelName: "oauthConsents" },
+      },
+    }),
     expoOriginBridge,
     signUpEmailOtp,
   ],

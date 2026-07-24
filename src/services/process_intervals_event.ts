@@ -24,7 +24,7 @@ export async function processIntervalsWebhook(
 
   const user = await context.db.query.users.findFirst({
     where: (u, { eq }) => eq(u.intervalsAthleteId, event.athlete_id),
-    columns: { id: true, clerkId: true, lastSeenAt: true },
+    columns: { id: true, lastSeenAt: true },
   });
 
   if (!user) {
@@ -37,10 +37,7 @@ export async function processIntervalsWebhook(
 
   if (event.type === "APP_SCOPE_CHANGED") {
     const outcome = await handleIntervalsScopeChange(context, user);
-    log.info(
-      { athleteId: event.athlete_id, clerkUserId: user.clerkId, outcome },
-      "APP_SCOPE_CHANGED",
-    );
+    log.info({ athleteId: event.athlete_id, userId: user.id, outcome }, "APP_SCOPE_CHANGED");
     return;
   }
 

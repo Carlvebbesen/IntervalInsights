@@ -1,12 +1,11 @@
-// Focused dual-auth tests: the REAL authGuard (not the test_app stub) with a
-// real Better Auth instance against the disposable test Postgres. Verifies the
-// Phase 2 acceptance criteria: a Better Auth OTP sign-in yields a bearer token
-// that resolves an app user; a legacy Clerk token still resolves; both land on
-// the same users row for a backfilled user.
+// Focused auth tests: the REAL authGuard (not the test_app stub) with a real
+// Better Auth instance against the disposable test Postgres. Better Auth is the
+// only provider — an OTP sign-in yields a bearer token that resolves an app
+// user, and anything else is 401 with no row lazy-created.
 
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { auth, ensureReviewAccount } from "../src/auth";
@@ -17,7 +16,7 @@ import adminRouter from "../src/routers/admin_router";
 import { users } from "../src/schema";
 import type { TGlobalEnv } from "../src/types/IRouters";
 import { createTestUser, deleteTestUser, getDb } from "./helpers/db";
-import { clerkAuthMock, clerkUsersMock, otpCapture } from "./setup";
+import { otpCapture } from "./setup";
 
 const db = getDb();
 const createdUserIds: string[] = [];
@@ -30,9 +29,7 @@ app.use("*", async (c, next) => {
 });
 app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.use("/api/*", authGuard);
-app.get("/api/whoami", (c) =>
-  c.json({ userId: c.get("userId"), clerkUserId: c.get("clerkUserId"), role: c.get("role") }),
-);
+app.get("/api/whoami", (c) => c.json({ userId: c.get("userId"), role: c.get("role") }));
 // Real admin router behind the REAL guard, so role checks resolve from the DB row.
 app.route("/api/admin", adminRouter);
 app.onError((err, c) => {
@@ -94,8 +91,6 @@ function cookieHeaderFrom(res: Response): string {
 }
 
 afterEach(() => {
-  clerkAuthMock.reset();
-  clerkUsersMock.reset();
   otpCapture.last = null;
 });
 
@@ -103,15 +98,13 @@ afterAll(async () => {
   for (const id of createdUserIds) await deleteTestUser(id);
 });
 
-describe("dual-auth guard", () => {
+describe("auth guard", () => {
   it("rejects a request with no credentials", async () => {
-    clerkAuthMock.getAuth = () => null;
     const res = await fetchApp("/api/whoami");
     expect(res.status).toBe(401);
   });
 
   it("explicit sign-up + OTP verify yields a guest bearer user with the supplied name", async () => {
-    clerkAuthMock.getAuth = () => null; // no Clerk fallback — BA path only
     const email = `ba-signup-${randomUUID()}@example.test`;
     const name = "New Signup";
 
@@ -127,73 +120,47 @@ describe("dual-auth guard", () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { userId: string; clerkUserId: string | null; role: string };
+    const body = (await res.json()) as { userId: string; role: string };
     createdUserIds.push(body.userId);
 
     expect(body.role).toBe("guest");
-    expect(body.clerkUserId).toBeNull();
     const row = await db.query.users.findFirst({ where: eq(users.id, body.userId) });
     expect(row?.email).toBe(email);
     expect(row?.name).toBe(name); // sign-up name preserved (sign-in never overwrites it)
     expect(row?.emailVerified).toBe(true);
-    expect(row?.clerkId).toBeNull();
   });
 
-  it("legacy Clerk token still resolves and lazy-create is enriched with email", async () => {
-    const clerkId = `test_clerk_${randomUUID()}`;
-    const email = `clerk-lazy-${randomUUID()}@example.test`;
-    clerkAuthMock.getAuth = () => ({ userId: clerkId });
-    clerkUsersMock.getUser = async () => ({
-      primaryEmailAddress: { emailAddress: email, verification: { status: "verified" } },
-      emailAddresses: [{ emailAddress: email, verification: { status: "verified" } }],
-      firstName: "Lazy",
-      lastName: "Created",
+  it("an unrecognised bearer token is 401 and lazy-creates no user row", async () => {
+    // The guard has no lazy-create: an account must already exist via sign-up,
+    // so an unknown token can never conjure one.
+    const [{ before }] = await db.select({ before: count() }).from(users);
+    const res = await fetchApp("/api/whoami", {
+      headers: { Authorization: `Bearer not-a-real-session-${randomUUID()}` },
     });
-
-    const res = await fetchApp("/api/whoami");
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { userId: string; clerkUserId: string | null };
-    createdUserIds.push(body.userId);
-    expect(body.clerkUserId).toBe(clerkId);
-
-    const row = await db.query.users.findFirst({ where: eq(users.id, body.userId) });
-    expect(row?.email).toBe(email);
-    expect(row?.name).toBe("Lazy Created");
-    expect(row?.emailVerified).toBe(true);
+    expect(res.status).toBe(401);
+    const [{ after }] = await db.select({ after: count() }).from(users);
+    expect(after).toBe(before);
   });
 
-  it("Clerk lazy-create survives an email collision (creates the row without email)", async () => {
-    // A BA-native row already owns the email (e.g. deleted account re-registered
-    // via OTP); the old device's Clerk session must not 500 — it gets a fresh
-    // email-less row instead.
+  it("a credential-less request for an existing user's email is 401 and forks no row", async () => {
+    // Guards the email-collision case: no second, email-less row may appear.
     const email = `collision-${randomUUID()}@example.test`;
-    clerkAuthMock.getAuth = () => null;
     const token = await signInWithOtp(email);
     const baRes = await fetchApp("/api/whoami", { headers: { Authorization: `Bearer ${token}` } });
     const baUserId = ((await baRes.json()) as { userId: string }).userId;
     createdUserIds.push(baUserId);
 
-    const clerkId = `test_clerk_${randomUUID()}`;
-    clerkAuthMock.getAuth = () => ({ userId: clerkId });
-    clerkUsersMock.getUser = async () => ({
-      primaryEmailAddress: { emailAddress: email, verification: { status: "verified" } },
-      emailAddresses: [{ emailAddress: email, verification: { status: "verified" } }],
-      firstName: "Collision",
-      lastName: "Case",
-    });
-
     const res = await fetchApp("/api/whoami");
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { userId: string };
-    createdUserIds.push(body.userId);
-    expect(body.userId).not.toBe(baUserId);
-    const row = await db.query.users.findFirst({ where: eq(users.id, body.userId) });
-    expect(row?.clerkId).toBe(clerkId);
-    expect(row?.email).toBeNull();
+    expect(res.status).toBe(401);
+
+    const rows = await db.select({ id: users.id }).from(users).where(eq(users.email, email));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(baUserId);
   });
 
-  it("Clerk and Better Auth resolve a backfilled user to the same row", async () => {
-    // Simulate a Phase 3-backfilled user: existing Clerk row with email set.
+  it("Better Auth resolves a pre-existing users row and keeps its stored role", async () => {
+    // A migrated user: the row already exists (premium) before any Better Auth
+    // sign-in. OTP sign-in must match it rather than register a fresh guest.
     const seeded = await createTestUser({ strava: false, intervals: false });
     createdUserIds.push(seeded.id);
     const email = `backfilled-${randomUUID()}@example.test`;
@@ -202,15 +169,9 @@ describe("dual-auth guard", () => {
       .set({ email, name: "Backfilled User", emailVerified: true })
       .where(eq(users.id, seeded.id));
 
-    // Clerk path.
-    clerkAuthMock.getAuth = () => ({ userId: seeded.clerkId });
-    const clerkRes = await fetchApp("/api/whoami");
-    expect(clerkRes.status).toBe(200);
-    const clerkBody = (await clerkRes.json()) as { userId: string };
-    expect(clerkBody.userId).toBe(seeded.id);
+    // No session ⇒ 401; there is no second provider to fall back to.
+    expect((await fetchApp("/api/whoami")).status).toBe(401);
 
-    // Better Auth path: OTP sign-in with the backfilled email matches the SAME row.
-    clerkAuthMock.getAuth = () => null;
     const token = await signInWithOtp(email);
     const baRes = await fetchApp("/api/whoami", {
       headers: { Authorization: `Bearer ${token}` },
@@ -252,7 +213,6 @@ describe("review account (fixed OTP)", () => {
   }
 
   it("signs in with the fixed code against the pre-seeded guest row", async () => {
-    clerkAuthMock.getAuth = () => null;
     const signInRes = await reviewSignIn(reviewEmail);
     expect(signInRes.status).toBe(200);
     const token = signInRes.headers.get("set-auth-token");
@@ -266,7 +226,6 @@ describe("review account (fixed OTP)", () => {
   });
 
   it("is case-insensitive on the review email", async () => {
-    clerkAuthMock.getAuth = () => null;
     const signInRes = await reviewSignIn("Store-Review@Test.Local");
     expect(signInRes.status).toBe(200);
     const token = signInRes.headers.get("set-auth-token");
@@ -277,7 +236,6 @@ describe("review account (fixed OTP)", () => {
   });
 
   it("does not leak the fixed code to a normal email", async () => {
-    clerkAuthMock.getAuth = () => null;
     const email = `normal-${randomUUID()}@example.test`;
     await signUp(email); // known email so send actually issues a code (disableSignUp)
     const sendRes = await fetchApp("/api/auth/email-otp/send-verification-otp", {
@@ -308,7 +266,6 @@ describe("review account (fixed OTP)", () => {
 // replays the cookie, so these send Cookie: explicitly to exercise the check.
 describe("cookie-triggered CSRF origin check (expo-origin bridge)", () => {
   it("sign-out with a session cookie and no origin is still rejected (CSRF intact)", async () => {
-    clerkAuthMock.getAuth = () => null;
     const cookie = cookieHeaderFrom(await signInResponse(`csrf-403-${randomUUID()}@example.test`));
 
     const res = await fetchApp("/api/auth/sign-out", {
@@ -319,7 +276,6 @@ describe("cookie-triggered CSRF origin check (expo-origin bridge)", () => {
   });
 
   it("sign-out with a session cookie and expo-origin passes the check", async () => {
-    clerkAuthMock.getAuth = () => null;
     const cookie = cookieHeaderFrom(await signInResponse(`csrf-signout-${randomUUID()}@example.test`));
 
     const res = await fetchApp("/api/auth/sign-out", {
@@ -330,7 +286,6 @@ describe("cookie-triggered CSRF origin check (expo-origin bridge)", () => {
   });
 
   it("send-verification-otp with a session cookie and expo-origin passes (the call that failed on device)", async () => {
-    clerkAuthMock.getAuth = () => null;
     const cookie = cookieHeaderFrom(await signInResponse(`csrf-send-${randomUUID()}@example.test`));
 
     const res = await fetchApp("/api/auth/email-otp/send-verification-otp", {
@@ -350,7 +305,6 @@ describe("cookie-triggered CSRF origin check (expo-origin bridge)", () => {
 // row (resolved by the real authGuard on every request) must stay authoritative.
 describe("role escalation — stored role is authoritative", () => {
   async function signInFreshGuest(): Promise<{ token: string; userId: string }> {
-    clerkAuthMock.getAuth = () => null;
     const token = await signInWithOtp(`escalation-${randomUUID()}@example.test`);
     const res = await fetchApp("/api/whoami", { headers: { Authorization: `Bearer ${token}` } });
     expect(res.status).toBe(200);
@@ -399,7 +353,7 @@ describe("role escalation — stored role is authoritative", () => {
 // The explicit registration endpoint that replaced OTP auto-register. It is
 // enumeration-safe: the same {success:true} whether the email is new or taken.
 describe("sign-up endpoint (/sign-up/email-otp)", () => {
-  it("creates a guest row (supplied name, null clerkId, emailVerified false)", async () => {
+  it("creates a guest row (supplied name, emailVerified false)", async () => {
     const email = `signup-new-${randomUUID()}@example.test`;
     const res = await fetchApp("/api/auth/sign-up/email-otp", {
       method: "POST",
@@ -414,7 +368,6 @@ describe("sign-up endpoint (/sign-up/email-otp)", () => {
     createdUserIds.push(row.id);
     expect(row.name).toBe("Fresh Name");
     expect(row.role).toBe("guest");
-    expect(row.clerkId).toBeNull();
     expect(row.emailVerified).toBe(false);
   });
 
@@ -444,7 +397,6 @@ describe("sign-up endpoint (/sign-up/email-otp)", () => {
   });
 
   it("a signed-up email can then request a real OTP (known-email send delivers)", async () => {
-    clerkAuthMock.getAuth = () => null;
     const email = `signup-then-send-${randomUUID()}@example.test`;
     await signUp(email, "Sender");
 
@@ -464,7 +416,6 @@ describe("sign-up endpoint (/sign-up/email-otp)", () => {
 // attempt is indistinguishable from a wrong code, leaking nothing.
 describe("sign-in enumeration protection (disableSignUp)", () => {
   it("unknown-email send returns 200 but issues no OTP", async () => {
-    clerkAuthMock.getAuth = () => null;
     const email = `unknown-${randomUUID()}@example.test`;
     const sendRes = await fetchApp("/api/auth/email-otp/send-verification-otp", {
       method: "POST",
@@ -478,7 +429,6 @@ describe("sign-in enumeration protection (disableSignUp)", () => {
   });
 
   it("unknown-email verify is rejected as INVALID_OTP", async () => {
-    clerkAuthMock.getAuth = () => null;
     const email = `unknown-verify-${randomUUID()}@example.test`;
     const res = await fetchApp("/api/auth/sign-in/email-otp", {
       method: "POST",

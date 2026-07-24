@@ -33,7 +33,6 @@ export function toUserSettingsDto(settings: UserSettingsDao): UserSettingsDto {
 export function toUserDto(dao: UserDao, settings: UserSettingsDao): UserDto {
   return {
     id: dao.id,
-    clerkId: dao.clerkId,
     email: dao.email,
     name: dao.name,
     image: dao.image,

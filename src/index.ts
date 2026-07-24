@@ -1,5 +1,4 @@
 import "./instrumentation";
-import { clerkMiddleware } from "@hono/clerk-auth";
 import { httpInstrumentationMiddleware } from "@hono/otel";
 import { structuredLogger } from "@hono/structured-logger";
 import { swaggerUI } from "@hono/swagger-ui";
@@ -41,6 +40,7 @@ import {
 } from "./services/review_demo/seed";
 import type { TGlobalEnv } from "./types/IRouters";
 import { registerOAuthCallbackPages } from "./web/oauth_callback_page";
+import { registerOAuthProviderPages } from "./web/oauth_pages";
 import { registerWebPages } from "./web/pages";
 
 const app = new Hono<TGlobalEnv>();
@@ -95,6 +95,7 @@ app.get("/.well-known/assetlinks.json", async (_c) => {
 
 registerWebPages(app);
 registerOAuthCallbackPages(app);
+registerOAuthProviderPages(app);
 
 app.use("*", requestId());
 app.use(
@@ -147,7 +148,6 @@ if (config.NODE_ENV !== "production") {
   app.get("/api/docs", swaggerUI({ url: "/api/openapi.json" }));
 }
 
-app.use("/api/*", clerkMiddleware());
 app.use("/api/*", authGuard);
 
 const v1 = new Hono<TGlobalEnv>();
@@ -202,11 +202,6 @@ app.onError((err, c) => {
       { error: "Intervals.icu API Error", details: err.details },
       err.status as ContentfulStatusCode,
     );
-  }
-  if ("clerkError" in err && err.clerkError === true) {
-    c.var.logger.error({ err }, "Clerk API error");
-    const status = "status" in err && err.status === 429 ? 429 : 502;
-    return c.json({ error: "Authentication service error" }, status);
   }
   c.var.logger.error({ err }, "Internal Error");
   return c.json({ error: "Internal Server Error" }, 500);

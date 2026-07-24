@@ -18,7 +18,7 @@ import { buildTestApp, withIdentity } from "./helpers/test_app";
 
 const app = buildTestApp(getPool());
 
-let user: { id: string; clerkId: string };
+let user: { id: string; email: string };
 
 beforeAll(async () => {
   user = await createTestUser({ role: "premium" });
@@ -29,7 +29,7 @@ afterAll(async () => {
   await closePool();
 });
 
-const identity = () => ({ userId: user.id, clerkUserId: user.clerkId, role: "premium" as const });
+const identity = () => ({ userId: user.id, role: "premium" as const });
 
 // 3x1000m with 60s recovery — estimator counts work + step recovery only.
 const intervalStructure: WorkoutStructureSet[] = [

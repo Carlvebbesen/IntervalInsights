@@ -14,11 +14,11 @@ import { buildTestApp, withIdentity } from "./helpers/test_app";
 
 const app = buildTestApp(getPool());
 
-let userA: { id: string; clerkId: string };
-let userB: { id: string; clerkId: string };
+let userA: { id: string; email: string };
+let userB: { id: string; email: string };
 
-const identityA = () => ({ userId: userA.id, clerkUserId: userA.clerkId, role: "premium" as const });
-const identityB = () => ({ userId: userB.id, clerkUserId: userB.clerkId, role: "premium" as const });
+const identityA = () => ({ userId: userA.id, role: "premium" as const });
+const identityB = () => ({ userId: userB.id, role: "premium" as const });
 
 const rawMacro = (): PlanMacro => ({
   name: "Stub 5k Plan",
@@ -148,7 +148,7 @@ function postJson(path: string, body: unknown) {
 }
 
 async function startWizard(
-  identity: { userId: string; clerkUserId: string; role: "premium" },
+  identity: { userId: string; role: "premium" },
   body: Record<string, unknown> = {
     name: "My 5k plan",
     startDate: "2026-01-05",
@@ -174,7 +174,7 @@ async function startWizard(
 }
 
 async function resumeWizard(
-  identity: { userId: string; clerkUserId: string; role: "premium" },
+  identity: { userId: string; role: "premium" },
   threadId: string,
   resume: { action: "accept" } | { action: "adjust"; feedback: string },
 ) {

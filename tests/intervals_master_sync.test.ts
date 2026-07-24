@@ -29,7 +29,7 @@ import { closePool, createTestUser, deleteTestUser, getDb } from "./helpers/db";
 import { insertActivity } from "./helpers/fixtures";
 import { synthIntervalsActivity } from "./helpers/intervals_fixtures";
 
-let user: { id: string; clerkId: string };
+let user: { id: string; email: string };
 
 beforeEach(async () => {
   user = await createTestUser({ role: "premium" });

@@ -137,7 +137,7 @@ const STYLES = `
   footer a:hover { color: #448AFF; }
 `;
 
-function shell(title: string, content: string): string {
+export function shell(title: string, content: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>

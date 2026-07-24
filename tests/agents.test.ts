@@ -18,7 +18,7 @@ import { analysisServiceMock } from "./setup";
 
 const app = buildTestApp(getPool());
 
-let user: { id: string; clerkId: string };
+let user: { id: string; email: string };
 let activityId: number;
 let stravaActivityId: number;
 
@@ -39,7 +39,6 @@ afterAll(async () => {
 
 const identity = () => ({
   userId: user.id,
-  clerkUserId: user.clerkId,
   role: "premium" as const,
 });
 
@@ -174,7 +173,7 @@ describe("/api/agents", () => {
   // must still load (soft strava middleware), while analysis mutations that need
   // a live token stay hard-gated with 403.
   describe("without a linked Strava token", () => {
-    let tokenless: { id: string; clerkId: string };
+    let tokenless: { id: string; email: string };
     let pendingId: number;
 
     beforeAll(async () => {
@@ -192,7 +191,6 @@ describe("/api/agents", () => {
 
     const tokenlessIdentity = () => ({
       userId: tokenless.id,
-      clerkUserId: tokenless.clerkId,
       role: "premium" as const,
     });
 

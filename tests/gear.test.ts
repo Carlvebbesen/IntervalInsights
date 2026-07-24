@@ -9,8 +9,8 @@ import { buildTestApp, withIdentity } from "./helpers/test_app";
 
 const app = buildTestApp(getPool());
 
-let user: { id: string; clerkId: string };
-let otherUser: { id: string; clerkId: string };
+let user: { id: string; email: string };
+let otherUser: { id: string; email: string };
 
 beforeAll(async () => {
   user = await createTestUser({ role: "premium" });
@@ -25,7 +25,6 @@ afterAll(async () => {
 
 const identity = () => ({
   userId: user.id,
-  clerkUserId: user.clerkId,
   role: "premium" as const,
 });
 
@@ -148,7 +147,7 @@ describe("/api/v1/gear", () => {
 
   it("404s when updating another user's gear", async () => {
     const foreign = await withIdentity(
-      { userId: otherUser.id, clerkUserId: otherUser.clerkId, role: "premium" },
+      { userId: otherUser.id, role: "premium" },
       () => createGear({ model: "Foreign Shoe", surface: "TRAIL" }),
     );
     await withIdentity(identity(), async () => {
@@ -239,7 +238,7 @@ describe("/api/v1/gear", () => {
   it("404s a signature default for a foreign gear or unknown structure", async () => {
     const structure = await insertIntervalStructure({ name: "foreign sig" });
     const foreignGear = await withIdentity(
-      { userId: otherUser.id, clerkUserId: otherUser.clerkId, role: "premium" },
+      { userId: otherUser.id, role: "premium" },
       () => createGear({ model: "Foreign Sig Shoe", surface: "ROAD" }),
     );
     await withIdentity(identity(), async () => {

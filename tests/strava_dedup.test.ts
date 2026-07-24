@@ -19,7 +19,7 @@ function patch<K extends keyof typeof stravaApiService>(key: K, impl: (typeof st
   });
 }
 
-let user: { id: string; clerkId: string };
+let user: { id: string; email: string };
 
 beforeEach(async () => {
   user = await createTestUser({ role: "premium" });

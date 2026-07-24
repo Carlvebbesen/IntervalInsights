@@ -8,9 +8,9 @@ import { chatTitleMock, checkpointerMock, trainingGraphMock } from "./setup";
 const app = buildTestApp(getPool());
 const pool = getPool();
 
-let user: { id: string; clerkId: string };
-let other: { id: string; clerkId: string };
-let guest: { id: string; clerkId: string };
+let user: { id: string; email: string };
+let other: { id: string; email: string };
+let guest: { id: string; email: string };
 
 beforeAll(async () => {
   user = await createTestUser({ role: "premium" });
@@ -33,19 +33,16 @@ afterEach(() => {
 
 const identity = () => ({
   userId: user.id,
-  clerkUserId: user.clerkId,
   role: "premium" as const,
 });
 
 const otherIdentity = () => ({
   userId: other.id,
-  clerkUserId: other.clerkId,
   role: "premium" as const,
 });
 
 const guestIdentity = () => ({
   userId: guest.id,
-  clerkUserId: guest.clerkId,
   role: "guest" as const,
 });
 

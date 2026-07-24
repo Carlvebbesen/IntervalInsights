@@ -1,48 +1,38 @@
-import {
-  fetchClerkAuthorizationServerMetadata,
-  generateClerkProtectedResourceMetadata,
-} from "@clerk/mcp-tools/server";
+import { oauthProviderAuthServerMetadata } from "@better-auth/oauth-provider";
 import { StreamableHTTPTransport } from "@hono/mcp";
 import { Hono } from "hono";
-import { config } from "../config";
+import { auth } from "../auth";
 import { db } from "../db";
 import { mcpAuth } from "../mcp/auth";
 import { buildMcpContext, buildMcpServer } from "../mcp/server";
 import type { TMcpEnv } from "../mcp/types";
+import { AUTH_ISSUER, MCP_RESOURCE_URL, MCP_SCOPES } from "../services/oauth_server_tokens";
 
 const mcpRouter = new Hono<TMcpEnv>();
 
-const RESOURCE_URL = new URL("/mcp", config.APP_BASE_URL).toString();
+const protectedResourceMetadata = {
+  resource: MCP_RESOURCE_URL,
+  authorization_servers: [AUTH_ISSUER],
+  scopes_supported: MCP_SCOPES,
+  bearer_methods_supported: ["header"],
+};
 
-mcpRouter.get("/.well-known/oauth-protected-resource/mcp", (c) =>
-  c.json(
-    generateClerkProtectedResourceMetadata({
-      publishableKey: config.CLERK_PUBLISHABLE_KEY,
-      resourceUrl: RESOURCE_URL,
-      properties: {
-        scopes_supported: ["profile", "email", "offline_access"],
-      },
-    }),
-  ),
-);
+for (const path of [
+  "/.well-known/oauth-protected-resource/mcp",
+  "/.well-known/oauth-protected-resource",
+]) {
+  mcpRouter.get(path, (c) => c.json(protectedResourceMetadata));
+}
 
-const AS_METADATA_TTL_MS = 5 * 60_000;
-let asMetadataCache: { at: number; value: Record<string, unknown> } | null = null;
-
-mcpRouter.get("/.well-known/oauth-authorization-server", async (c) => {
-  if (asMetadataCache && Date.now() - asMetadataCache.at < AS_METADATA_TTL_MS) {
-    return c.json(asMetadataCache.value);
-  }
-  try {
-    const value = (await fetchClerkAuthorizationServerMetadata({
-      publishableKey: config.CLERK_PUBLISHABLE_KEY,
-    })) as Record<string, unknown>;
-    asMetadataCache = { at: Date.now(), value };
-    return c.json(value);
-  } catch {
-    return c.json({ error: "Authorization server metadata unavailable" }, 503);
-  }
-});
+// Better Auth serves these under its own basePath; clients look for them at the
+// root and at the RFC 8414 path-insertion form derived from the issuer.
+const authServerMetadata = oauthProviderAuthServerMetadata(auth);
+for (const path of [
+  "/.well-known/oauth-authorization-server",
+  "/.well-known/oauth-authorization-server/api/auth",
+]) {
+  mcpRouter.get(path, (c) => authServerMetadata(c.req.raw));
+}
 
 mcpRouter.use("/mcp", async (c, next) => {
   c.env.db = db;

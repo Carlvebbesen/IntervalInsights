@@ -77,9 +77,9 @@ afterAll(async () => {
 
 type PendingRow = { id: number; suggestedGearId: number | null; gearSuggestions: number[] };
 
-async function fetchPending(user: { id: string; clerkId: string }): Promise<Map<number, PendingRow>> {
+async function fetchPending(user: { id: string; email: string }): Promise<Map<number, PendingRow>> {
   return withIdentity(
-    { userId: user.id, clerkUserId: user.clerkId, role: "premium" },
+    { userId: user.id, role: "premium" },
     async () => {
       const res = await app.fetch(new Request("http://test/api/v1/agents/pending"));
       expect(res.status).toBe(200);

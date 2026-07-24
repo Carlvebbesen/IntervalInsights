@@ -11,7 +11,7 @@ import { buildTestApp, withIdentity } from "./helpers/test_app";
 const app = buildTestApp(getPool());
 const db = getDb();
 
-let user: { id: string; clerkId: string };
+let user: { id: string; email: string };
 let shoeStrava: number;
 let shoeSig: number;
 let shoeType: number;
@@ -124,7 +124,7 @@ type PendingRow = {
 
 async function fetchPending(): Promise<Map<number, PendingRow>> {
   return withIdentity(
-    { userId: user.id, clerkUserId: user.clerkId, role: "premium" },
+    { userId: user.id, role: "premium" },
     async () => {
       const res = await app.fetch(new Request("http://test/api/v1/agents/pending"));
       expect(res.status).toBe(200);

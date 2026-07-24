@@ -14,7 +14,7 @@ import {
 } from "./helpers/fixtures";
 
 const db = getDb();
-let user: { id: string; clerkId: string };
+let user: { id: string; email: string };
 
 beforeAll(async () => {
   user = await createTestUser({ role: "premium" });

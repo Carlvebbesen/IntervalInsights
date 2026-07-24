@@ -16,7 +16,7 @@ import { insertActivity } from "./helpers/fixtures";
 
 const db = getDb();
 
-let user: { id: string; clerkId: string };
+let user: { id: string; email: string };
 
 const realGetAthlete = stravaApiService.getAthlete;
 const realGetGear = stravaApiService.getGear;

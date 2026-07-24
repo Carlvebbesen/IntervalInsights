@@ -17,7 +17,7 @@ mock.module("../src/agent/event_detection_agent.ts", () => ({
 const { detectAndPersistEvents } = await import("../src/services/event_detection_service");
 
 const db = getDb();
-let user: { id: string; clerkId: string };
+let user: { id: string; email: string };
 
 beforeAll(async () => {
   user = await createTestUser({ role: "premium" });

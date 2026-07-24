@@ -38,7 +38,7 @@ function fullStreams() {
   };
 }
 
-let user: { id: string; clerkId: string };
+let user: { id: string; email: string };
 let putActivityId: number;
 
 beforeAll(async () => {
@@ -55,7 +55,6 @@ afterAll(async () => {
 
 const identity = () => ({
   userId: user.id,
-  clerkUserId: user.clerkId,
   role: "premium" as const,
 });
 

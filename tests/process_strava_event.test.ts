@@ -1,7 +1,7 @@
 // The REAL Strava webhook ingest. tests/setup.ts mocks this module globally
 // (endpoint tests only need the no-op), so the genuine implementation is
 // loaded via a query-suffix specifier — a DIFFERENT module registry key that
-// bypasses the mock while its own imports (strava_api_service, clerk_client,
+// bypasses the mock while its own imports (strava_api_service,
 // analysis_service) still resolve to the global mocks.
 //
 // Strava responses are controlled by monkeypatching the mocked

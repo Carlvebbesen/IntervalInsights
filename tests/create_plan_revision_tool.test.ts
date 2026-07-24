@@ -10,8 +10,8 @@ import {
   insertTrainingPlanWeek,
 } from "./helpers/fixtures";
 
-let userA: { id: string; clerkId: string };
-let userB: { id: string; clerkId: string };
+let userA: { id: string; email: string };
+let userB: { id: string; email: string };
 
 beforeAll(async () => {
   getPool();
