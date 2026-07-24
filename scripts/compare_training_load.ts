@@ -1,18 +1,24 @@
 import { and, eq, isNotNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
+import { config } from "../src/config";
 import * as schema from "../src/schema";
-import { activities } from "../src/schema";
+import { activities, users } from "../src/schema";
+import { isReviewUser, setReviewUserId } from "../src/services/review_account";
 import {
   type ComparisonRow,
+  summarizeBySportType,
   summarizeComparison,
+  toComparisonRows,
   worstOutliers,
 } from "./_load_comparison";
 import { runScript } from "./_harness";
 
 // Report-only comparison of our self-computed `training_load` against
 // intervals.icu's `icu_training_load`, the accept gate for GAP calibration.
-// Never writes regardless of env. USER_ID limits to one user.
+// Never writes regardless of env. USER_ID limits to one user. The store-review
+// demo account is excluded: its corpus is seeded with ours == icu by
+// construction, so it would flatter every statistic in the gate.
 
 const ONLY_USER_ID = process.env.USER_ID ?? null;
 const OUTLIER_COUNT = 10;
@@ -33,6 +39,21 @@ function fmt(n: number): string {
   return Number.isFinite(n) ? n.toFixed(2) : "n/a";
 }
 
+/**
+ * Arm `isReviewUser` from the review email. Read-only on purpose — the boot path
+ * (`prepareReviewAccount`) also promotes the row, which this script must not do.
+ */
+async function armReviewUser(): Promise<string | null> {
+  if (config.REVIEW_ACCOUNT_EMAIL === undefined) return null;
+  const row = await db.query.users.findFirst({
+    where: eq(users.email, config.REVIEW_ACCOUNT_EMAIL),
+    columns: { id: true },
+  });
+  if (!row) return null;
+  setReviewUserId(row.id);
+  return row.id;
+}
+
 async function loadRows(): Promise<ComparisonRow[]> {
   const where = ONLY_USER_ID
     ? and(
@@ -45,6 +66,7 @@ async function loadRows(): Promise<ComparisonRow[]> {
   const rows = await db
     .select({
       id: activities.id,
+      userId: activities.userId,
       startDateLocal: activities.startDateLocal,
       sportType: activities.sportType,
       source: activities.trainingLoadSource,
@@ -54,18 +76,14 @@ async function loadRows(): Promise<ComparisonRow[]> {
     .from(activities)
     .where(where);
 
-  return rows.map((r) => ({
-    activityId: r.id,
-    date: r.startDateLocal.toISOString().slice(0, 10),
-    sportType: r.sportType,
-    source: r.source,
-    ours: r.ours as number,
-    icu: r.icu as number,
-  }));
+  return toComparisonRows(rows, isReviewUser);
 }
 
 async function main(): Promise<Record<string, unknown>> {
   console.log(`[compare_training_load] onlyUserId=${ONLY_USER_ID ?? "<all>"}`);
+
+  const reviewUserId = await armReviewUser();
+  console.log(`[compare_training_load] excludedReviewUser=${reviewUserId ?? "<none>"}`);
 
   const rows = await loadRows();
   console.log(`[compare_training_load] compared activities=${rows.length}`);
@@ -103,6 +121,34 @@ async function main(): Promise<Record<string, unknown>> {
     );
   }
 
+  const bySport = summarizeBySportType(rows);
+  const scols: [string, number][] = [
+    ["sportType", 16],
+    ["source", 8],
+    ["count", 6],
+    ["medAbsErr", 10],
+    ["p90AbsErr", 10],
+    ["medAbsRel", 10],
+    ["p90AbsRel", 10],
+    ["meanSgnRel", 11],
+  ];
+  console.log("\n=== per sport type (sportType x source), by volume ===");
+  console.log(scols.map(([h, w]) => pad(h, w)).join("  "));
+  for (const s of bySport) {
+    console.log(
+      [
+        pad(s.sportType, scols[0][1]),
+        pad(s.source, scols[1][1]),
+        pad(s.count, scols[2][1]),
+        pad(fmt(s.medianAbsError), scols[3][1]),
+        pad(fmt(s.p90AbsError), scols[4][1]),
+        pad(fmt(s.medianAbsRelError), scols[5][1]),
+        pad(fmt(s.p90AbsRelError), scols[6][1]),
+        pad(fmt(s.meanSignedRelError), scols[7][1]),
+      ].join("  "),
+    );
+  }
+
   const outliers = worstOutliers(rows, OUTLIER_COUNT);
   const ocols: [string, number][] = [
     ["activityId", 12],
@@ -131,7 +177,7 @@ async function main(): Promise<Record<string, unknown>> {
     );
   }
 
-  return { comparedActivities: rows.length, groups: summaries };
+  return { comparedActivities: rows.length, groups: summaries, sportTypes: bySport };
 }
 
 runScript({ name: "compare_training_load", once: false, db, pool }, () => main());

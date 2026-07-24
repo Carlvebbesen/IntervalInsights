@@ -170,6 +170,51 @@ describe("hrss — normalised exponential TRIMP", () => {
     expect(hrss(streams, { lthr, restingHr: null, maxHr: max })).toBe(0);
     expect(hrss(streams, { lthr, restingHr: rest, maxHr: null })).toBe(0);
   });
+
+  test("stopped samples with elevated HR still count (stop-start sports)", () => {
+    // 1 h at LTHR with moving=false for the second half: all 3600 s count, so
+    // load stays 100 — twice what the old moving-gated integral produced.
+    const n = 3601;
+    const moving = Array.from({ length: n }, (_, i) => i <= 1800);
+    const streams: LoadStreams = {
+      time: timeAxis(n),
+      heartrate: constant(lthr, n),
+      moving,
+    };
+    const params = { lthr, restingHr: rest, maxHr: max, sex: "male" as const };
+    const allMoving: LoadStreams = { ...streams, moving: new Array(n).fill(true) };
+
+    expect(hrss(streams, params)).toBeCloseTo(100, 5);
+    expect(hrss(streams, params)).toBeCloseTo(hrss(allMoving, params), 5);
+    expect(hrss(streams, params)).toBeCloseTo(2 * ((1800 / 3600) * 100), 5);
+  });
+
+  test("zero-velocity samples with elevated HR still count", () => {
+    // Same shape without a moving stream: velocity 0 used to zero out half the
+    // integral via the < 0.3 m/s creep rule.
+    const n = 3601;
+    const velocity = Array.from({ length: n }, (_, i) => (i <= 1800 ? 3 : 0));
+    const streams: LoadStreams = { time: timeAxis(n), heartrate: constant(lthr, n), velocity };
+    expect(hrss(streams, { lthr, restingHr: rest, maxHr: max, sex: "male" })).toBeCloseTo(100, 5);
+  });
+
+  test("dt is still capped at 30 s so recording gaps don't inflate load", () => {
+    const streams: LoadStreams = { time: [0, 1000], heartrate: [lthr, lthr] };
+    expect(hrss(streams, { lthr, restingHr: rest, maxHr: max, sex: "male" })).toBeCloseTo(
+      (30 / 3600) * 100,
+      5,
+    );
+  });
+
+  test("samples at or below resting HR contribute nothing", () => {
+    const n = 601;
+    const heartrate = Array.from({ length: n }, (_, i) => (i <= 300 ? lthr : rest - 10));
+    const streams: LoadStreams = { time: timeAxis(n), heartrate };
+    expect(hrss(streams, { lthr, restingHr: rest, maxHr: max, sex: "male" })).toBeCloseTo(
+      (300 / 3600) * 100,
+      5,
+    );
+  });
 });
 
 describe("powerTss — Coggan TSS", () => {
@@ -326,16 +371,11 @@ describe("stream-length mismatch", () => {
 
 describe("mutation-gap regression fixtures", () => {
   test("creeping samples (0 < v < 0.3) count as stopped when no moving stream", () => {
-    // 1s samples; hr held exactly at LTHR so HRSS = moving_seconds/3600*100.
+    // 1s samples at threshold pace so paceLoad = moving_seconds/3600*100.
     // i=1..4 move at 4 m/s (4 s), i=5..9 creep at 0.25 m/s and must be excluded.
     const time = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
     const velocity = [4, 4, 4, 4, 4, 0.25, 0.25, 0.25, 0.25, 0.25];
-    const heartrate = Array.from({ length: 10 }, () => 170);
-    const load = hrss(
-      { time, velocity, heartrate },
-      { lthr: 170, restingHr: 50, maxHr: 190, sex: "male" },
-    );
-    expect(load).toBeCloseTo((4 / 3600) * 100, 4);
+    expect(paceLoad({ time, velocity }, 4)).toBeCloseTo((4 / 3600) * 100, 4);
   });
 
   test("NP trailing window is exactly 30s (30s-spaced samples average current + previous)", () => {

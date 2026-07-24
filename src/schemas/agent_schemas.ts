@@ -174,6 +174,12 @@ export const ProposedPaceResponseSchema = z
   .array(ExpandedIntervalSetSchema)
   .openapi({ ref: "ProposedPaceResponse" });
 
+export const AutoCompleteAllResponseSchema = z
+  .object({
+    targeted: z.number(),
+  })
+  .openapi({ ref: "AutoCompleteAllResponse" });
+
 export const WorkoutInputStepSchema = z
   .object({
     reps: z.number(),

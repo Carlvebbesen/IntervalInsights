@@ -6,7 +6,9 @@ import {
   percentile,
   relErrorOf,
   sportGroupOf,
+  summarizeBySportType,
   summarizeComparison,
+  toComparisonRows,
   worstOutliers,
 } from "../scripts/_load_comparison";
 
@@ -60,6 +62,55 @@ function row(
   return { activityId, date: "2024-01-01", sportType, source, ours, icu };
 }
 
+describe("summarizeBySportType", () => {
+  it("keeps NordicSki and Ride as their own rows instead of lumping into 'other'", () => {
+    const rows = [
+      row(1, "NordicSki", "hr", 102, 100),
+      row(2, "Hike", "hr", 200, 100),
+      row(3, "Ride", "power", 180, 180),
+    ];
+    const summaries = summarizeBySportType(rows);
+    expect(summaries.map((s) => s.sportType).sort()).toEqual(["Hike", "NordicSki", "Ride"]);
+
+    const nordic = summaries.find((s) => s.sportType === "NordicSki");
+    expect(nordic?.source).toBe("hr");
+    expect(nordic?.count).toBe(1);
+    // NordicSki tracks icu closely; the +100% Hike sits in its own row, not blended in.
+    expect(nordic?.meanSignedRelError).toBeCloseTo(0.02, 10);
+    expect(summaries.find((s) => s.sportType === "Hike")?.meanSignedRelError).toBeCloseTo(1, 10);
+  });
+
+  it("splits one sport across its sources", () => {
+    const rows = [
+      row(1, "Run", "pace", 110, 100),
+      row(2, "Run", "hr", 90, 100),
+    ];
+    const summaries = summarizeBySportType(rows);
+    expect(summaries).toHaveLength(2);
+    expect(summaries.map((s) => `${s.sportType}/${s.source}`).sort()).toEqual([
+      "Run/hr",
+      "Run/pace",
+    ]);
+  });
+
+  it("orders by count descending, ties broken by sportType then source", () => {
+    const rows = [
+      row(1, "Ride", "power", 100, 100),
+      row(2, "Ride", "power", 100, 100),
+      row(3, "Run", "hr", 100, 100),
+      row(4, "NordicSki", "hr", 100, 100),
+    ];
+    const summaries = summarizeBySportType(rows);
+    expect(summaries[0].sportType).toBe("Ride"); // count 2 leads
+    expect(summaries.slice(1).map((s) => s.sportType)).toEqual(["NordicSki", "Run"]); // ties alpha
+  });
+
+  it("buckets a null source under 'unknown'", () => {
+    const summaries = summarizeBySportType([row(1, "Ride", null, 100, 90)]);
+    expect(summaries[0].source).toBe("unknown");
+  });
+});
+
 describe("summarizeComparison", () => {
   it("groups by sport-group x source and computes the stats", () => {
     const rows = [
@@ -97,5 +148,36 @@ describe("worstOutliers", () => {
     const worst = worstOutliers(rows, 2);
     expect(worst.map((o) => o.activityId)).toEqual([2, 3]);
     expect(worst[0].error).toBe(-40);
+  });
+});
+
+describe("toComparisonRows", () => {
+  const dbRow = (id: number, userId: string, source: string | null) => ({
+    id,
+    userId,
+    startDateLocal: new Date("2026-07-22T18:30:00Z"),
+    sportType: "Run",
+    source,
+    ours: 100,
+    icu: 100,
+  });
+
+  it("drops excluded users so their zero-error rows leave the report", () => {
+    const rows = [
+      dbRow(1, "real-user", "hr"),
+      dbRow(2, "demo-user", null),
+      dbRow(3, "demo-user", null),
+    ];
+    const kept = toComparisonRows(rows, (userId) => userId === "demo-user");
+
+    expect(kept.map((r) => r.activityId)).toEqual([1]);
+    expect(summarizeComparison(kept).some((s) => s.source === "unknown")).toBe(false);
+  });
+
+  it("maps the remaining rows and formats the date as YYYY-MM-DD", () => {
+    const kept = toComparisonRows([dbRow(7, "real-user", "pace")], () => false);
+    expect(kept).toEqual([
+      { activityId: 7, date: "2026-07-22", sportType: "Run", source: "pace", ours: 100, icu: 100 },
+    ]);
   });
 });
